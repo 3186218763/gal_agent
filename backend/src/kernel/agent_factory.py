@@ -11,8 +11,7 @@ def build_ports(
     """
     Build Director/Character/Choice/Memory ports.
 
-    Stubs for all when use_stubs=True; when False, SdkDirector + SdkCharacter
-    + SdkChoice and stub memory until later tasks wire it.
+    Stubs for all when use_stubs=True; when False, SDK agents + RuleMemory.
     """
     if use_stubs:
         return (
@@ -25,10 +24,11 @@ def build_ports(
     from src.agents.character import SdkCharacter
     from src.agents.choice import SdkChoice
     from src.agents.director import SdkDirector
+    from src.agents.memory import RuleMemory
 
     return (
         SdkDirector(),
         SdkCharacter(),
         SdkChoice(),
-        StubMemory(),
+        RuleMemory(),
     )

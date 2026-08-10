@@ -3,10 +3,12 @@ Agents 包初始化
 
 Director / Character / Choice pure helpers are eager; SDK classes load
 openai-agents lazily only when constructed (via director._load_openai_agents_sdk).
+RuleMemory is rule-based (no LLM).
 """
 from .character import SdkCharacter, build_character_prompt
 from .choice import SdkChoice, build_choice_prompt, parse_choice_output
 from .director import SdkDirector, build_director_prompt
+from .memory import RuleMemory
 
 __all__ = [
     "SdkDirector",
@@ -16,4 +18,5 @@ __all__ = [
     "SdkChoice",
     "build_choice_prompt",
     "parse_choice_output",
+    "RuleMemory",
 ]
