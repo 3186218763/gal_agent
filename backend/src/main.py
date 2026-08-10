@@ -1,11 +1,6 @@
-from fastapi import FastAPI
+from src.story.api import create_app
 
-app = FastAPI(title="Galgame AI V2")
-
-
-@app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "runtime": "v2-foundation"}
+app = create_app()
 
 
 if __name__ == "__main__":
