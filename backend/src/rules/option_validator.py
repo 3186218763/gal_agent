@@ -16,12 +16,27 @@ class ValidationResult:
 
 
 def consequence_fingerprint(opt: ChoiceOption) -> str:
-    """Stable fingerprint of predicted consequences for 差分 / 假选择 detection."""
+    """Stable fingerprint of predicted consequences for 差分 / 假选择 detection.
+
+    Includes goal effect ``delta_progress`` and ``force_complete`` so two options
+    that touch the same goal with different progress are not treated as 假选择.
+    """
     c = opt.predicted_consequences
+    goal_effects = sorted(
+        (
+            {
+                "goal_id": ge.goal_id,
+                "delta_progress": ge.delta_progress,
+                "force_complete": ge.force_complete,
+            }
+            for ge in c.goal_effects
+        ),
+        key=lambda g: (g["goal_id"], g["delta_progress"], g["force_complete"]),
+    )
     payload: Dict[str, Any] = {
         "flag_changes": c.flag_changes,
         "relationship_deltas": c.relationship_deltas,
-        "goal_ids": sorted(ge.goal_id for ge in c.goal_effects),
+        "goal_effects": goal_effects,
     }
     return json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
 

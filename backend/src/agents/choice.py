@@ -7,6 +7,7 @@ SdkChoice is constructed / used. SDK load is shared with director.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Optional
 
@@ -14,6 +15,8 @@ from src.domain.options import ChoiceOption, PredictedConsequences
 from src.domain.scene import SceneIntent
 from src.domain.setting_pack import SettingPack
 from src.domain.world_state import WorldState
+
+logger = logging.getLogger(__name__)
 
 _CHOICE_SYSTEM = """你是 Galgame 的选项生成器（Choice Agent）。
 
@@ -196,5 +199,6 @@ class SdkChoice:
             output_text = getattr(result, "final_output", None) or str(result)
             return parse_choice_output(str(output_text))
         except Exception:
+            logger.warning("SdkChoice.generate_options failed; returning []", exc_info=True)
             # Empty list fails validation → kernel retries then fallback_options()
             return []

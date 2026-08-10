@@ -9,6 +9,26 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 
+async def _drive_until_ending(kernel: GameKernel, choice_index: int = 0, cap: int = 40):
+    """Always-pick ``choice_index`` until ending or safety cap."""
+    ending_id = None
+    for _ in range(cap):
+        if kernel.state.ended:
+            ending_id = kernel.state.ending_id
+            break
+        if kernel.state.pending_options:
+            out = await kernel.apply_player_choice(choice_index)
+        else:
+            out = await kernel.advance_reading()
+        for m in out:
+            if m.get("type") == "ending":
+                ending_id = m.get("ending_id") or kernel.state.ending_id
+                break
+        if kernel.state.ended:
+            break
+    return ending_id
+
+
 @pytest.mark.asyncio
 async def test_stubs_return_structured():
     pack = load_setting_pack(SCRIPTS, "chapter_01")
@@ -18,6 +38,37 @@ async def test_stubs_return_structured():
     assert scene.narration
     opts = await StubChoice().generate_options(state, pack, scene, mem)
     assert len(opts) >= 2
+    # Stub choices must carry goal progress so multi-endings are reachable.
+    assert any(o.predicted_consequences.goal_effects for o in opts)
+
+
+@pytest.mark.asyncio
+async def test_stub_director_does_not_reemit_opening_seed():
+    """GameKernel.start() emits opening_seed once; first scene must differ."""
+    pack = load_setting_pack(SCRIPTS, "chapter_01")
+    state = initial_world_state(pack, "s")
+    assert state.steps == 0
+    seed = (pack.opening_seed or "").strip()
+    assert seed
+
+    start_msgs = await GameKernel(
+        pack,
+        state,
+        EventDatabase(),
+        StubDirector(),
+        StubCharacter(),
+        StubChoice(),
+        StubMemory(),
+    ).start()
+    seed_msgs = [
+        m for m in start_msgs if m.get("type") == "narration" and m.get("content") == seed
+    ]
+    assert len(seed_msgs) == 1
+
+    scene = await StubDirector().generate_scene(state, pack, [])
+    assert scene.narration
+    assert scene.narration.strip() != seed
+    assert seed not in scene.narration
 
 
 @pytest.mark.asyncio
@@ -35,21 +86,42 @@ async def test_kernel_reaches_ending_with_stubs():
     assert kernel.state.tension == 3
     assert kernel.state.phase.value == "setup"
 
-    # Drive until ending or safety cap
-    ended = False
-    for _ in range(40):
-        if kernel.state.ended:
-            ended = True
-            break
-        if kernel.state.pending_options:
-            out = await kernel.apply_player_choice(0)
-        else:
-            out = await kernel.advance_reading()
-        if any(m["type"] == "ending" for m in out):
-            ended = True
-            break
-    assert ended
+    ending_id = await _drive_until_ending(kernel, choice_index=0)
     assert kernel.state.ended
+    assert ending_id is not None
+
+
+@pytest.mark.asyncio
+async def test_always_pick_opt0_reaches_alice_route():
+    """StubChoice opt0 stacks ally_alice + trust; three picks → alice_route."""
+    pack = load_setting_pack(SCRIPTS, "chapter_01")
+    state = initial_world_state(pack, "s")
+    kernel = GameKernel(
+        pack, state, EventDatabase(),
+        StubDirector(), StubCharacter(), StubChoice(), StubMemory(),
+    )
+    await kernel.start()
+    ending_id = await _drive_until_ending(kernel, choice_index=0)
+    assert kernel.state.ended
+    assert ending_id == "alice_route"
+    assert kernel.state.ending_id == "alice_route"
+    assert kernel.state.flags.get("met_alice") is True
+
+
+@pytest.mark.asyncio
+async def test_always_pick_opt1_reaches_bob_route():
+    """StubChoice opt1 stacks ally_bob + bob trust → bob_route before fallback."""
+    pack = load_setting_pack(SCRIPTS, "chapter_01")
+    state = initial_world_state(pack, "s")
+    kernel = GameKernel(
+        pack, state, EventDatabase(),
+        StubDirector(), StubCharacter(), StubChoice(), StubMemory(),
+    )
+    await kernel.start()
+    ending_id = await _drive_until_ending(kernel, choice_index=1)
+    assert kernel.state.ended
+    assert ending_id == "bob_route"
+    assert kernel.state.ending_id == "bob_route"
 
 
 @pytest.mark.asyncio

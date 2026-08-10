@@ -218,7 +218,17 @@ async def websocket_game(websocket: WebSocket, session_id: str):
                         }
                     )
                     continue
-                outs = await kernel.apply_player_choice(int(data["option_index"]))
+                try:
+                    option_index = int(data["option_index"])
+                except (TypeError, ValueError):
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "message": "option_index must be an integer",
+                        }
+                    )
+                    continue
+                outs = await kernel.apply_player_choice(option_index)
             else:
                 outs = await kernel.advance_reading()
 

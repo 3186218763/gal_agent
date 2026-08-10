@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from src.domain.events import EventDatabase
-from src.domain.options import ChoiceOption, PredictedConsequences
+from src.domain.options import ChoiceOption, GoalEffect, PredictedConsequences
 from src.domain.scene import SceneIntent
 from src.domain.setting_pack import SettingPack
 from src.domain.world_state import WorldState
@@ -12,7 +12,11 @@ _HIGH_TENSION = 8
 
 
 class StubDirector:
-    """Deterministic director: opening seed, then alternating goal focus."""
+    """Deterministic director: first-scene hook, then alternating goal focus.
+
+    Does **not** re-emit ``pack.opening_seed`` — ``GameKernel.start()`` already
+    sends that once as the opening narration.
+    """
 
     async def generate_scene(
         self,
@@ -23,42 +27,43 @@ class StubDirector:
         char_ids = [c.id for c in pack.characters]
         goal_ids = [g.id for g in pack.goals]
 
-        if state.steps == 0 and pack.opening_seed.strip():
-            narration = pack.opening_seed.strip()
-            focus = goal_ids[:1]
+        # Alternate focus goals by step index (including step 0).
+        if goal_ids:
+            idx = state.steps % len(goal_ids)
+            focus = [goal_ids[idx]]
+            # Optionally pair with next goal for mild multi-focus.
+            if len(goal_ids) > 1 and state.steps % 2 == 1:
+                focus = [goal_ids[idx], goal_ids[(idx + 1) % len(goal_ids)]]
+        else:
+            focus = []
+
+        focus_title = ""
+        if focus:
+            gmap = {g.id: g.title for g in pack.goals}
+            focus_title = " / ".join(gmap.get(fid, fid) for fid in focus)
+
+        if state.steps == 0:
+            # First reading scene — distinct from opening_seed (emitted by start()).
+            narration = (
+                "门铃轻响，一位陌生女孩在门口张望，似乎在找人。"
+                + (f" 焦点：{focus_title}。" if focus_title else "")
+            )
             mood = "calm"
-            location_id = pack.world.locations[0].id if pack.world.locations else None
+            event_tags = ["setup"]
             speaking = char_ids[:1] if char_ids else []
             directives = {
                 cid: f"向玩家打招呼，呼应开场气氛（目标：{focus[0] if focus else 'none'}）"
                 for cid in speaking
             }
         else:
-            # Alternate focus goals by step index.
-            if goal_ids:
-                idx = state.steps % len(goal_ids)
-                focus = [goal_ids[idx]]
-                # Optionally pair with next goal for mild multi-focus.
-                if len(goal_ids) > 1 and state.steps % 2 == 1:
-                    focus = [goal_ids[idx], goal_ids[(idx + 1) % len(goal_ids)]]
-            else:
-                focus = []
-
-            focus_title = ""
-            if focus:
-                gmap = {g.id: g.title for g in pack.goals}
-                focus_title = " / ".join(gmap.get(fid, fid) for fid in focus)
-
             narration = (
                 f"第 {state.steps + 1} 步。气氛在咖啡馆中继续推进。"
                 + (f" 焦点：{focus_title}。" if focus_title else "")
             )
             if memories:
                 narration += f" （回忆：{memories[-1][:40]}）"
-
             mood = "tense" if state.tension >= _HIGH_TENSION else "neutral"
-            location_id = pack.world.locations[0].id if pack.world.locations else None
-            # Alternate who speaks.
+            event_tags = ["advance"]
             if char_ids:
                 speaking = [char_ids[state.steps % len(char_ids)]]
             else:
@@ -68,6 +73,7 @@ class StubDirector:
                 for cid in speaking
             }
 
+        location_id = pack.world.locations[0].id if pack.world.locations else None
         wants_option = state.turns_since_last_option >= 3 or state.tension >= _HIGH_TENSION
 
         return SceneIntent(
@@ -80,7 +86,7 @@ class StubDirector:
             suggested_tension_delta=1 if wants_option else 0,
             wants_option=wants_option,
             decision_pressure=wants_option and state.tension >= _HIGH_TENSION,
-            event_tags=["setup"] if state.steps == 0 else ["advance"],
+            event_tags=event_tags,
             phase_hint=None,
         )
 
@@ -109,7 +115,11 @@ class StubCharacter:
 
 
 class StubChoice:
-    """Always three distinct options with different consequence fingerprints."""
+    """Three distinct options; repeated picks can complete ally routes.
+
+    Strategy (chapter_01): always-pick index 0 → alice_route before max_steps
+    (3× trust+25 + ally_alice δ0.4). Always-pick index 1 → bob_route.
+    """
 
     async def generate_options(
         self,
@@ -125,8 +135,15 @@ class StubChoice:
                 stance="bold",
                 player_intent="ally_alice",
                 predicted_consequences=PredictedConsequences(
-                    flag_changes={"chose_alice": True},
-                    relationship_deltas={"alice": {"trust": 10, "romance": 2}},
+                    flag_changes={
+                        "met_alice": True,
+                        "talked_to_alice": True,
+                        "chose_alice": True,
+                    },
+                    relationship_deltas={"alice": {"trust": 25, "romance": 2}},
+                    goal_effects=[
+                        GoalEffect(goal_id="ally_alice", delta_progress=0.4),
+                    ],
                     tension_delta=1,
                     tags=["chose_alice"],
                 ),
@@ -138,8 +155,14 @@ class StubChoice:
                 stance="cautious",
                 player_intent="ally_bob",
                 predicted_consequences=PredictedConsequences(
-                    flag_changes={"chose_bob": True},
-                    relationship_deltas={"bob": {"trust": 10}},
+                    flag_changes={
+                        "chose_bob": True,
+                        "questioned_alice": True,
+                    },
+                    relationship_deltas={"bob": {"trust": 25}},
+                    goal_effects=[
+                        GoalEffect(goal_id="ally_bob", delta_progress=0.4),
+                    ],
                     tension_delta=0,
                     tags=["chose_bob"],
                 ),
@@ -156,6 +179,9 @@ class StubChoice:
                         "alice": {"trust": -2},
                         "bob": {"trust": -2},
                     },
+                    goal_effects=[
+                        GoalEffect(goal_id="learn_org_truth", delta_progress=0.15),
+                    ],
                     tension_delta=-1,
                     tags=["stayed_neutral"],
                 ),

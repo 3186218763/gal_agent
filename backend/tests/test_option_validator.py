@@ -1,14 +1,27 @@
 from src.domain.options import ChoiceOption, PredictedConsequences, GoalEffect
-from src.rules.option_validator import validate_options, fallback_options
+from src.rules.option_validator import (
+    consequence_fingerprint,
+    validate_options,
+    fallback_options,
+)
 
 
-def _opt(text, flags=None, rel=None, goal=None):
+def _opt(text, flags=None, rel=None, goal=None, delta=0.1, force_complete=False):
+    effects = []
+    if goal:
+        effects = [
+            GoalEffect(
+                goal_id=goal,
+                delta_progress=delta,
+                force_complete=force_complete,
+            )
+        ]
     return ChoiceOption(
         text=text,
         predicted_consequences=PredictedConsequences(
             flag_changes=flags or {},
             relationship_deltas=rel or {},
-            goal_effects=[GoalEffect(goal_id=goal, delta_progress=0.1)] if goal else [],
+            goal_effects=effects,
         ),
     )
 
@@ -58,3 +71,28 @@ def test_fallback_has_consequences():
         or o.predicted_consequences.goal_effects
         for o in fb
     )
+
+
+def test_fingerprint_includes_goal_delta_and_force_complete():
+    """Different delta_progress / force_complete must not look like 假选择."""
+    a = _opt("推进一点", goal="ally_alice", delta=0.2)
+    b = _opt("推进很多", goal="ally_alice", delta=0.8)
+    c = _opt("直接完成", goal="ally_alice", delta=0.1, force_complete=True)
+
+    fp_a = consequence_fingerprint(a)
+    fp_b = consequence_fingerprint(b)
+    fp_c = consequence_fingerprint(c)
+    assert fp_a != fp_b
+    assert fp_a != fp_c
+    assert fp_b != fp_c
+    assert "delta_progress" in fp_a
+    assert "force_complete" in fp_a
+
+    r = validate_options(
+        [a, b],
+        valid_character_ids=set(),
+        valid_goal_ids={"ally_alice"},
+        recent_choice_tags=[],
+    )
+    assert r.valid is True
+    assert len(r.options) == 2

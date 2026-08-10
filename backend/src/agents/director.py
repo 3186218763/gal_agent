@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import logging
 import re
 import sys
 from pathlib import Path
@@ -19,6 +20,8 @@ from src.domain.enums import Phase
 from src.domain.scene import SceneIntent
 from src.domain.setting_pack import SettingPack
 from src.domain.world_state import WorldState
+
+logger = logging.getLogger(__name__)
 
 _DIRECTOR_SYSTEM = """你是一个 Galgame 游戏导演（Director）。
 
@@ -298,4 +301,5 @@ class SdkDirector:
             data = _extract_json_object(str(output_text))
             return _scene_from_dict(data, pack.opening_seed or "", pack.premise or "")
         except Exception:
+            logger.warning("SdkDirector.generate_scene failed; using fallback", exc_info=True)
             return _safe_scene_intent(pack.opening_seed or "", pack.premise or "")

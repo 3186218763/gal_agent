@@ -6,10 +6,13 @@ SdkCharacter is constructed / used. SDK load is shared with director.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from src.domain.setting_pack import CharacterDef, SettingPack
 from src.domain.world_state import WorldState
+
+logger = logging.getLogger(__name__)
 
 _CHARACTER_SYSTEM = """你是 Galgame 中的 NPC 角色扮演者。
 
@@ -105,4 +108,9 @@ class SdkCharacter:
                 return _fallback_line(name)
             return dialogue
         except Exception:
+            logger.warning(
+                "SdkCharacter.generate_dialogue failed for %s; using fallback",
+                char_id,
+                exc_info=True,
+            )
             return _fallback_line(name)
