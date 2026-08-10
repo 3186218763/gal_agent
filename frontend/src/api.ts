@@ -2,17 +2,24 @@ const API_BASE = 'http://localhost:8000';
 
 export interface CreateSessionResponse {
   session_id: string;
-  chapter_id: string;
+  pack_id: string;
+  /** Backend echoes pack_id here for older clients. */
+  chapter_id?: string;
 }
 
 export const api = {
-  async createSession(chapterId: string = 'chapter_01'): Promise<CreateSessionResponse> {
+  /**
+   * Create a game session.
+   * Prefers `pack_id`; still accepts a string default of `chapter_01`.
+   * Body also includes `chapter_id` for backward-compatible backends.
+   */
+  async createSession(packId: string = 'chapter_01'): Promise<CreateSessionResponse> {
     const response = await fetch(`${API_BASE}/api/sessions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ chapter_id: chapterId }),
+      body: JSON.stringify({ pack_id: packId, chapter_id: packId }),
     });
 
     if (!response.ok) {

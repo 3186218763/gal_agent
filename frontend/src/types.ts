@@ -5,6 +5,7 @@ export interface GameMessage {
 
 export interface GameStartMessage extends GameMessage {
   type: 'game_start';
+  /** Pack title string (backend still uses field name `chapter`). */
   chapter: string;
   session_id: string;
 }
@@ -38,6 +39,9 @@ export interface StateUpdateMessage extends GameMessage {
   changes: {
     flags?: Record<string, any>;
     relationships?: Record<string, { trust: number; romance: number }>;
+    phase?: string;
+    tension?: number;
+    steps?: number;
   };
 }
 
@@ -46,7 +50,7 @@ export interface EndingMessage extends GameMessage {
   ending_id: string;
   title: string;
   content: string;
-  ending_type: 'victory' | 'branch' | 'game_over';
+  ending_type: 'victory' | 'branch' | 'game_over' | 'fallback';
 }
 
 export interface PlayerChoiceMessage {
@@ -56,7 +60,12 @@ export interface PlayerChoiceMessage {
 
 export interface SessionInfo {
   session_id: string;
-  current_chapter: string;
-  current_beat_index: number;
-  tension_level: number;
+  pack_id: string;
+  steps: number;
+  tension: number;
+  phase: string;
+  /** Legacy optional fields (older sessions / UI). */
+  current_chapter?: string;
+  current_beat_index?: number;
+  tension_level?: number;
 }

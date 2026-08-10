@@ -50,11 +50,13 @@ export default function Game({ sessionId, onEnd }: GameProps) {
 
     switch (message.type) {
       case 'game_start': {
-        const msg = message as any
+        // Backend sends pack title in `chapter` (e.g. "邂逅"), not a chapter number.
+        const msg = message as { chapter?: string; session_id?: string }
+        const title = (msg.chapter && String(msg.chapter).trim()) || '新旅程'
         setMessages([{
           id: `start-${Date.now()}`,
           type: 'narration',
-          content: `第${msg.chapter}章开始`,
+          content: `《${title}》开始`,
           mood: '开场'
         }])
         break

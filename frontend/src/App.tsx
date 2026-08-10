@@ -13,7 +13,7 @@ function App() {
     setError(null)
 
     try {
-      const response = await api.createSession('chapter_01')
+      const response = await api.createSession('chapter_01') // pack_id
       setSessionId(response.session_id)
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建游戏会话失败')
