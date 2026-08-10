@@ -98,9 +98,20 @@ class SessionResponse(BaseModel):
     blocks: tuple[NarrativeBlock, ...] = ()
     choices: tuple[PresentedChoice, ...] = ()
     ending_id: str | None = None
+    ending_title: str | None = None
 
     @classmethod
     def from_state(cls, state: SessionState) -> SessionResponse:
+        if state.pending_scene is not None:
+            scene_id = state.pending_scene.scene_id
+            blocks = state.pending_scene.blocks
+        elif state.ending is not None:
+            # SessionEnded clears pending_scene; epilogue lives on ending.
+            scene_id = None
+            blocks = state.ending.blocks
+        else:
+            scene_id = None
+            blocks = ()
         return cls(
             session_id=state.session_id,
             pack_id=state.pack_id,
@@ -113,12 +124,13 @@ class SessionResponse(BaseModel):
                 if state.pending_decision is not None
                 else None
             ),
-            scene_id=state.pending_scene.scene_id if state.pending_scene is not None else None,
-            blocks=state.pending_scene.blocks if state.pending_scene is not None else (),
+            scene_id=scene_id,
+            blocks=blocks,
             choices=(
                 state.pending_decision.choices if state.pending_decision is not None else ()
             ),
             ending_id=state.ending.ending_id if state.ending is not None else None,
+            ending_title=state.ending.title if state.ending is not None else None,
         )
 
 

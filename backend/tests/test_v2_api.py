@@ -259,3 +259,43 @@ def test_get_session_returns_created_state(tmp_path: Path):
     assert body["pack_id"] == "test_pack"
     assert body["revision"] == 0
     assert body["status"] == "active"
+
+
+def test_get_session_keeps_ending_title_and_epilogue_after_end(tmp_path: Path):
+    packs_root = write_test_pack(tmp_path)
+    pack_yaml = packs_root / "test_pack" / "pack.yaml"
+    raw = yaml.safe_load(pack_yaml.read_text(encoding="utf-8"))
+    for ending in raw["endings"]:
+        if ending["type"] == "fallback":
+            ending["id"] = "safe_exit"
+    pack_yaml.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    store = StoryEventStore(tmp_path / "story.db")
+    registry = ScriptPackRegistry(packs_root)
+    runtime = RuntimeService(store, FakePlanner(), FakeWriter())
+    pack = registry.get("test_pack")
+    state = initial_session_state(pack, "session_ending", session_seed=9)
+    world = state.world.model_copy(update={"scene_count": state.world.max_scenes})
+    store.create_session(state.model_copy(update={"world": world}))
+    http = TestClient(create_app(AppDependencies(store=store, registry=registry, runtime=runtime)))
+
+    scene = http.post(
+        "/api/v2/sessions/session_ending/advance",
+        json={"expected_revision": 0},
+    )
+    assert scene.status_code == 200
+    advance_body = scene.json()
+    assert advance_body["ending_id"] == "safe_exit"
+    assert advance_body["ending_title"] == "Closing Time"
+    assert advance_body["blocks"][0]["text"] == "Ending: Closing Time"
+
+    loaded = http.get("/api/v2/sessions/session_ending")
+    assert loaded.status_code == 200
+    body = loaded.json()
+    assert body["status"] == "ended"
+    assert body["ending_id"] == "safe_exit"
+    assert body["ending_title"] == "Closing Time"
+    assert body["blocks"][0]["text"] == "Ending: Closing Time"
+    assert body["scene_id"] is None

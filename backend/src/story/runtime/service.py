@@ -178,6 +178,8 @@ class RuntimeService:
             entered_at_revision=state.revision + 1,
             required_payoffs=ending.required_outcomes,
             final_scene_budget=1,
+            title=draft.title,
+            blocks=draft.blocks,
         )
         committed = SceneCommitted(
             scene_id=f"ending_{ending.id}_{state.revision + 1}",

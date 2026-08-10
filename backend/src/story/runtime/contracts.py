@@ -164,6 +164,7 @@ class RuntimeScene(RuntimeModel):
     blocks: tuple[NarrativeBlock, ...]
     choices: tuple[PresentedChoice, ...] = ()
     ending_id: str | None = None
+    ending_title: str | None = None
 
     @classmethod
     def from_committed(
@@ -171,17 +172,15 @@ class RuntimeScene(RuntimeModel):
         state: SessionState,
         event: SceneCommitted,
     ) -> RuntimeScene:
+        ending = state.ending if event.terminal == "ending" else None
         return cls(
             session_id=state.session_id,
             revision=state.revision,
             scene_id=event.scene_id,
             blocks=event.blocks,
             choices=event.choices,
-            ending_id=(
-                state.ending.ending_id
-                if event.terminal == "ending" and state.ending is not None
-                else None
-            ),
+            ending_id=ending.ending_id if ending is not None else None,
+            ending_title=ending.title if ending is not None else None,
         )
 
 

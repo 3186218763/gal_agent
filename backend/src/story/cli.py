@@ -124,12 +124,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
         if args.command == "play-live":
+            from dotenv import load_dotenv
+
             from src.story.runtime.config import OpenCodeGoSettings
             from src.story.runtime.model import build_model_bundle
             from src.story.runtime.planner import SdkPlanner
             from src.story.runtime.service import RuntimeService
             from src.story.runtime.writer import SdkWriter
 
+            load_dotenv()
             pack = compile_script_pack(args.pack_path)
             store = StoryEventStore(args.database)
             settings = OpenCodeGoSettings.from_env()

@@ -161,7 +161,14 @@ async def test_eligible_ending_commits_atomic_epilogue(tmp_path):
     state = store.load_session("session_01")
     result = await service.advance(pack, state.session_id, state.revision)
     assert result.ending_id == "safe_exit"
-    assert store.load_session(state.session_id).status == SessionStatus.ENDED
+    assert result.ending_title == "Closing Time"
+    assert result.blocks[0].text == "Ending: Closing Time"
+    ended = store.load_session(state.session_id)
+    assert ended.status == SessionStatus.ENDED
+    assert ended.pending_scene is None
+    assert ended.ending is not None
+    assert ended.ending.title == "Closing Time"
+    assert ended.ending.blocks[0].text == "Ending: Closing Time"
     assert [item.event.type for item in store.load_events(state.session_id)][-3:] == [
         "ending_entered",
         "scene_committed",

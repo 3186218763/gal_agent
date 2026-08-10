@@ -98,6 +98,8 @@ def _state_at_max_scenes_with_ending_entered():
                     entered_at_revision=1,
                     required_payoffs=("Close the current conflict.",),
                     final_scene_budget=1,
+                    title="Closing Time",
+                    blocks=(_narration("The lights dim on a quiet night."),),
                 )
             ),
         ),
@@ -326,6 +328,8 @@ def test_ending_entry_revision_must_match_event_sequence():
                         entered_at_revision=2,
                         required_payoffs=("Close the current conflict.",),
                         final_scene_budget=1,
+                        title="Closing Time",
+                        blocks=(_narration("The lights dim on a quiet night."),),
                     )
                 ),
             ),
@@ -344,6 +348,8 @@ def test_ended_session_rejects_new_events():
                     entered_at_revision=1,
                     required_payoffs=("Close the current conflict.",),
                     final_scene_budget=1,
+                    title="Closing Time",
+                    blocks=(_narration("The lights dim on a quiet night."),),
                 )
             ),
         ),

@@ -147,6 +147,8 @@ class EndingRuntime(FrozenModel):
     entered_at_revision: int = Field(ge=1)
     required_payoffs: tuple[str, ...]
     final_scene_budget: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=120)
+    blocks: tuple[NarrativeBlock, ...] = Field(min_length=1)
 
 
 class WorldSnapshot(FrozenModel):
