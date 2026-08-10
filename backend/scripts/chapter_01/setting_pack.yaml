@@ -1,0 +1,73 @@
+pack_id: "chapter_01"
+title: "邂逅"
+premise: |
+  玩家被卷入与神秘组织有关的线索。在街角咖啡馆，外向的艾丽丝主动接近并寻求帮助，
+  谨慎的鲍勃随后介入并警告不要轻信。玩家必须在信任、理性与求真之间做出选择。
+world:
+  locations:
+    - id: cafe
+      name: "街角咖啡馆"
+      tags: [public, first_meet]
+characters:
+  - id: alice
+    name: "艾丽丝"
+    personality: "外向、好奇、有点粗心，对神秘事物充满兴趣。她说话直接，但有时会不经意透露太多信息。"
+    public_info: "自称发现了与神秘组织有关的线索，需要帮手。"
+    private_info: "笔记中有未完全核实的推测，也可能隐瞒了部分风险。"
+    initial_relationship: {trust: 50, romance: 0}
+  - id: bob
+    name: "鲍勃"
+    personality: "谨慎、理性、善于分析。他对艾丽丝持怀疑态度，认为她隐藏了什么。说话简洁，喜欢用事实说话。"
+    public_info: "警告玩家不要轻信艾丽丝，主张更谨慎地处理线索。"
+    private_info: "掌握部分组织相关背景，但未必愿意一次性全盘托出。"
+    initial_relationship: {trust: 40, romance: 0}
+goals:
+  - id: ally_alice
+    title: "与艾丽丝结盟"
+    description: "取得艾丽丝的信任并同意合作追查线索。"
+    weight: 1.0
+    conflicts_with: [ally_bob]
+    success_hint: "提高 alice 信任并完成合作约定"
+  - id: ally_bob
+    title: "站在鲍勃一边"
+    description: "采纳鲍勃的警告，与他保持一致并保持距离。"
+    weight: 1.0
+    conflicts_with: [ally_alice]
+    success_hint: "提高 bob 信任并质疑艾丽丝的说法"
+  - id: learn_org_truth
+    title: "摸清组织一角"
+    description: "通过对话与观察获得可靠的情报线索。"
+    type: discover
+    weight: 0.8
+    success_hint: "收集关于组织的可验证信息"
+endings:
+  - id: alice_route
+    title: "信任的开始"
+    priority: 100
+    type: victory
+    condition: "goals.ally_alice.completed and alice_trust >= 70"
+    content: "你选择相信艾丽丝。她露出了真诚的笑容，也许这是一段新友谊的开始。"
+  - id: bob_route
+    title: "理性的选择"
+    priority: 90
+    type: victory
+    condition: "goals.ally_bob.completed and bob_trust >= 60"
+    content: "你选择站在鲍勃一边。他点了点头，认可了你的判断力。"
+  - id: bad_trust
+    title: "信任破裂"
+    priority: 80
+    type: game_over
+    condition: "alice_trust < 20 and met_alice"
+    content: "艾丽丝失望地离开了。你失去了一个重要的盟友。"
+  - id: timeout_fallback
+    title: "未竟的午后"
+    priority: 1
+    type: fallback
+    condition: "steps >= 24"
+    content: "咖啡馆打烊了，故事暂时告一段落。"
+initial_flags: {}
+opening_seed: |
+  午后的咖啡馆里，阳光透过落地窗洒在木质地板上。你独自坐在靠窗的位置，手里拿着一杯拿铁，等待着约好的朋友。
+
+  窗外的街道上人来人往，一切都显得如此寻常。
+max_steps: 24
