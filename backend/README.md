@@ -224,6 +224,18 @@ Set flag: `game_started = true`
 uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+## V2 Story Foundation
+
+The V2 domain can validate a script pack and initialize an event-sourced session without an API key:
+
+```bash
+uv run python -m src.story.cli validate script_packs/cafe_mystery
+uv run python -m src.story.cli init-session script_packs/cafe_mystery --database data/story.db --session-id local_demo --seed 17
+uv run python -m src.story.cli inspect-session local_demo --database data/story.db
+```
+
+The V1 FastAPI and WebSocket entry point remains unchanged during this foundation milestone.
+
 ## License
 
 MIT
