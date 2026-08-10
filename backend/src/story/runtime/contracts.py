@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.story.script_pack.models import CompiledScriptPack, EndingSource
-from src.story.state import NarrativeBlock, PresentedChoice, SessionState
+from src.story.state import NarrativeBlock, PresentedChoice, SceneCommitted, SessionState
 
 
 class RuntimeModel(BaseModel):
@@ -155,3 +155,58 @@ class WriterPort(Protocol):
         ending: EndingSource,
     ) -> EndingDraft:
         raise NotImplementedError
+
+
+class RuntimeScene(RuntimeModel):
+    session_id: str
+    revision: int
+    scene_id: str
+    blocks: tuple[NarrativeBlock, ...]
+    choices: tuple[PresentedChoice, ...] = ()
+    ending_id: str | None = None
+
+    @classmethod
+    def from_committed(
+        cls,
+        state: SessionState,
+        event: SceneCommitted,
+    ) -> RuntimeScene:
+        return cls(
+            session_id=state.session_id,
+            revision=state.revision,
+            scene_id=event.scene_id,
+            blocks=event.blocks,
+            choices=event.choices,
+            ending_id=(
+                state.ending.ending_id
+                if event.terminal == "ending" and state.ending is not None
+                else None
+            ),
+        )
+
+
+class ActionResult(RuntimeModel):
+    session_id: str
+    revision: int
+    action_id: str
+    outcome: str
+
+
+class RuntimeRevisionConflict(RuntimeError):
+    pass
+
+
+class DecisionRequired(RuntimeError):
+    pass
+
+
+class InvalidChoice(RuntimeError):
+    pass
+
+
+class RuntimeSessionEnded(RuntimeError):
+    pass
+
+
+class PackMismatch(RuntimeError):
+    pass
