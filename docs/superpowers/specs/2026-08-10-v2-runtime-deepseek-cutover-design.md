@@ -1,7 +1,7 @@
 # Galgame AI V2 Runtime 与 DeepSeek 接入设计
 
 - **日期**：2026-08-10
-- **状态**：待用户审阅
+- **状态**：已确认
 - **目标**：删除旧 V1 运行时，以 V2 为唯一产品主线，并通过 OpenAI Agents SDK 接入 OpenCode Go 的 DeepSeek V4 Flash Responses API
 - **依赖设计**：`2026-08-10-constrained-dynamic-galgame-design.md`
 - **取代范围**：旧 V1 运行时、旧 V1 前后端协议，以及依赖设计中的模型部署与迁移章节
