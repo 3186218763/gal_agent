@@ -17,8 +17,8 @@ from src.core.world_store import WorldStore
 from src.domain.events import EventDatabase
 from src.domain.setting_pack import SettingPack
 from src.domain.world_state import WorldState
+from src.kernel.agent_factory import build_ports
 from src.kernel.game_kernel import GameKernel
-from src.kernel.stubs import StubCharacter, StubChoice, StubDirector, StubMemory
 
 # Paths relative to backend/
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -77,21 +77,24 @@ def build_kernel(
     state: WorldState,
     events: EventDatabase,
 ) -> GameKernel:
-    """Build GameKernel. Task 10 always uses stubs (default GAL_USE_STUBS=1)."""
-    # Prefer stubs so the server works without an API key.
-    # Task 11 will branch on env / OPENAI_API_KEY for real agents.
-    _use_stubs = os.environ.get("GAL_USE_STUBS", "1") != "0"
-    if not _use_stubs:
-        # Still stubs until agent factory lands; flag reserved for Task 11.
-        pass
+    """Build GameKernel with stub or SDK ports.
+
+    Stubs when GAL_USE_STUBS != "0" (default) OR OPENAI_API_KEY is unset.
+    Real SdkDirector only when GAL_USE_STUBS=0 and API key is present.
+    """
+    use_stubs = (
+        os.environ.get("GAL_USE_STUBS", "1") != "0"
+        or not os.environ.get("OPENAI_API_KEY")
+    )
+    director, character, choice, memory = build_ports(use_stubs=use_stubs)
     return GameKernel(
         pack,
         state,
         events,
-        StubDirector(),
-        StubCharacter(),
-        StubChoice(),
-        StubMemory(),
+        director,
+        character,
+        choice,
+        memory,
     )
 
 

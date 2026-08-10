@@ -1,229 +1,301 @@
 """
-Director Agent - 控制游戏流程、选项生成和结局判断
-使用 OpenAI Agents SDK
+Director Agent (SDK) — produces SceneIntent for the GameKernel.
+
+openai-agents is optional at import time; missing package only errors when
+SdkDirector is constructed / used. SDK is imported lazily to avoid clashing
+with this local package name (`agents`).
 """
-from typing import Dict, List, Any
+from __future__ import annotations
+
+import importlib
+import importlib.util
 import json
-from pydantic import BaseModel, Field
+import re
+import sys
+from pathlib import Path
+from typing import Any, Optional, Union
 
-from agents import Agent, Runner, RunContextWrapper
-from agents.decorators import tool
+from src.domain.enums import Phase
+from src.domain.scene import SceneIntent
+from src.domain.setting_pack import SettingPack
+from src.domain.world_state import WorldState
 
-from ..models import GameState, NarrativeBeat
+_DIRECTOR_SYSTEM = """你是一个 Galgame 游戏导演（Director）。
+
+职责：
+1. 在给定世界设定内发明合理场景与旁白（narration）
+2. 服务当前焦点目标（focus goals），推动剧情
+3. 指定说话角色与简短对话指令（dialogue_directives），不要替角色写完整长对话
+4. **不要** 编写玩家选项（options）——选项由 Choice 模块负责
+5. 只输出 **一个 JSON 对象**，字段与 SceneIntent 对齐，不要 Markdown 代码围栏或解释文字
+
+JSON 字段：
+- narration: string（场景旁白，必填）
+- mood: string（如 calm / neutral / tense）
+- location_id: string | null
+- speaking_character_ids: string[]
+- dialogue_directives: object（char_id -> 简短指令）
+- focus_goal_ids: string[]
+- suggested_tension_delta: int，必须在 [-2, 2]
+- wants_option: bool
+- decision_pressure: bool
+- event_tags: string[]
+- phase_hint: string | null
+
+规则：suggested_tension_delta 不得超出 [-2, 2]；不要输出玩家可点击选项文本。
+"""
 
 
-class GameContext(BaseModel):
-    """游戏上下文，在 agents 之间共享"""
-    game_state: Dict[str, Any] = Field(default_factory=dict)
-    current_beat: Dict[str, Any] | None = None
-    chapter_metadata: Dict[str, Any] | None = None
-
-
-class OptionCandidate(BaseModel):
-    """候选选项"""
-    text: str = Field(description="选项文字（玩家视角）")
-    predicted_consequences: Dict[str, Any] = Field(
-        description="预期后果",
-        default_factory=dict
+def build_director_prompt(
+    premise: str,
+    phase: Union[Phase, str],
+    tension: int,
+    goals_summary: str,
+    memories: list[str],
+    opening_seed: str,
+    steps: int,
+) -> str:
+    """Pure prompt builder for unit tests (no network)."""
+    phase_str = phase.value if isinstance(phase, Phase) else str(phase)
+    mem_block = "\n".join(f"- {m}" for m in memories) if memories else "- （无）"
+    return (
+        f"世界前提（premise）：\n{premise}\n\n"
+        f"开场种子（opening_seed，steps==0 时可参考）：\n{opening_seed}\n\n"
+        f"当前阶段（phase）：{phase_str}\n"
+        f"紧张度（tension）：{tension}\n"
+        f"步数（steps）：{steps}\n"
+        f"目标进度（goals）：{goals_summary}\n\n"
+        f"近期记忆（memories）：\n{mem_block}\n\n"
+        "请发明下一场景。在世界内推进剧情，服务焦点目标；"
+        "不要写玩家选项；只输出 SceneIntent 对应的 JSON。"
+        "suggested_tension_delta 必须在 [-2, 2]。"
     )
-    narrative_impact: str = Field(description="对剧情的影响描述", default="")
 
 
-@tool
-async def should_trigger_option_tool(
-    context: RunContextWrapper[GameContext],
-    turns_since_last_option: int,
-    tension_level: int,
-    has_script_marker: bool
-) -> Dict[str, Any]:
-    """
-    判断是否应该触发选项
-
-    Args:
-        context: 游戏上下文
-        turns_since_last_option: 距离上次选项的轮数
-        tension_level: 紧张度 (1-10)
-        has_script_marker: 剧本是否标记了选择点
-
-    Returns:
-        包含 should_trigger 和 score 的字典
-    """
-    score = 0
-
-    # 剧本明确标记 (+40)
-    if has_script_marker:
-        score += 40
-
-    # 对话轮次累积
-    if turns_since_last_option >= 6:
-        score += (turns_since_last_option - 5) * 5
-
-    # 紧张度
-    if tension_level >= 7:
-        score += 15
-
-    # 冷却期惩罚
-    if turns_since_last_option < 3:
-        score -= 30
-
-    return {
-        "should_trigger": score >= 50,
-        "score": score,
-        "reason": f"剧本标记={has_script_marker}, 轮次={turns_since_last_option}, 紧张度={tension_level}"
-    }
+def _goals_summary(state: WorldState) -> str:
+    if not state.goal_progress:
+        return "(none)"
+    parts = []
+    for gid, gr in state.goal_progress.items():
+        parts.append(f"{gid}:{gr.progress}")
+    return ", ".join(parts)
 
 
-class DirectorAgent:
-    """Director Agent - 游戏导演，使用 OpenAI Agents SDK"""
+def _extract_json_object(text: str) -> dict[str, Any]:
+    """Parse JSON object from model output; tolerate fenced markdown."""
+    raw = (text or "").strip()
+    if not raw:
+        raise json.JSONDecodeError("empty", raw, 0)
 
-    def __init__(self):
-        self.agent = Agent[GameContext](
-            name="Director",
-            instructions="""你是一个 Galgame 游戏导演。你的职责：
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw, re.IGNORECASE)
+    if fence:
+        raw = fence.group(1).strip()
 
-1. **判断选项触发时机**
-   - 使用 should_trigger_option_tool 工具判断是否应该给玩家选择
-   - 考虑对话轮次、紧张度、剧本标记
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        pass
 
-2. **生成玩家选项**
-   - 生成 2-4 个有意义、有区分度的选项
-   - 每个选项要有清晰的后果预期
-   - 选项之间要有明显区别（态度、行动、后果）
-   - 避免"假选择"（结果相同的选项）
-   - 至少包含一个温和/中立选项
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start >= 0 and end > start:
+        data = json.loads(raw[start : end + 1])
+        if isinstance(data, dict):
+            return data
+    raise json.JSONDecodeError("no json object", raw, 0)
 
-3. **选项质量要求**
-   - 预测每个选项对角色关系的影响（trust 和 romance 的变化值）
-   - 预测每个选项会设置/改变的剧情标记
-   - 给出对剧情的影响描述
 
-输出格式必须是 JSON，包含 options 数组。
-""",
-            tools=[should_trigger_option_tool],
-        )
+def _clamp_tension_delta(value: Any) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(-2, min(2, n))
 
-    async def should_trigger_option(
-        self,
-        game_state: GameState,
-        current_beat: NarrativeBeat,
-        context: GameContext
-    ) -> Dict[str, Any]:
-        """判断是否触发选项"""
 
-        # 更新上下文
-        context.game_state = game_state.to_dict()
-        context.current_beat = {
-            "title": current_beat.title,
-            "content": current_beat.content,
-            "has_option_point": current_beat.has_option_point
+def _safe_scene_intent(opening_seed: str, premise: str) -> SceneIntent:
+    """Fallback SceneIntent when model output cannot be parsed."""
+    narration = (opening_seed or "").strip() or (premise or "").strip() or "故事继续。"
+    if len(narration) > 240:
+        narration = narration[:240].rstrip() + "…"
+    return SceneIntent(
+        narration=narration,
+        mood="neutral",
+        location_id=None,
+        speaking_character_ids=[],
+        dialogue_directives={},
+        focus_goal_ids=[],
+        suggested_tension_delta=0,
+        wants_option=False,
+        decision_pressure=False,
+        event_tags=["fallback"],
+        phase_hint=None,
+    )
+
+
+def _scene_from_dict(data: dict[str, Any], opening_seed: str, premise: str) -> SceneIntent:
+    if "suggested_tension_delta" in data:
+        data = {
+            **data,
+            "suggested_tension_delta": _clamp_tension_delta(data["suggested_tension_delta"]),
         }
+    if not data.get("narration"):
+        return _safe_scene_intent(opening_seed, premise)
+    try:
+        return SceneIntent.model_validate(data)
+    except Exception:
+        return _safe_scene_intent(opening_seed, premise)
 
-        prompt = f"""
-请使用 should_trigger_option_tool 判断现在是否应该给玩家选择机会。
 
-当前情况：
-- 距离上次选项：{game_state.dialogue_count_since_last_option} 轮
-- 紧张度：{game_state.tension_level}/10
-- 剧本标记：{"是" if current_beat.has_option_point else "否"}
+def _is_local_agents_package(mod: Any) -> bool:
+    """True if `mod` is this repo's agents package, not openai-agents."""
+    f = (getattr(mod, "__file__", None) or "").replace("\\", "/")
+    if not f:
+        return False
+    # Local package lives under backend/src/agents/
+    return f.endswith("/src/agents/__init__.py") or "/backend/src/agents/" in f
 
-调用工具并返回结果。
-"""
 
-        result = await Runner.run(
-            self.agent,
-            input=prompt,
-            context=context
-        )
+def _load_openai_agents_sdk() -> tuple[Any, Any]:
+    """
+    Import Agent and Runner from openai-agents.
 
-        # 从工具调用结果中提取信息
-        for item in result.new_items:
-            if hasattr(item, 'output') and isinstance(item.output, dict):
-                return item.output
+    This repo's local package is also named `agents` and often sits earlier on
+    sys.path (via src layout). Resolve the real SDK from site-packages when
+    the top-level name is shadowed.
+    """
+    existing = sys.modules.get("agents")
+    if existing is not None and not _is_local_agents_package(existing):
+        if hasattr(existing, "Agent") and hasattr(existing, "Runner"):
+            return existing.Agent, existing.Runner
 
-        # 如果没有工具调用，返回默认值
-        return {"should_trigger": False, "score": 0, "reason": "No tool call"}
-
-    async def generate_options(
-        self,
-        game_state: GameState,
-        current_beat: NarrativeBeat,
-        context: GameContext
-    ) -> List[OptionCandidate]:
-        """生成选项"""
-
-        # 更新上下文
-        context.game_state = game_state.to_dict()
-        context.current_beat = {
-            "title": current_beat.title,
-            "content": current_beat.content
-        }
-
-        relationships_str = json.dumps(
-            {k: v.to_dict() for k, v in game_state.relationships.items()},
-            ensure_ascii=False,
-            indent=2
-        )
-
-        prompt = f"""
-当前情境：
-{current_beat.content}
-
-游戏状态：
-- 剧情标记：{json.dumps(game_state.flags, ensure_ascii=False)}
-- 角色关系：{relationships_str}
-- 紧张度：{game_state.tension_level}/10
-
-请生成 3-4 个玩家可以选择的行动选项。
-
-要求：
-1. 每个选项要有清晰的行动描述（玩家视角）
-2. 预测后果（关系变化、flags 设置）
-3. 与其他选项有明显区分
-4. 至少包含一个温和选项
-
-返回 JSON 格式：
-{{
-  "options": [
-    {{
-      "text": "选项文字",
-      "predicted_consequences": {{
-        "flag_changes": {{"某个标记": true}},
-        "relationship_deltas": {{
-          "角色ID": {{"trust": 变化值, "romance": 变化值}}
-        }}
-      }},
-      "narrative_impact": "对剧情的影响描述"
-    }}
-  ]
-}}
-"""
-
-        result = await Runner.run(
-            self.agent,
-            input=prompt,
-            context=context
-        )
-
-        # 提取最终输出的 JSON
-        output_text = result.final_output
-
+    # Prefer a site-packages copy of agents that exposes Agent/Runner.
+    for entry in list(sys.path):
+        if not entry or entry == ".":
+            continue
+        init_path = Path(entry) / "agents" / "__init__.py"
         try:
-            # 尝试解析 JSON
-            data = json.loads(output_text)
-            options_data = data.get("options", [])
+            resolved = str(init_path.resolve())
+        except OSError:
+            continue
+        if not init_path.is_file():
+            continue
+        if resolved.endswith("/src/agents/__init__.py") or "/backend/src/agents/" in resolved.replace(
+            "\\", "/"
+        ):
+            continue
+        # Load under a private name first to inspect, then rebind as needed.
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "agents",
+                init_path,
+                submodule_search_locations=[str(init_path.parent)],
+            )
+            if spec is None or spec.loader is None:
+                continue
+            # If local package occupies sys.modules['agents'], park it.
+            parked: dict[str, Any] = {}
+            for key in list(sys.modules):
+                if key == "agents" or key.startswith("agents."):
+                    mod = sys.modules[key]
+                    if _is_local_agents_package(mod) or (
+                        getattr(mod, "__file__", None)
+                        and "/src/agents/" in str(mod.__file__).replace("\\", "/")
+                    ):
+                        parked[key] = sys.modules.pop(key)
+            try:
+                sdk = importlib.util.module_from_spec(spec)
+                sys.modules["agents"] = sdk
+                spec.loader.exec_module(sdk)
+                if hasattr(sdk, "Agent") and hasattr(sdk, "Runner"):
+                    return sdk.Agent, sdk.Runner
+            finally:
+                # If SDK load failed, restore parked local modules.
+                if "agents" in sys.modules and not hasattr(sys.modules["agents"], "Agent"):
+                    for key, mod in parked.items():
+                        sys.modules[key] = mod
+        except Exception:
+            continue
 
-            # 转换为 OptionCandidate 对象
-            candidates = []
-            for opt_data in options_data:
-                candidates.append(OptionCandidate(
-                    text=opt_data.get("text", ""),
-                    predicted_consequences=opt_data.get("predicted_consequences", {}),
-                    narrative_impact=opt_data.get("narrative_impact", "")
-                ))
+    # Last resort: plain import (works when openai-agents is installed and
+    # not shadowed).
+    try:
+        # Temporarily drop backend/src from path so `agents` is not local.
+        src_entries = [
+            p
+            for p in sys.path
+            if p and Path(p).resolve().name == "src" and (Path(p) / "agents").is_dir()
+        ]
+        removed = []
+        for p in src_entries:
+            sys.path.remove(p)
+            removed.append(p)
+        # Clear shadowed local package if present.
+        parked = {}
+        for key in list(sys.modules):
+            if key == "agents" or key.startswith("agents."):
+                mod = sys.modules[key]
+                if _is_local_agents_package(mod) or (
+                    getattr(mod, "__file__", None)
+                    and "/src/agents/" in str(mod.__file__).replace("\\", "/")
+                ):
+                    parked[key] = sys.modules.pop(key)
+        try:
+            sdk = importlib.import_module("agents")
+            if hasattr(sdk, "Agent") and hasattr(sdk, "Runner"):
+                return sdk.Agent, sdk.Runner
+        finally:
+            for p in reversed(removed):
+                if p not in sys.path:
+                    sys.path.insert(0, p)
+            if not (hasattr(sys.modules.get("agents"), "Agent")):
+                for key, mod in parked.items():
+                    sys.modules[key] = mod
+    except Exception:
+        pass
 
-            return candidates[:4]  # 最多返回 4 个
+    raise ImportError(
+        "openai-agents package is required for SdkDirector. "
+        "Install with: pip install openai-agents  "
+        "Or set GAL_USE_STUBS=1 to use StubDirector."
+    )
 
-        except json.JSONDecodeError:
-            # JSON 解析失败，返回空列表
-            print(f"Failed to parse JSON from director output: {output_text}")
-            return []
+
+class SdkDirector:
+    """DirectorPort implementation via OpenAI Agents SDK."""
+
+    def __init__(self, model: Optional[str] = None) -> None:
+        Agent, _Runner = _load_openai_agents_sdk()
+        kwargs: dict[str, Any] = {
+            "name": "Director",
+            "instructions": _DIRECTOR_SYSTEM,
+        }
+        if model:
+            kwargs["model"] = model
+        self._agent = Agent(**kwargs)
+        self._runner = _Runner
+
+    async def generate_scene(
+        self,
+        state: WorldState,
+        pack: SettingPack,
+        memories: list[str],
+    ) -> SceneIntent:
+        prompt = build_director_prompt(
+            premise=pack.premise or "",
+            phase=state.phase,
+            tension=state.tension,
+            goals_summary=_goals_summary(state),
+            memories=list(memories or []),
+            opening_seed=pack.opening_seed or "",
+            steps=state.steps,
+        )
+        try:
+            result = await self._runner.run(self._agent, input=prompt)
+            output_text = getattr(result, "final_output", None) or str(result)
+            data = _extract_json_object(str(output_text))
+            return _scene_from_dict(data, pack.opening_seed or "", pack.premise or "")
+        except Exception:
+            return _safe_scene_intent(pack.opening_seed or "", pack.premise or "")

@@ -1,4 +1,5 @@
 # backend/src/kernel — agent ports and game loop
+from .agent_factory import build_ports
 from .game_kernel import GameKernel
 from .ports import CharacterPort, ChoicePort, DirectorPort, MemoryPort
 from .stubs import StubCharacter, StubChoice, StubDirector, StubMemory
@@ -13,4 +14,5 @@ __all__ = [
     "StubCharacter",
     "StubChoice",
     "StubMemory",
+    "build_ports",
 ]

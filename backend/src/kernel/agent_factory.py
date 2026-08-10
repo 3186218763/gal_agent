@@ -1,0 +1,32 @@
+"""Agent port factory: stubs vs SDK implementations."""
+from __future__ import annotations
+
+from src.kernel.ports import CharacterPort, ChoicePort, DirectorPort, MemoryPort
+from src.kernel.stubs import StubCharacter, StubChoice, StubDirector, StubMemory
+
+
+def build_ports(
+    use_stubs: bool = True,
+) -> tuple[DirectorPort, CharacterPort, ChoicePort, MemoryPort]:
+    """
+    Build Director/Character/Choice/Memory ports.
+
+    Task 11: stubs for all when use_stubs=True; when False, SdkDirector +
+    stub character/choice/memory until later tasks wire them.
+    """
+    if use_stubs:
+        return (
+            StubDirector(),
+            StubCharacter(),
+            StubChoice(),
+            StubMemory(),
+        )
+
+    from src.agents.director import SdkDirector
+
+    return (
+        SdkDirector(),
+        StubCharacter(),
+        StubChoice(),
+        StubMemory(),
+    )
