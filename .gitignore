@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+uv.lock
+.pytest_cache/
+*.egg
+
+# Env / secrets
+.env
+backend/.env
+backend/data/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/package-lock.json
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Superpowers / local scratch
+.superpowers/
+.worktrees/
