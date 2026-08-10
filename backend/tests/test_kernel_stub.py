@@ -83,3 +83,26 @@ async def test_pending_options_blocks_advance():
     assert any(m["type"] == "error" for m in blocked)
     assert kernel.state.pending_options  # still pending
     assert not kernel.state.ended
+
+
+@pytest.mark.asyncio
+async def test_ending_turn_does_not_emit_options():
+    """When steps hit max_steps on a reading turn, emit ending without options."""
+    pack = load_setting_pack(SCRIPTS, "chapter_01")
+    state = initial_world_state(pack, "s")
+    # One step shy of max so the next advance_reading ends the game.
+    state.steps = pack.max_steps - 1
+    state.turns_since_last_option = 10  # would otherwise favor options
+    state.tension = 9
+    events = EventDatabase()
+    kernel = GameKernel(
+        pack, state, events,
+        StubDirector(), StubCharacter(), StubChoice(), StubMemory(),
+    )
+    out = await kernel.advance_reading()
+    types = [m["type"] for m in out]
+    assert "ending" in types
+    assert "options" not in types
+    assert kernel.state.ended
+    assert not kernel.state.pending_options
+    assert kernel.state.steps >= pack.max_steps

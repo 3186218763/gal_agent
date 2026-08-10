@@ -19,7 +19,13 @@ from src.rules.phase_tension import clamp_phase_hint, maybe_advance_phase, updat
 
 
 class GameKernel:
-    """Owns the reading/choice turn loop and all WorldState writes."""
+    """Owns the reading/choice turn loop and all WorldState writes.
+
+    ``self.state`` is the sole live WorldState after every turn. Callers must
+    not keep a separate reference from construction: ``apply_consequences``
+    rebinds ``self.state`` to a deep-copied model, so only ``kernel.state`` is
+    authoritative for subsequent reads/writes.
+    """
 
     def __init__(
         self,
@@ -32,6 +38,7 @@ class GameKernel:
         memory,
     ) -> None:
         self.pack = pack
+        # Sole live WorldState — reassigned by apply_consequences; do not alias.
         self.state = state
         self.events = events
         self.director = director
@@ -167,7 +174,14 @@ class GameKernel:
         self.state.steps += 1
         self.state.turns_since_last_option += 1
 
-        # 5. Option trigger
+        # 5. Ending check first — never emit options + ending in the same turn
+        ending_msg = self._try_end()
+        if ending_msg:
+            self.state.pending_options = []
+            msgs.append(ending_msg)
+            return msgs
+
+        # 6. Option trigger (only if game continues)
         trigger = should_trigger_option(
             turns_since_last_option=self.state.turns_since_last_option,
             tension=self.state.tension,
@@ -191,11 +205,6 @@ class GameKernel:
                     ],
                 }
             )
-
-        # End-of-session fallback when reading alone hits max_steps
-        ending_msg = self._try_end()
-        if ending_msg:
-            msgs.append(ending_msg)
 
         return msgs
 
@@ -328,13 +337,14 @@ class GameKernel:
         }
 
     def _force_fallback_ending(self) -> Optional[EndingDef]:
-        """Ensure a fallback when steps already at/over max but no condition hit.
+        """Pick an ending when steps >= max_steps and evaluate_endings missed.
 
-        Prefer type=fallback, else any ending whose condition mentions steps,
-        else the lowest-priority ending. Temporarily bumps steps so a
-        `steps >= N` condition can re-eval if needed.
+        Order (always returns an ending if the pack has any):
+        1. Re-run evaluate_endings (conditions may already match after max_steps).
+        2. Highest-priority ending with type=fallback.
+        3. Highest-priority ending whose condition mentions ``steps``.
+        4. Lowest-priority ending as last resort.
         """
-        # Re-eval with steps guaranteed >= max_steps (already true)
         ending = evaluate_endings(self.pack, self.state)
         if ending is not None:
             return ending
