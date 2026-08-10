@@ -1,0 +1,294 @@
+schema_version: "1.0"
+
+identity:
+  id: cafe_mystery
+  title: "咖啡馆疑云"
+  language: zh-CN
+  genres: [romance, mystery]
+  expected_minutes: 120
+
+experience:
+  viewpoint: first_person
+  prose_style: "克制的轻小说风格，重视动作、停顿和对话潜台词"
+  tone: "温柔、日常表面下的悬疑"
+  choice_density: key_moments
+  min_scenes: 20
+  max_scenes: 60
+  reserved_resolution_scenes: 3
+  forbidden_content:
+    - "露骨色情内容"
+    - "无铺垫的极端暴力"
+
+protagonist:
+  id: protagonist
+  name: "悠真"
+  personality:
+    traits: [谨慎, 善于观察]
+    values: [诚实, 不轻易伤害别人]
+    fears: [被卷入无法控制的冲突]
+    flaws: [容易犹豫]
+  background: "刚搬到这座城市的大学生，在咖啡馆等待迟到的朋友。"
+  capabilities: [ask, observe, support, challenge, withhold, disclose, follow, leave]
+  boundaries:
+    cannot:
+      - "使用暴力逼供"
+      - "凭空掌握尚未发现的秘密"
+      - "无理由羞辱陌生人"
+
+world:
+  premise: >
+    玩家在街角咖啡馆遇到寻找遗失笔记本的艾丽丝。笔记本记录了一个神秘组织的
+    符号和活动线索。谨慎的鲍勃很快介入，咖啡馆店长美奈似乎也知道一些事情。
+  immutable_rules:
+    - "神秘组织真实存在，但不会公开展示超自然力量。"
+    - "已经被玩家确认的证据不能被后续场景否认。"
+    - "角色只能依据自己的知识、信念和推测行动。"
+  locations:
+    - id: cafe
+      name: "街角咖啡馆"
+      tags: [public, warm, first_meeting]
+    - id: back_alley
+      name: "咖啡馆后巷"
+      tags: [quiet, risky]
+    - id: old_library
+      name: "旧图书馆"
+      tags: [clues, restricted]
+  factions:
+    - id: veiled_circle
+      name: "隐环"
+      description: "活动目的不明、成员身份隐秘的组织。"
+  initial_situation:
+    location: cafe
+    present_characters: [alice]
+    known_facts: [cafe_is_open]
+    time_label: "周六下午"
+
+characters:
+  - id: alice
+    name: "艾丽丝"
+    public_profile: "外向的大学生，自称遗失了一本记录神秘符号的笔记本。"
+    personality:
+      traits: [外向, 好奇, 冲动]
+      values: [朋友, 真相]
+      fears: [被抛弃, 连累别人]
+      flaws: [紧张时容易说漏嘴]
+    voice:
+      style: "直接、短句，尴尬时会轻微自嘲"
+      forbidden: ["无缘由地冷酷", "长篇学术演讲"]
+    drives:
+      - "找到可信任的调查伙伴"
+      - "在别人发现前补救自己造成的失误"
+    knowledge: [org_exists, alice_lost_notebook]
+    secrets: [alice_lost_notebook, notebook_holder, alice_hidden_motive]
+    capabilities: [ask, observe, support, disclose, follow, leave]
+    initial_relationship: {trust: 35, affection: 5, suspicion: 10}
+    boundaries:
+      cannot: ["主动伤害无辜者"]
+
+  - id: bob
+    name: "鲍勃"
+    public_profile: "说话谨慎的研究生，警告玩家不要轻信艾丽丝。"
+    personality:
+      traits: [理性, 谨慎, 固执]
+      values: [证据, 安全]
+      fears: [过去的错误重演]
+      flaws: [把关心表现成控制]
+    voice:
+      style: "简短、精确，倾向先陈述可验证事实"
+      forbidden: ["轻浮调情", "未经压力就全盘托出"]
+    drives:
+      - "阻止没有准备的人接触隐环"
+      - "确认笔记本是否仍然安全"
+    knowledge: [org_exists, bob_has_org_history]
+    secrets: [bob_has_org_history, notebook_holder]
+    capabilities: [ask, observe, challenge, withhold, follow, leave]
+    initial_relationship: {trust: 25, affection: 0, suspicion: 30}
+    boundaries:
+      cannot: ["伪造实体证据"]
+
+  - id: mina
+    name: "美奈"
+    public_profile: "咖啡馆店长，熟悉附近每一位常客。"
+    personality:
+      traits: [沉着, 体贴, 善于观察]
+      values: [秩序, 保护客人]
+      fears: [店内发生无法收拾的冲突]
+      flaws: [习惯替别人决定什么最好]
+    voice:
+      style: "礼貌、含蓄，重要提醒往往藏在日常措辞里"
+      forbidden: ["突然失控大喊", "炫耀秘密"]
+    drives:
+      - "让咖啡馆远离隐环的注意"
+      - "判断玩家是否会让局势变得更糟"
+    knowledge: [cafe_is_open, org_exists]
+    secrets: [notebook_holder]
+    capabilities: [ask, observe, support, challenge, withhold, disclose, leave]
+    initial_relationship: {trust: 40, affection: 0, suspicion: 15}
+    boundaries:
+      cannot: ["主动把客人交给危险组织"]
+
+facts:
+  fixed:
+    - id: cafe_is_open
+      statement: "咖啡馆将在傍晚六点打烊。"
+      known_by: [alice, bob, mina]
+      visibility: revealed
+    - id: org_exists
+      statement: "名为隐环的秘密组织真实存在。"
+      known_by: [alice, bob, mina]
+      visibility: hidden
+    - id: alice_lost_notebook
+      statement: "艾丽丝确实遗失了自己的调查笔记本。"
+      known_by: [alice]
+      visibility: hidden
+    - id: bob_has_org_history
+      statement: "鲍勃过去曾因隐环遭受损失。"
+      known_by: [bob]
+      visibility: hidden
+
+  latent_questions:
+    - id: notebook_holder
+      question: "现在谁持有笔记本？"
+      selection: lazy_commit
+      candidates:
+        - value: bob
+          weight: 1.0
+          requirements: ["relationships.bob.suspicion >= 20"]
+        - value: mina
+          weight: 1.0
+          requirements: ["relationships.mina.trust >= 30"]
+        - value: courier
+          weight: 0.8
+          requirements: ["session.scene_count >= 4"]
+      commit_when: [first_irreversible_evidence, explicit_revelation]
+      evidence_required: 2
+    - id: alice_hidden_motive
+      question: "艾丽丝为什么急于找回笔记本？"
+      selection: lazy_commit
+      candidates:
+        - value: protect_friend
+          weight: 1.0
+          requirements: ["relationships.alice.affection >= 5"]
+        - value: clear_her_name
+          weight: 1.0
+          requirements: ["relationships.alice.suspicion >= 10"]
+      commit_when: [first_irreversible_evidence, explicit_revelation]
+      evidence_required: 1
+
+  derived:
+    - id: alice_trusts_player
+      condition: "relationships.alice.trust >= 70"
+    - id: bob_trusts_player
+      condition: "relationships.bob.trust >= 65"
+    - id: core_truth_known
+      condition: "facts.notebook_holder.visibility == 'revealed'"
+
+goals:
+  - id: alice_find_ally
+    owner: alice
+    desire: "找到愿意共同调查且不会利用她失误的人。"
+    urgency: 0.8
+    conflicts_with: [bob_limit_exposure]
+    success_condition: "relationships.alice.trust >= 70"
+    failure_condition: "relationships.alice.trust <= 10"
+  - id: bob_limit_exposure
+    owner: bob
+    desire: "确认玩家不会把隐环线索扩散给更多人。"
+    urgency: 0.7
+    conflicts_with: [alice_find_ally]
+    success_condition: "relationships.bob.trust >= 65"
+    failure_condition: "relationships.bob.trust <= 10"
+  - id: protagonist_learn_truth
+    owner: protagonist
+    desire: "查明笔记本去向，并理解三人的真实立场。"
+    urgency: 0.6
+    conflicts_with: []
+    success_condition: "facts.notebook_holder.visibility == 'revealed'"
+    failure_condition: "session.scene_count >= 57 and facts.notebook_holder.visibility != 'revealed'"
+
+interaction_rules:
+  enabled_standard: [ask, observe, support, challenge, withhold, disclose, follow, leave]
+  disabled: []
+  extensions: []
+
+endings:
+  - id: alice_alliance
+    title: "共同追寻"
+    type: hopeful
+    priority: 100
+    eligibility:
+      all:
+        - "goals.alice_find_ally.completed"
+        - "relationships.alice.trust >= 70"
+        - "facts.notebook_holder.truth_status == 'committed'"
+      any: []
+      none: []
+    required_outcomes:
+      - "玩家与艾丽丝决定继续合作。"
+      - "本局已经出现的笔记本证据得到解释。"
+    forbidden_outcomes: ["无依据地将艾丽丝写成隐环首领。"]
+    closing_tone: "温暖，但保留对隐环的未知风险"
+
+  - id: bob_alliance
+    title: "谨慎的同盟"
+    type: hopeful
+    priority: 90
+    eligibility:
+      all:
+        - "goals.bob_limit_exposure.completed"
+        - "relationships.bob.trust >= 65"
+      any: []
+      none: []
+    required_outcomes:
+      - "鲍勃承认玩家有资格继续调查。"
+      - "说明艾丽丝对这一选择的反应。"
+    forbidden_outcomes: ["鲍勃突然放弃对证据的重视。"]
+    closing_tone: "克制、可靠"
+
+  - id: independent_truth
+    title: "自己的答案"
+    type: neutral
+    priority: 80
+    eligibility:
+      all:
+        - "goals.protagonist_learn_truth.completed"
+        - "facts.notebook_holder.visibility == 'revealed'"
+      any: []
+      none:
+        - "relationships.alice.trust >= 70"
+        - "relationships.bob.trust >= 65"
+    required_outcomes:
+      - "玩家独立判断笔记本真相。"
+      - "回应艾丽丝、鲍勃和美奈的立场。"
+    forbidden_outcomes: ["把未提交的潜在事实当成真相。"]
+    closing_tone: "清醒、略带遗憾"
+
+  - id: trust_broken
+    title: "无法挽回的距离"
+    type: tragic
+    priority: 70
+    eligibility:
+      all:
+        - "relationships.alice.trust <= 10"
+        - "relationships.bob.trust <= 10"
+      any: []
+      none: []
+    required_outcomes: ["说明哪些玩家选择导致双方都失去信任。"]
+    forbidden_outcomes: ["无铺垫地让所有关系恢复。"]
+    closing_tone: "冷静、苦涩"
+
+  - id: closing_time
+    title: "未竟的傍晚"
+    type: fallback
+    priority: 1
+    eligibility:
+      all: ["session.scene_count >= 57"]
+      any: []
+      none: []
+    required_outcomes:
+      - "关闭当前冲突，不新增核心谜团。"
+      - "明确故事暂时停在什么状态。"
+    forbidden_outcomes: ["凭空宣布一个未提交的幕后真相。"]
+    closing_tone: "安静、留有余韵"
+
+assets: {}
