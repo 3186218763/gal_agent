@@ -69,33 +69,52 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
 
     if isinstance(event, SceneCommitted):
         _require(next_state.pending_scene is None, "a scene is already pending")
+        is_ending = event.terminal == "ending"
+        if is_ending:
+            _require(next_state.ending is not None, "ending scene requires entered ending")
+            _require(event.decision_id is None and not event.choices, "ending scene cannot decide")
+        else:
+            _require(
+                next_state.world.scene_count < next_state.world.max_scenes,
+                "max scene count reached",
+            )
+        is_decision = event.terminal == "decision"
         _require(
-            next_state.world.scene_count < next_state.world.max_scenes,
-            "max scene count reached",
-        )
-        _require(
-            (event.terminal == "decision") == (event.decision_id is not None),
+            is_decision == (event.decision_id is not None),
             "decision_id must be present only for a decision scene",
         )
+        _require(
+            (is_decision and 2 <= len(event.choices) <= 4)
+            or (not is_decision and not event.choices),
+            "decision scenes require 2-4 choices and other scenes require none",
+        )
+        choice_ids = [item.id for item in event.choices]
+        _require(len(choice_ids) == len(set(choice_ids)), "choice ids must be unique")
         world = next_state.world.model_copy(
             update={
                 "location_id": event.location_id,
                 "present_character_ids": event.present_character_ids,
-                "scene_count": next_state.world.scene_count + 1,
+                "scene_count": (
+                    next_state.world.scene_count
+                    if is_ending
+                    else next_state.world.scene_count + 1
+                ),
             }
         )
         pending_scene = PendingSceneReference(
             scene_id=event.scene_id,
             revision=envelope.sequence,
             terminal=event.terminal,
+            blocks=event.blocks,
         )
         pending_decision = (
             PendingDecisionReference(
                 decision_id=event.decision_id,
                 scene_id=event.scene_id,
                 revision=envelope.sequence,
+                choices=event.choices,
             )
-            if event.decision_id is not None
+            if is_decision
             else None
         )
         next_state = next_state.model_copy(
@@ -124,6 +143,8 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
             next_state.pending_decision.decision_id == event.decision_id,
             "player action does not match pending decision",
         )
+        offered_ids = {item.id for item in next_state.pending_decision.choices}
+        _require(event.option_id in offered_ids, "player choice was not offered")
         next_state = next_state.model_copy(
             update={"pending_scene": None, "pending_decision": None}
         )

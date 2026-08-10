@@ -10,7 +10,10 @@ from src.story.state import (
     FactRevealed,
     FactTruthStatus,
     FactVisibility,
+    NarrativeBlock,
     PhaseAdvanced,
+    PlayerActionSelected,
+    PresentedChoice,
     RelationshipChanged,
     SceneAcknowledged,
     SceneCommitted,
@@ -37,6 +40,67 @@ def _envelope(state, event, offset=1):
         session_id=state.session_id,
         sequence=state.revision + offset,
         event=event,
+    )
+
+
+def _narration(text: str = "Something happens.") -> NarrativeBlock:
+    return NarrativeBlock(kind="narration", text=text)
+
+
+def _decision_choices() -> tuple[PresentedChoice, PresentedChoice]:
+    return (
+        PresentedChoice(
+            id="ask_alice",
+            action_id="ask",
+            label="Ask Alice",
+            intent="ask directly",
+        ),
+        PresentedChoice(
+            id="observe_alice",
+            action_id="observe",
+            label="Watch quietly",
+            intent="observe",
+        ),
+    )
+
+
+def _decision_state():
+    state = _state()
+    return apply_event(
+        state,
+        _envelope(
+            state,
+            SceneCommitted(
+                scene_id="scene_01",
+                terminal="decision",
+                location_id="cafe",
+                present_character_ids=("alice",),
+                blocks=(_narration("Alice waits."),),
+                decision_id="decision_01",
+                choices=_decision_choices(),
+            ),
+        ),
+    )
+
+
+def _state_at_max_scenes_with_ending_entered():
+    state = _state()
+    max_scenes = state.world.max_scenes
+    world = state.world.model_copy(update={"scene_count": max_scenes})
+    state = state.model_copy(update={"world": world})
+    return apply_event(
+        state,
+        _envelope(
+            state,
+            EndingEntered(
+                ending=EndingRuntime(
+                    ending_id="fallback_ending",
+                    entered_at_revision=1,
+                    required_payoffs=("Close the current conflict.",),
+                    final_scene_budget=1,
+                )
+            ),
+        ),
     )
 
 
@@ -151,6 +215,7 @@ def test_scene_acknowledgement_requires_matching_pending_scene():
                 terminal="continue",
                 location_id="cafe",
                 present_character_ids=("alice",),
+                blocks=(_narration("The cafe is quiet."),),
             ),
         ),
     )
@@ -163,6 +228,59 @@ def test_scene_acknowledgement_requires_matching_pending_scene():
         _envelope(committed, SceneAcknowledged(scene_id="scene_01")),
     )
     assert acknowledged.pending_scene is None
+
+
+def test_decision_scene_persists_only_allowed_choices():
+    state = _state()
+    event = SceneCommitted(
+        scene_id="scene_01",
+        terminal="decision",
+        location_id="cafe",
+        present_character_ids=("alice",),
+        blocks=(NarrativeBlock(kind="narration", text="Alice waits."),),
+        decision_id="decision_01",
+        choices=(
+            PresentedChoice(id="ask_alice", action_id="ask", label="Ask Alice", intent="ask directly"),
+            PresentedChoice(id="observe_alice", action_id="observe", label="Watch quietly", intent="observe"),
+        ),
+    )
+    committed = apply_event(state, _envelope(state, event))
+    assert committed.pending_scene.blocks[0].text == "Alice waits."
+    assert [item.id for item in committed.pending_decision.choices] == ["ask_alice", "observe_alice"]
+
+
+def test_player_cannot_select_unpresented_choice():
+    committed = _decision_state()
+    with pytest.raises(StateTransitionError, match="not offered"):
+        apply_event(
+            committed,
+            _envelope(
+                committed,
+                PlayerActionSelected(
+                    decision_id="decision_01",
+                    option_id="invented",
+                    idempotency_key="request_01",
+                ),
+            ),
+        )
+
+
+def test_ending_scene_can_commit_at_normal_scene_limit():
+    state = _state_at_max_scenes_with_ending_entered()
+    committed = apply_event(
+        state,
+        _envelope(
+            state,
+            SceneCommitted(
+                scene_id="ending_safe_exit",
+                terminal="ending",
+                location_id="cafe",
+                present_character_ids=("alice",),
+                blocks=(NarrativeBlock(kind="narration", text="The story closes."),),
+            ),
+        ),
+    )
+    assert committed.world.scene_count == state.world.scene_count
 
 
 def test_phase_can_only_advance_one_step():
@@ -187,6 +305,7 @@ def test_decision_id_is_only_valid_for_decision_scene():
                     terminal="continue",
                     location_id="cafe",
                     present_character_ids=("alice",),
+                    blocks=(_narration("The cafe is quiet."),),
                     decision_id="decision_01",
                 ),
             ),

@@ -191,3 +191,24 @@ class StoryEventStore:
                 "SELECT COUNT(*) AS count FROM story_events WHERE session_id = ?", (session_id,)
             ).fetchone()
             return int(row["count"])
+
+    def load_events(
+        self, session_id: str, after_sequence: int = 0
+    ) -> tuple[EventEnvelope, ...]:
+        with self._connect() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM story_sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if exists is None:
+                raise SessionNotFound(session_id)
+            rows = connection.execute(
+                """
+                SELECT event_json FROM story_events
+                WHERE session_id = ? AND sequence > ?
+                ORDER BY sequence
+                """,
+                (session_id, after_sequence),
+            ).fetchall()
+            return tuple(
+                EventEnvelope.model_validate_json(row["event_json"]) for row in rows
+            )

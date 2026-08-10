@@ -11,7 +11,9 @@ from src.story.state.models import (
     EndingRuntime,
     FrozenModel,
     GoalStatus,
+    NarrativeBlock,
     NarrativeThread,
+    PresentedChoice,
     StoryPhase,
     ThreadStatus,
     utc_now,
@@ -24,7 +26,9 @@ class SceneCommitted(FrozenModel):
     terminal: Literal["continue", "decision", "ending"]
     location_id: str
     present_character_ids: tuple[str, ...]
+    blocks: tuple[NarrativeBlock, ...] = Field(min_length=1)
     decision_id: str | None = None
+    choices: tuple[PresentedChoice, ...] = ()
 
 
 class SceneAcknowledged(FrozenModel):

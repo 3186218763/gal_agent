@@ -3,7 +3,14 @@ from pathlib import Path
 import pytest
 
 from src.story.script_pack import compile_source
-from src.story.state import FactRevealed, RelationshipChanged, initial_session_state
+from src.story.state import (
+    FactRevealed,
+    NarrativeBlock,
+    PresentedChoice,
+    RelationshipChanged,
+    SceneCommitted,
+    initial_session_state,
+)
 from src.story.state.reducer import StateTransitionError
 from src.story.storage import RevisionConflict, SessionAlreadyExists, StoryEventStore
 from tests.story_factories import minimal_script_pack_dict
@@ -14,6 +21,31 @@ def _state():
         compile_source(minimal_script_pack_dict()),
         "session_01",
         session_seed=42,
+    )
+
+
+def _decision_scene_event() -> SceneCommitted:
+    return SceneCommitted(
+        scene_id="scene_01",
+        terminal="decision",
+        location_id="cafe",
+        present_character_ids=("alice",),
+        blocks=(NarrativeBlock(kind="narration", text="Alice waits."),),
+        decision_id="decision_01",
+        choices=(
+            PresentedChoice(
+                id="ask_alice",
+                action_id="ask",
+                label="Ask Alice",
+                intent="ask directly",
+            ),
+            PresentedChoice(
+                id="observe_alice",
+                action_id="observe",
+                label="Watch quietly",
+                intent="observe",
+            ),
+        ),
     )
 
 
@@ -100,3 +132,12 @@ def test_duplicate_session_is_rejected(tmp_path: Path):
 
     with pytest.raises(SessionAlreadyExists):
         store.create_session(state)
+
+
+def test_load_events_returns_persisted_scene_payload(tmp_path: Path):
+    store = StoryEventStore(tmp_path / "story.db")
+    state = _state()
+    store.create_session(state)
+    store.append(state.session_id, 0, [_decision_scene_event()])
+    events = store.load_events(state.session_id)
+    assert events[0].event.blocks[0].text == "Alice waits."

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.story.script_pack.models import CompiledScriptPack
 
@@ -107,16 +107,39 @@ class NarrativeThread(FrozenModel):
     last_advanced_event_id: str | None = None
 
 
+class NarrativeBlock(FrozenModel):
+    kind: Literal["narration", "dialogue"]
+    text: str = Field(min_length=1, max_length=4000)
+    character_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_speaker(self) -> NarrativeBlock:
+        if (self.kind == "dialogue") != (self.character_id is not None):
+            raise ValueError("character_id is required only for dialogue blocks")
+        return self
+
+
+class PresentedChoice(FrozenModel):
+    id: str = Field(min_length=1, max_length=100)
+    action_id: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=80)
+    intent: str = Field(min_length=1, max_length=240)
+    target_character_id: str | None = None
+    preview: str | None = Field(default=None, max_length=160)
+
+
 class PendingSceneReference(FrozenModel):
     scene_id: str
     revision: int = Field(ge=1)
     terminal: str
+    blocks: tuple[NarrativeBlock, ...] = ()
 
 
 class PendingDecisionReference(FrozenModel):
     decision_id: str
     scene_id: str
     revision: int = Field(ge=1)
+    choices: tuple[PresentedChoice, ...] = Field(min_length=2, max_length=4)
 
 
 class EndingRuntime(FrozenModel):
