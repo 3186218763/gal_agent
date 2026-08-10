@@ -39,7 +39,7 @@ def test_fallback_ending_is_selected_at_max_scene_count():
 
 
 def test_next_phase_advances_one_step_at_most():
-    state, pack = state_at_scene_count(4)
+    state, _pack = state_at_scene_count(4)
     # usable = max(1, 20 - 3) = 17; ratio = (4+1)/17 ≈ 0.29 → EXPLORATION
     assert next_phase(state) == StoryPhase.EXPLORATION
 

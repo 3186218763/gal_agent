@@ -1,80 +1,106 @@
-# Galgame AI - 动态视觉小说
+# Galgame AI — V2 Runtime (DeepSeek Responses)
 
-基于 **Game Kernel + 设定包（Setting Pack）** 的 AI 驱动 Gal 引擎。作者只写世界/角色/目标/结局，不写线性 `plot.md` 分镜；运行时由 Kernel 调度 Director / Character / Choice / Memory Agents，规则模块控制阶段、张力、选项密度与结局结算。
+Constrained dynamic galgame engine. Authors write a **script pack** (`pack.yaml`); the V2 runtime drives scenes through a shared Planner/Writer model pair, with Validator, Simulator, reducer, and EventStore as the only path that mutates session state.
 
-## 特性
+Players choose only backend-presented choice IDs. No free text, no rewind, multi-ending.
 
-- 🧠 **动态 Kernel**：确定性编排 + Agent 生成场面/对白/选项
-- 📦 **设定包驱动**：`setting_pack.yaml`（世界、角色、多目标、多结局），不是 beat 剧本
-- 🎯 **多目标 + 多结局**：状态条件触发；`max_steps` 兜底 `fallback` 结局
-- 📈 **Phase / Tension**：隐式起承转合与选项密度
-- 🔒 **无自由输入、无回溯**：仅已验证选项前进
-- 🧪 **Stub 模式默认可玩**：无需 API Key 即可本地跑通
-- 🌐 **前后端分离**：FastAPI + WebSocket + React
+## Architecture
 
-## 架构
-
-```
-Game Kernel (确定性 orchestrator)
-├── World State              # 当前快照（phase / tension / flags / goals…）
-├── Event Database           # 只追加历史
-├── Rule Modules
-│   ├── Phase & Tension
-│   ├── Option Trigger
-│   ├── Goal / Ending Evaluator
-│   └── Option Validator
-└── Agents (OpenAI Agents SDK 或 Stubs)
-    ├── Director   → 场面意图 SceneIntent
-    ├── Character  → 对白
-    ├── Choice     → 选项 + narrative preview
-    └── Memory     → 规则召回（V1）
+```text
+Script Pack (pack.yaml)
+        |
+        v
+compile_script_pack → CompiledScriptPack
+        |
+        +---- offline: validate / init-session / inspect-session
+        |
+        v  (requires OpenCode Go model config)
+RuntimeService
+├── ContextAssembler
+├── Planner  (OpenAIResponsesModel / deepseek-v4-flash)
+├── Validator + Simulator
+├── Writer   (same model bundle)
+├── Ending evaluator + fallbacks
+└── StoryEventStore (SQLite, revisioned append-only)
+        |
+        v
+REST API  /api/v2/sessions...
+CLI       play-live
 ```
 
-设计规格与实现计划：
+Design docs:
 
-- [动态 Gal Agent 设计规格](docs/superpowers/specs/2026-08-10-dynamic-gal-agent-design.md)
-- [实现计划（dynamic gal kernel）](docs/superpowers/plans/2026-08-10-dynamic-gal-kernel.md)
+- [V2 runtime + DeepSeek cutover design](docs/superpowers/specs/2026-08-10-v2-runtime-deepseek-cutover-design.md)
+- [Constrained dynamic galgame design](docs/superpowers/specs/2026-08-10-constrained-dynamic-galgame-design.md)
+- [Implementation plan](docs/superpowers/plans/2026-08-10-v2-runtime-deepseek-responses-cutover.md)
 
-## 快速开始
+## Prerequisites
 
-### 前置要求
+- Python **3.11+** and [uv](https://github.com/astral-sh/uv)
+- Node.js **18+** (frontend shell)
+- OpenCode Go API key for live model calls (API server and `play-live`)
 
-- Python 3.9+
-- Node.js 18+
-- （可选）OpenAI API Key — 仅在真实 Agent 模式需要
+Offline pack validation and unit tests do **not** need a key.
 
-### 1. 克隆 / 进入项目
+## Configuration
 
-```bash
-cd gal_agent
-```
-
-### 2. 启动后端（默认 Stub，无需 API Key）
+Copy the example env file and fill in a **rotated** secret (never commit real keys):
 
 ```bash
 cd backend
-pip install -r requirements.txt
-# 可选：cp .env.example .env
-
-# 默认 GAL_USE_STUBS=1：使用规则/Stub Agents，不调用 OpenAI
-python -m src.main
+cp .env.example .env
 ```
 
-后端：`http://localhost:8000`（API 文档：`/docs`）
+Required V2 settings:
 
-#### 真实 Agent 模式
+```dotenv
+GAL_LLM_PROVIDER=opencode_go
+OPENCODE_GO_API_KEY=
+OPENCODE_GO_BASE_URL=https://opencode.ai/zen/go/v1
+GAL_LLM_MODEL=deepseek-v4-flash
+GAL_LLM_API=responses
+GAL_LLM_TIMEOUT_SECONDS=45
+GAL_LLM_MAX_RETRIES=1
+```
+
+Notes:
+
+- Only `GAL_LLM_API=responses` is accepted. There is no Chat Completions path.
+- `OPENAI_API_KEY` may alias `OPENCODE_GO_API_KEY` if both are equal; mismatched values fail startup.
+- Any key previously exposed in chat must be **revoked**. Do not put secrets in `.env.example` or the repo.
+
+Optional paths for the API process:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `GAL_DATABASE_PATH` | `data/story-v2.db` | SQLite event store |
+| `GAL_SCRIPT_PACK_ROOT` | `script_packs` | Script pack root |
+
+## Quick start
+
+### Backend
 
 ```bash
-export GAL_USE_STUBS=0
-export OPENAI_API_KEY=sk-...
-python -m src.main
+cd backend
+uv sync --extra dev
+uv run python -m src.story.cli validate script_packs/cafe_mystery
+uv run uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-- `GAL_USE_STUBS=1`（**默认**）：Stub 导演/角色/选项，本地完整可玩到结局
-- `GAL_USE_STUBS=0` + `OPENAI_API_KEY`：使用 SDK Agents 生成内容
-- 若 `GAL_USE_STUBS=0` 但未设置 API Key，后端仍会回退到 Stub
+- `validate` / `init-session` / `inspect-session` are **offline** (no model key).
+- API startup and `play-live` **require** the env config above.
 
-### 3. 启动前端
+Live autoplay (needs key):
+
+```bash
+cd backend
+uv run python -m src.story.cli play-live script_packs/cafe_mystery \
+  --database data/live.db --session-id demo --seed 17
+```
+
+### Frontend shell
+
+The React shell is intentionally disconnected from V1 WebSocket/session clients. It builds as a static “V2 Runtime 尚未连接” status page until a V2 client is wired.
 
 ```bash
 cd frontend
@@ -82,134 +108,77 @@ npm install
 npm run dev
 ```
 
-前端：`http://localhost:5173`
+Dev URL is typically `http://127.0.0.1:5173`. Production build:
 
-### 4. 开始游戏
+```bash
+cd frontend
+npm run build
+```
 
-浏览器打开 `http://localhost:5173`，点击「开始游戏」。默认加载设定包 `chapter_01`。
+## Script packs
 
-## 设定包（Setting Pack）
-
-路径约定：
+Production pack path:
 
 ```text
-backend/scripts/<pack_id>/setting_pack.yaml
+backend/script_packs/<pack_id>/pack.yaml
 ```
 
-示例：[`backend/scripts/chapter_01/setting_pack.yaml`](backend/scripts/chapter_01/setting_pack.yaml)
+Example: [`backend/script_packs/cafe_mystery/pack.yaml`](backend/script_packs/cafe_mystery/pack.yaml)
 
-包内定义：
+Packs define identity, experience bounds, protagonist, world, characters, facts, goals, and endings (including at least one `fallback`). There is no `plot.md` or beat script.
 
-| 区块 | 含义 |
-|------|------|
-| `world` | 地点与标签 |
-| `characters` | 公开/私密信息、初始关系 |
-| `goals` | 多主线目标（可冲突） |
-| `endings` | 多结局 + `condition` + `type`（含 `fallback`） |
-| `max_steps` | 步数上限，超时强制兜底结局 |
-| `opening_seed` | 可选开场旁白 |
+## Project layout
 
-> V1 不再以 `plot.md` beats 驱动主循环；旧 beat 剧本可保留作参考，API 已接到 Kernel。
-
-## 项目结构
-
-```
+```text
 gal_agent/
 ├── backend/
 │   ├── src/
-│   │   ├── agents/          # Director / Character / Choice / Memory
-│   │   ├── content/         # setting_pack_loader
-│   │   ├── domain/          # WorldState, SettingPack, enums
-│   │   ├── kernel/          # GameKernel + stubs
-│   │   ├── rules/           # phase/tension, validator, endings…
-│   │   ├── store/           # world / event 持久化
-│   │   └── main.py          # FastAPI + WebSocket
-│   ├── scripts/
-│   │   └── <pack_id>/
-│   │       └── setting_pack.yaml
-│   ├── data/                # 会话存档
-│   └── tests/
-├── frontend/
-│   └── src/
-│       ├── components/Game.tsx   # 选项含 option.preview
-│       ├── api.ts                # pack_id 创建会话
-│       └── types.ts
+│   │   ├── main.py              # FastAPI app entry (V2-only)
+│   │   └── story/
+│   │       ├── api.py           # /api/v2 REST
+│   │       ├── cli.py           # validate / init / inspect / play-live
+│   │       ├── conditions.py
+│   │       ├── runtime/         # Planner, Writer, Validator, Simulator, service
+│   │       ├── script_pack/     # pack models + compiler
+│   │       ├── state/           # events, session models, reducer
+│   │       └── storage/         # StoryEventStore
+│   ├── script_packs/
+│   │   └── cafe_mystery/
+│   ├── tests/                   # offline suite + tests/live/ (opt-in)
+│   └── .env.example
+├── frontend/                    # Vite React shell (no V1 game client)
 ├── docs/superpowers/
-│   ├── specs/2026-08-10-dynamic-gal-agent-design.md
-│   └── plans/2026-08-10-dynamic-gal-kernel.md
 └── README.md
 ```
 
-## 核心概念
+## HTTP API (V2)
 
-### Kernel 循环
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | `{"status":"ok","runtime":"v2"}` |
+| `POST` | `/api/v2/sessions` | Create session (`pack_id`, `session_seed`) |
+| `GET` | `/api/v2/sessions/{id}` | Load session snapshot |
+| `POST` | `/api/v2/sessions/{id}/advance` | Generate next scene (`expected_revision`) |
+| `POST` | `/api/v2/sessions/{id}/choices/{choice_id}` | Apply presented choice (`expected_revision`, `idempotency_key`) |
 
-1. Memory 召回 → Director 场面意图  
-2. Character 生成对白 / 旁白  
-3. 规则更新 tension / phase  
-4. Option Trigger 决定是否出选项 → Choice 生成 + Validator  
-5. 玩家选择 → 应用 predicted consequences → Ending Evaluator  
+OpenAPI: `http://127.0.0.1:8000/docs` when the server is running.
 
-### 选项与 Preview
+There is no `/api/sessions` or WebSocket game channel.
 
-- 玩家只能点选后端下发的选项  
-- 每个选项可带 **narrative preview**（软提示，不暴露数值）  
-- 前端在选项文案下方渲染 `option.preview`
-
-### 结局
-
-```yaml
-endings:
-  - id: alice_route
-    condition: "goals.ally_alice.completed"
-    type: victory
-    priority: 100
-  - id: timeout_fallback
-    condition: "steps >= max_steps"
-    type: fallback
-    priority: 1
-```
-
-## API
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/sessions` | 创建会话；body 优先 `pack_id`（兼容 `chapter_id`） |
-| `GET` | `/api/sessions/{id}` | `pack_id`, `steps`, `tension`, `phase` |
-| `DELETE` | `/api/sessions/{id}` | 删除会话 |
-| `WS` | `/ws/game/{id}` | 游戏消息流 |
-
-WebSocket 消息类型：`game_start`（`chapter` = 包标题）、`narration`、`dialogue`、`options`、`state_update`（可含 `phase`/`tension`）、`ending`（`ending_type` 含 `fallback`）、`error`。
-
-完整 OpenAPI：`http://localhost:8000/docs`
-
-## 开发
-
-### 测试（后端，Stub，无需 API Key）
+## Testing
 
 ```bash
 cd backend
-# 示例
-uv run --with pytest --with pytest-asyncio --with pydantic --with pyyaml \
-  pytest tests/ -v
+uv run pytest tests/ -q
 ```
 
-### 调试
+Default suite is offline. Live network tests are skipped unless:
 
-- 后端日志：终端  
-- 前端：浏览器控制台（含 WebSocket 消息）  
-- 环境变量：`GAL_USE_STUBS`、`OPENAI_API_KEY`、`HOST`、`PORT`
-
-## 贡献
-
-欢迎 Issue 与 PR。
+```bash
+RUN_LIVE_ZEN_TEST=1 GAL_LLM_PROVIDER=opencode_go \
+  uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
+```
 
 ## License
 
 MIT
-
-## 致谢
-
-- OpenAI Agents SDK  
-- FastAPI  
-- React + Vite  

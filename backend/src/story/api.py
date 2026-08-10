@@ -127,15 +127,15 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
     app = FastAPI(title="Galgame AI V2")
 
     @app.exception_handler(PackNotFound)
-    async def pack_not_found(request, exc):  # noqa: ARG001
+    async def pack_not_found(request, exc):
         return JSONResponse(status_code=404, content={"detail": {"code": "pack_not_found"}})
 
     @app.exception_handler(SessionNotFound)
-    async def session_not_found(request, exc):  # noqa: ARG001
+    async def session_not_found(request, exc):
         return JSONResponse(status_code=404, content={"detail": {"code": "session_not_found"}})
 
     @app.exception_handler(InvalidChoice)
-    async def invalid_choice(request, exc):  # noqa: ARG001
+    async def invalid_choice(request, exc):
         return JSONResponse(status_code=422, content={"detail": {"code": "invalid_choice"}})
 
     @app.exception_handler(DecisionRequired)
@@ -143,11 +143,11 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
     @app.exception_handler(RevisionConflict)
     @app.exception_handler(PackMismatch)
     @app.exception_handler(RuntimeSessionEnded)
-    async def command_conflict(request, exc):  # noqa: ARG001
+    async def command_conflict(request, exc):
         return JSONResponse(status_code=409, content={"detail": {"code": "command_conflict"}})
 
     @app.exception_handler(OpenAIError)
-    async def provider_unavailable(request, exc):  # noqa: ARG001
+    async def provider_unavailable(request, exc):
         return JSONResponse(
             status_code=503,
             content={"detail": {"code": "model_provider_unavailable"}},

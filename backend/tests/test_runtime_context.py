@@ -27,7 +27,7 @@ def cafe_state():
 
 
 def test_condition_context_matches_compiled_condition_paths():
-    state, pack = compiled_state()
+    state, _pack = compiled_state()
     context = build_condition_context(state)
     assert context["relationships"]["alice"]["trust"] == 35
     assert context["facts"]["who_took_notebook"]["truth_status"] == "possible"

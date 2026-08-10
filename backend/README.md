@@ -1,240 +1,128 @@
-# Galgame AI Backend
+# Galgame AI Backend (V2)
 
-基于 OpenAI Agent SDK 的动态 Galgame 后端服务。
+V2-only FastAPI + CLI runtime. Script packs compile offline; live scene generation uses OpenCode Go **Responses** (`deepseek-v4-flash`) via the OpenAI Agents SDK (`OpenAIResponsesModel`).
 
-## 功能特性
+## Features
 
-- 🤖 AI 驱动的角色对话（每个角色独立的 Agent）
-- 📖 动态剧情生成和选项系统
-- 🎯 智能选项触发算法
-- 💾 游戏状态持久化
-- 🎭 多结局系统
-- 🔌 WebSocket 实时通信
+- Event-sourced sessions (`StoryEventStore`, revisioned append)
+- Shared Planner / Writer model bundle (Responses API only)
+- Validator + Simulator gate model proposals before reducer commits
+- Offline pack validation and session inspect without a model key
+- Opt-in live tests and `play-live` autoplay when a key is configured
 
-## 快速开始
-
-### 1. 安装依赖
+## Setup
 
 ```bash
-pip install -r requirements.txt
-```
-
-### 2. 配置环境变量
-
-复制 `.env.example` 为 `.env` 并填入你的 OpenAI API Key：
-
-```bash
+cd backend
+uv sync --extra dev
 cp .env.example .env
 ```
 
-编辑 `.env`：
-```
-OPENAI_API_KEY=sk-your-actual-key-here
+Edit `.env` (leave secrets out of git):
+
+```dotenv
+GAL_LLM_PROVIDER=opencode_go
+OPENCODE_GO_API_KEY=
+OPENCODE_GO_BASE_URL=https://opencode.ai/zen/go/v1
+GAL_LLM_MODEL=deepseek-v4-flash
+GAL_LLM_API=responses
+GAL_LLM_TIMEOUT_SECONDS=45
+GAL_LLM_MAX_RETRIES=1
 ```
 
-### 3. 运行服务器
+**Security:** any key previously exposed in chat must be revoked. Never put a real key in `.env.example`. `OPENAI_API_KEY` is an optional equal-value alias for `OPENCODE_GO_API_KEY`.
+
+## Commands
 
 ```bash
-python -m src.main
-```
-
-服务器将在 `http://localhost:8000` 启动。
-
-### 4. API 文档
-
-启动后访问：
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
-## 项目结构
-
-```
-backend/
-├── src/
-│   ├── agents/          # AI Agents
-│   │   ├── director.py      # 导演 Agent（生成选项）
-│   │   └── character.py     # 角色 Agent（扮演 NPC）
-│   ├── core/            # 核心逻辑
-│   │   ├── game_loop.py         # 游戏主循环
-│   │   ├── script_parser.py     # 剧本解析器
-│   │   ├── state_manager.py     # 状态管理
-│   │   ├── option_trigger.py    # 选项触发算法
-│   │   ├── option_generator.py  # 选项验证
-│   │   └── ending_evaluator.py  # 结局评估
-│   ├── models.py        # 数据模型
-│   └── main.py          # FastAPI 服务器
-├── scripts/             # 游戏剧本
-│   └── chapter_01/
-│       ├── metadata.yaml    # 章节元数据
-│       └── plot.md          # 剧情内容
-├── data/                # 游戏存档（自动创建）
-└── requirements.txt
-```
-
-## API 端点
-
-### REST API
-
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET | `/` | 健康检查 |
-| POST | `/api/sessions` | 创建新游戏会话 |
-| GET | `/api/sessions/{session_id}` | 获取会话信息 |
-| DELETE | `/api/sessions/{session_id}` | 删除会话 |
-| GET | `/api/sessions` | 列出所有会话 |
-
-### WebSocket
-
-| 端点 | 说明 |
-|------|------|
-| `/ws/game/{session_id}` | 游戏实时连接 |
-
-## WebSocket 消息格式
-
-### 服务器 → 客户端
-
-**游戏开始**
-```json
-{
-  "type": "game_start",
-  "chapter": "邂逅",
-  "session_id": "uuid"
-}
-```
-
-**叙事内容**
-```json
-{
-  "type": "narration",
-  "content": "午后的咖啡馆...",
-  "mood": "平静"
-}
-```
-
-**角色对话**
-```json
-{
-  "type": "dialogue",
-  "character": "alice",
-  "content": "我知道你在找什么。",
-  "mood": "紧张"
-}
-```
-
-**选项**
-```json
-{
-  "type": "options",
-  "options": [
-    {
-      "id": "opt_0",
-      "text": "询问她更多细节",
-      "preview": "艾丽丝会更信任你"
-    }
-  ]
-}
-```
-
-**状态更新**
-```json
-{
-  "type": "state_update",
-  "changes": {
-    "flags": {"met_alice": true},
-    "relationships": {
-      "alice": {"trust": 55, "romance": 0}
-    }
-  }
-}
-```
-
-**结局**
-```json
-{
-  "type": "ending",
-  "ending_id": "alice_trust_ending",
-  "title": "信任的开始",
-  "content": "你选择相信艾丽丝...",
-  "ending_type": "victory"
-}
-```
-
-### 客户端 → 服务器
-
-**玩家选择**
-```json
-{
-  "type": "player_choice",
-  "option_index": 0
-}
-```
-
-## 剧本格式
-
-### metadata.yaml
-
-```yaml
-chapter_id: "chapter_01"
-title: "章节标题"
-
-characters:
-  - id: "alice"
-    name: "艾丽丝"
-    personality: "性格描述..."
-    initial_trust: 50
-    initial_romance: 0
-
-endings:
-  - id: "good_ending"
-    condition: "alice_trust >= 70 && met_alice"
-    type: "victory"
-    priority: 100
-    title: "结局标题"
-    content: "结局内容"
-```
-
-### plot.md
-
-```markdown
-# 章节标题
-
-## Beat 1: 开场
-**Mood**: 平静
-
-剧情内容...
-
-Set flag: `game_started = true`
-
-[OPTION POINT - 可选择点标记]
-```
-
-## 开发
-
-### 添加新章节
-
-1. 在 `scripts/` 下创建新目录，如 `chapter_02/`
-2. 创建 `metadata.yaml` 和 `plot.md`
-3. 定义角色、结局和剧情内容
-
-### 调试
-
-启动时添加 `--reload` 实现热重载：
-
-```bash
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-## V2 Story Foundation
-
-The V2 domain can validate a script pack and initialize an event-sourced session without an API key:
-
-```bash
+cd backend
+uv sync --extra dev
 uv run python -m src.story.cli validate script_packs/cafe_mystery
-uv run python -m src.story.cli init-session script_packs/cafe_mystery --database data/story.db --session-id local_demo --seed 17
+uv run uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
+uv run python -m src.story.cli play-live script_packs/cafe_mystery \
+  --database data/live.db --session-id demo --seed 17
+```
+
+| Command | Needs model key? |
+|---------|------------------|
+| `validate` | No |
+| `init-session` | No |
+| `inspect-session` | No |
+| API (`uvicorn` / `python -m src.main`) | Yes (settings loaded at process start) |
+| `play-live` | Yes |
+
+Offline helpers:
+
+```bash
+uv run python -m src.story.cli init-session script_packs/cafe_mystery \
+  --database data/story.db --session-id local_demo --seed 17
 uv run python -m src.story.cli inspect-session local_demo --database data/story.db
 ```
 
-The V1 FastAPI and WebSocket entry point remains unchanged during this foundation milestone.
+## API
+
+| Method | Path | Body / notes |
+|--------|------|----------------|
+| `GET` | `/health` | `runtime: v2` |
+| `POST` | `/api/v2/sessions` | `{ "pack_id", "session_seed" }` → 201 |
+| `GET` | `/api/v2/sessions/{session_id}` | snapshot |
+| `POST` | `/api/v2/sessions/{session_id}/advance` | `{ "expected_revision" }` |
+| `POST` | `/api/v2/sessions/{session_id}/choices/{choice_id}` | `{ "expected_revision", "idempotency_key" }` |
+
+Common error codes in `detail.code`: `pack_not_found`, `session_not_found`, `invalid_choice`, `command_conflict`, `invalid_script_pack`, `model_provider_unavailable`.
+
+Swagger: `http://127.0.0.1:8000/docs`
+
+## Project structure
+
+```text
+backend/
+├── src/
+│   ├── main.py                 # app = create_app()
+│   └── story/
+│       ├── api.py              # REST surface
+│       ├── cli.py
+│       ├── conditions.py
+│       ├── runtime/            # config, model, planner, writer, validator, …
+│       ├── script_pack/
+│       ├── state/
+│       └── storage/
+├── script_packs/
+│   └── cafe_mystery/pack.yaml
+├── tests/
+│   └── live/                   # opt-in; RUN_LIVE_ZEN_TEST=1
+├── .env.example
+├── pyproject.toml
+└── uv.lock
+```
+
+## Script packs
+
+```text
+script_packs/<pack_id>/pack.yaml
+```
+
+Validate:
+
+```bash
+uv run python -m src.story.cli validate script_packs/cafe_mystery
+```
+
+Expect JSON with `pack_id`, `pack_hash`, character/fact/goal counts, and ending tallies (`normal_endings` ≥ 3 and `fallback_endings` ≥ 1 for `cafe_mystery`).
+
+## Development
+
+```bash
+# offline suite (live tests skipped by default)
+uv run pytest tests/ -q
+
+# scoped lint
+uv run ruff check src/story src/main.py tests
+
+# live capability (rotated key required)
+RUN_LIVE_ZEN_TEST=1 GAL_LLM_PROVIDER=opencode_go \
+  uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
+```
 
 ## License
 
