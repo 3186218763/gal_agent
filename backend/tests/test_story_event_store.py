@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,16 @@ from src.story.state import (
     initial_session_state,
 )
 from src.story.state.reducer import StateTransitionError
-from src.story.storage import RevisionConflict, SessionAlreadyExists, StoryEventStore
+from src.story.storage import (
+    CommandInProgress,
+    CommandRequestMismatch,
+    RevisionConflict,
+    SessionAlreadyExists,
+    StoryEventStore,
+)
 from tests.story_factories import minimal_script_pack_dict
+
+_NOW = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
 
 
 def _state():
@@ -141,3 +150,84 @@ def test_load_events_returns_persisted_scene_payload(tmp_path: Path):
     store.append(state.session_id, 0, [_decision_scene_event()])
     events = store.load_events(state.session_id)
     assert events[0].event.blocks[0].text == "Alice waits."
+
+
+def test_command_receipt_replays_completed_result(tmp_path):
+    store = StoryEventStore(tmp_path / "story.db")
+    store.create_session(_state())
+    claim = store.claim_command("session_01", "command-1", "advance", "fingerprint", now=_NOW)
+    assert claim.replay_json is None
+    store.commit_command(
+        "session_01",
+        "command-1",
+        "advance",
+        "fingerprint",
+        0,
+        [RelationshipChanged(character_id="alice", axis="trust", delta=1)],
+        lambda state, _: '{"revision": %d}' % state.revision,
+        now=_NOW,
+    )
+    replay = store.claim_command("session_01", "command-1", "advance", "fingerprint", now=_NOW)
+    assert replay.replay_json == '{"revision": 1}'
+    assert store.event_count("session_01") == 1
+
+
+def test_command_receipt_mismatched_fingerprint_is_rejected(tmp_path):
+    store = StoryEventStore(tmp_path / "story.db")
+    store.create_session(_state())
+    store.claim_command("session_01", "command-1", "advance", "fingerprint-a", now=_NOW)
+    with pytest.raises(CommandRequestMismatch):
+        store.claim_command("session_01", "command-1", "advance", "fingerprint-b", now=_NOW)
+
+
+def test_command_receipt_unexpired_lease_is_busy(tmp_path):
+    store = StoryEventStore(tmp_path / "story.db")
+    store.create_session(_state())
+    store.claim_command("session_01", "command-1", "advance", "fingerprint", now=_NOW)
+    with pytest.raises(CommandInProgress):
+        store.claim_command("session_01", "command-1", "advance", "fingerprint", now=_NOW)
+
+
+def test_command_receipt_expired_lease_can_be_reclaimed(tmp_path):
+    store = StoryEventStore(tmp_path / "story.db")
+    store.create_session(_state())
+    store.claim_command("session_01", "command-1", "advance", "fingerprint", now=_NOW)
+    claim = store.claim_command(
+        "session_01",
+        "command-1",
+        "advance",
+        "fingerprint",
+        now=_NOW + timedelta(seconds=121),
+    )
+    assert claim.replay_json is None
+
+
+def test_command_receipt_failed_transition_rolls_back_events_and_receipt(tmp_path):
+    store = StoryEventStore(tmp_path / "story.db")
+    original = _state()
+    store.create_session(original)
+    store.claim_command("session_01", "command-1", "advance", "fingerprint", now=_NOW)
+    with pytest.raises(StateTransitionError):
+        store.commit_command(
+            "session_01",
+            "command-1",
+            "advance",
+            "fingerprint",
+            0,
+            [
+                RelationshipChanged(character_id="alice", axis="trust", delta=5),
+                FactRevealed(fact_id="who_took_notebook"),
+            ],
+            lambda state, _: '{"revision": %d}' % state.revision,
+            now=_NOW,
+        )
+    assert store.load_session("session_01") == original
+    assert store.event_count("session_01") == 0
+    claim = store.claim_command(
+        "session_01",
+        "command-1",
+        "advance",
+        "fingerprint",
+        now=_NOW + timedelta(seconds=121),
+    )
+    assert claim.replay_json is None

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from src.story.state.events import EventEnvelope, StoryEvent
-from src.story.state.models import SessionState
+from src.story.state.models import SessionState, utc_now
 from src.story.state.reducer import apply_events
 
 
@@ -22,6 +24,19 @@ class SessionNotFound(StoryStoreError):
 
 
 class RevisionConflict(StoryStoreError):
+    pass
+
+
+@dataclass(frozen=True)
+class CommandClaim:
+    replay_json: str | None = None
+
+
+class CommandInProgress(StoryStoreError):
+    pass
+
+
+class CommandRequestMismatch(StoryStoreError):
     pass
 
 
@@ -60,6 +75,20 @@ class StoryEventStore:
                     event_id TEXT NOT NULL UNIQUE,
                     event_json TEXT NOT NULL,
                     PRIMARY KEY (session_id, sequence),
+                    FOREIGN KEY (session_id) REFERENCES story_sessions(session_id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS story_command_receipts (
+                    session_id TEXT NOT NULL,
+                    command_id TEXT NOT NULL,
+                    command_kind TEXT NOT NULL,
+                    request_fingerprint TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('in_progress', 'completed')),
+                    lease_expires_at TEXT,
+                    result_json TEXT,
+                    result_revision INTEGER,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    PRIMARY KEY (session_id, command_id),
                     FOREIGN KEY (session_id) REFERENCES story_sessions(session_id) ON DELETE CASCADE
                 );
                 """
@@ -174,6 +203,196 @@ class StoryEventStore:
             )
             connection.commit()
             return updated, envelopes
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def claim_command(
+        self,
+        session_id: str,
+        command_id: str,
+        command_kind: str,
+        request_fingerprint: str,
+        *,
+        now: datetime | None = None,
+        lease_seconds: int = 120,
+    ) -> CommandClaim:
+        now = now or utc_now()
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM story_command_receipts
+                WHERE session_id = ? AND command_id = ?
+                """,
+                (session_id, command_id),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO story_command_receipts (
+                        session_id, command_id, command_kind, request_fingerprint,
+                        status, lease_expires_at, created_at
+                    ) VALUES (?, ?, ?, ?, 'in_progress', ?, ?)
+                    """,
+                    (
+                        session_id,
+                        command_id,
+                        command_kind,
+                        request_fingerprint,
+                        (now + timedelta(seconds=lease_seconds)).isoformat(),
+                        now.isoformat(),
+                    ),
+                )
+                connection.commit()
+                return CommandClaim()
+            if row["command_kind"] != command_kind or (
+                row["request_fingerprint"] != request_fingerprint
+            ):
+                raise CommandRequestMismatch(
+                    f"command {session_id}/{command_id} was already requested differently"
+                )
+            if row["status"] == "completed":
+                connection.commit()
+                return CommandClaim(replay_json=row["result_json"])
+            lease_expires_at = datetime.fromisoformat(row["lease_expires_at"])
+            if now < lease_expires_at:
+                raise CommandInProgress(
+                    f"command {session_id}/{command_id} is still in progress"
+                )
+            connection.execute(
+                """
+                UPDATE story_command_receipts
+                SET lease_expires_at = ?
+                WHERE session_id = ? AND command_id = ?
+                """,
+                ((now + timedelta(seconds=lease_seconds)).isoformat(), session_id, command_id),
+            )
+            connection.commit()
+            return CommandClaim()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def release_command(
+        self,
+        session_id: str,
+        command_id: str,
+        command_kind: str,
+        request_fingerprint: str,
+    ) -> None:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                DELETE FROM story_command_receipts
+                WHERE session_id = ? AND command_id = ?
+                  AND command_kind = ? AND request_fingerprint = ?
+                  AND status = 'in_progress'
+                """,
+                (session_id, command_id, command_kind, request_fingerprint),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def commit_command(
+        self,
+        session_id: str,
+        command_id: str,
+        command_kind: str,
+        request_fingerprint: str,
+        expected_revision: int,
+        events: Iterable[StoryEvent],
+        result_factory: Callable[[SessionState, tuple[EventEnvelope, ...]], str],
+        *,
+        now: datetime | None = None,
+    ) -> tuple[SessionState, tuple[EventEnvelope, ...], str]:
+        now = now or utc_now()
+        event_list = tuple(events)
+        if not event_list:
+            raise StoryStoreError("commit_command requires at least one event")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            state, row = self._load_with_connection(connection, session_id)
+            if state.revision != expected_revision:
+                raise RevisionConflict(
+                    f"session {session_id}: expected {expected_revision}, current {state.revision}"
+                )
+            receipt = connection.execute(
+                """
+                SELECT * FROM story_command_receipts
+                WHERE session_id = ? AND command_id = ?
+                """,
+                (session_id, command_id),
+            ).fetchone()
+            if receipt is None:
+                raise StoryStoreError("commit_command requires a claimed command receipt")
+            if receipt["command_kind"] != command_kind or (
+                receipt["request_fingerprint"] != request_fingerprint
+            ):
+                raise CommandRequestMismatch(
+                    f"command {session_id}/{command_id} receipt does not match request"
+                )
+            envelopes = tuple(
+                EventEnvelope(
+                    session_id=session_id,
+                    sequence=state.revision + index,
+                    event=event,
+                )
+                for index, event in enumerate(event_list, start=1)
+            )
+            updated = apply_events(state, envelopes)
+            connection.executemany(
+                """
+                INSERT INTO story_events (session_id, sequence, event_id, event_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (
+                        envelope.session_id,
+                        envelope.sequence,
+                        envelope.event_id,
+                        envelope.model_dump_json(),
+                    )
+                    for envelope in envelopes
+                ],
+            )
+            snapshot_revision = row["snapshot_revision"]
+            snapshot_json = row["snapshot_json"]
+            if updated.revision - snapshot_revision >= self.snapshot_every:
+                snapshot_revision = updated.revision
+                snapshot_json = updated.model_dump_json()
+            connection.execute(
+                """
+                UPDATE story_sessions
+                SET revision = ?, snapshot_revision = ?, snapshot_json = ?
+                WHERE session_id = ?
+                """,
+                (updated.revision, snapshot_revision, snapshot_json, session_id),
+            )
+            result_json = result_factory(updated, envelopes)
+            connection.execute(
+                """
+                UPDATE story_command_receipts
+                SET status = 'completed', result_json = ?, result_revision = ?,
+                    lease_expires_at = NULL, completed_at = ?
+                WHERE session_id = ? AND command_id = ?
+                """,
+                (result_json, updated.revision, now.isoformat(), session_id, command_id),
+            )
+            connection.commit()
+            return updated, envelopes, result_json
         except Exception:
             connection.rollback()
             raise
