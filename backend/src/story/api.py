@@ -72,10 +72,13 @@ def default_dependencies() -> AppDependencies:
     bundle = build_model_bundle(settings)
     store = StoryEventStore(Path(os.getenv("GAL_DATABASE_PATH", "data/story-v2.db")))
     registry = ScriptPackRegistry(Path(os.getenv("GAL_SCRIPT_PACK_ROOT", "script_packs")))
+    from src.story.runtime.stream_writer import StreamingSceneGenerator
+
     runtime = RuntimeService(
         store,
         SdkPlanner(bundle.model),
         SdkWriter(bundle.model),
+        StreamingSceneGenerator(bundle.client, settings.model),
     )
     return AppDependencies(store=store, registry=registry, runtime=runtime)
 
