@@ -12,7 +12,7 @@ from src.story.state import PresentedChoice, SessionState
 
 from .context import build_planner_context
 from .contracts import ActionResolution, ModelContractError, PlannerOutput, ScenePlan
-from .model import run_with_contract_retry
+from .model import ProviderStrictOutputSchema, run_with_contract_retry
 
 PLANNER_INSTRUCTIONS = """You are the semantic planner for a constrained visual novel.
 Return only the requested structured contract. Propose events and action outcomes; never claim
@@ -27,7 +27,7 @@ class SdkPlanner:
             name="V2 Narrative Planner",
             instructions=PLANNER_INSTRUCTIONS,
             model=model,
-            output_type=PlannerOutput,
+            output_type=ProviderStrictOutputSchema(PlannerOutput),
         )
 
     async def plan_scene(

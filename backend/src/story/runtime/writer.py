@@ -12,7 +12,7 @@ from src.story.state import SessionState
 
 from .context import build_ending_context, build_writer_context
 from .contracts import EndingDraft, ModelContractError, SceneDraft, ScenePlan, WriterOutput
-from .model import run_with_contract_retry
+from .model import ProviderStrictOutputSchema, run_with_contract_retry
 
 WRITER_INSTRUCTIONS = """You are the prose writer for a constrained visual novel.
 Render only the approved semantic plan. Never add, remove, or change a fact, effect, action, choice
@@ -27,7 +27,7 @@ class SdkWriter:
             name="V2 Scene Writer",
             instructions=WRITER_INSTRUCTIONS,
             model=model,
-            output_type=WriterOutput,
+            output_type=ProviderStrictOutputSchema(WriterOutput),
         )
 
     async def write_scene(
