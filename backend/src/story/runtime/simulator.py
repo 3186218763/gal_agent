@@ -120,10 +120,10 @@ def resolution_effect_events(
         for fact_id in resolution.evidence_fact_ids
     )
     events.extend(FactRevealed(fact_id=fact_id) for fact_id in resolution.reveal_fact_ids)
-    for character_id in sorted(resolution.learned_facts):
+    for entry in sorted(resolution.learned_facts, key=lambda item: item.character_id):
         events.extend(
-            CharacterLearnedFact(character_id=character_id, fact_id=fact_id)
-            for fact_id in sorted(resolution.learned_facts[character_id])
+            CharacterLearnedFact(character_id=entry.character_id, fact_id=fact_id)
+            for fact_id in sorted(entry.fact_ids)
         )
     return tuple(events)
 

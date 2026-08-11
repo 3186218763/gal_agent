@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from agents import Runner
+from agents.agent_output import AgentOutputSchema
 from agents.exceptions import ModelBehaviorError
 from agents.models.interface import Model
 
@@ -118,6 +119,11 @@ def valid_writer_ending_output(ending_id: str = "ally_ending") -> WriterOutput:
             blocks=(NarrativeBlock(kind="narration", text="They leave together."),),
         ),
     )
+
+
+def test_planner_and_writer_outputs_support_strict_json_schema():
+    assert AgentOutputSchema(PlannerOutput).is_strict_json_schema() is True
+    assert AgentOutputSchema(WriterOutput).is_strict_json_schema() is True
 
 
 @pytest.mark.asyncio

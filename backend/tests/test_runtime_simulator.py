@@ -2,6 +2,7 @@ from src.story.runtime.contracts import (
     ActionResolution,
     ChoicePlan,
     GoalDelta,
+    LearnedFactPlan,
     RelationshipDelta,
     SceneDraft,
     ScenePlan,
@@ -115,7 +116,7 @@ def test_resolution_effect_events_have_deterministic_order():
         relationship_deltas=(RelationshipDelta(character_id="alice", axis="trust", delta=3),),
         goal_deltas=(GoalDelta(goal_id="alice_find_ally", delta=0.1),),
         reveal_fact_ids=("cafe_is_open",),
-        learned_facts={"alice": ("cafe_is_open",)},
+        learned_facts=(LearnedFactPlan(character_id="alice", fact_ids=("cafe_is_open",)),),
     )
     events = simulate_resolution(state, choice, resolution, "request-01")
     assert [event.type for event in events] == [

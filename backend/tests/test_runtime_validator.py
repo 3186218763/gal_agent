@@ -3,6 +3,7 @@ import pytest
 from src.story.runtime.contracts import (
     ActionResolution,
     ChoicePlan,
+    LearnedFactPlan,
     RelationshipDelta,
     SceneDraft,
     ScenePlan,
@@ -85,3 +86,17 @@ def test_valid_decision_plan_and_draft_pass():
     draft = valid_scene_draft(plan)
     assert validate_scene_plan(pack, state, plan) is plan
     assert validate_scene_draft(plan, draft) is draft
+
+
+def test_action_resolution_rejects_duplicate_learned_fact_characters_and_ids():
+    state, pack = compiled_state()
+    resolution = ActionResolution(
+        action_id="ask",
+        outcome="success",
+        learned_facts=(
+            LearnedFactPlan(character_id="alice", fact_ids=("cafe_is_open", "cafe_is_open")),
+            LearnedFactPlan(character_id="alice", fact_ids=("cafe_is_open",)),
+        ),
+    )
+    with pytest.raises(ProposalRejected, match="learned fact"):
+        validate_action_resolution(pack, state, resolution, expected_action_id="ask")

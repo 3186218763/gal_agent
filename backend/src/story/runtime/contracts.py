@@ -66,6 +66,11 @@ class GoalDelta(RuntimeModel):
     delta: float
 
 
+class LearnedFactPlan(RuntimeModel):
+    character_id: str
+    fact_ids: tuple[str, ...] = ()
+
+
 class ActionResolution(RuntimeModel):
     action_id: str
     outcome: Literal["success", "partial", "resisted", "backfire"]
@@ -73,7 +78,7 @@ class ActionResolution(RuntimeModel):
     goal_deltas: tuple[GoalDelta, ...] = ()
     evidence_fact_ids: tuple[str, ...] = ()
     reveal_fact_ids: tuple[str, ...] = ()
-    learned_facts: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    learned_facts: tuple[LearnedFactPlan, ...] = ()
 
 
 class WrittenChoice(RuntimeModel):

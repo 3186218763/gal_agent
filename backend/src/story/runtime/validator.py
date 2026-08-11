@@ -149,15 +149,22 @@ def validate_action_resolution(
             errors.append(f"fact lacks evidence: {fact_id}")
     if len(resolution.reveal_fact_ids) != len(set(resolution.reveal_fact_ids)):
         errors.append("revealed fact ids must be unique")
-    for character_id, fact_ids in resolution.learned_facts.items():
-        if character_id not in state.characters:
-            errors.append(f"unknown character: {character_id}")
-        for fact_id in fact_ids:
+    character_entries: list[str] = []
+    for entry in resolution.learned_facts:
+        if entry.character_id in character_entries:
+            errors.append(f"learned fact character must be unique: {entry.character_id}")
+            continue
+        character_entries.append(entry.character_id)
+        if entry.character_id not in state.characters:
+            errors.append(f"unknown character: {entry.character_id}")
+        for fact_id in entry.fact_ids:
             fact = state.facts.get(fact_id)
             if fact is None or fact.truth_status != FactTruthStatus.COMMITTED:
-                errors.append(f"character cannot learn unavailable fact: {character_id}.{fact_id}")
-        if len(fact_ids) != len(set(fact_ids)):
-            errors.append(f"learned fact ids must be unique: {character_id}")
+                errors.append(
+                    f"character cannot learn unavailable fact: {entry.character_id}.{fact_id}"
+                )
+        if len(entry.fact_ids) != len(set(entry.fact_ids)):
+            errors.append(f"learned fact ids must be unique: {entry.character_id}")
     if errors:
         raise ProposalRejected(errors)
     return resolution
