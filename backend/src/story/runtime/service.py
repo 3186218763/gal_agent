@@ -297,7 +297,8 @@ class RuntimeService:
             ending = select_ending(pack, state)
             if ending is not None:
                 async for evt, data in self._stream_ending(
-                    pack, state, ending, idempotency_key, fingerprint
+                    pack, state, ending, idempotency_key, fingerprint,
+                    events, expected_revision,
                 ):
                     yield (evt, data)
                 return
@@ -364,8 +365,11 @@ class RuntimeService:
 
             def result_factory(updated: SessionState, envelopes) -> str:
                 scene_event = next(
-                    e for e in envelopes if isinstance(e.event, SceneCommitted)
+                    (e for e in envelopes if isinstance(e.event, SceneCommitted)),
+                    None,
                 )
+                if scene_event is None:
+                    raise RuntimeError("no SceneCommitted in committed events")
                 return RuntimeScene.from_committed(updated, scene_event.event).model_dump_json()
 
             updated_state, _, _ = self.store.commit_command(
@@ -393,15 +397,25 @@ class RuntimeService:
         ending: EndingSource,
         idempotency_key: str,
         fingerprint: str,
+        prior_events: list[StoryEvent],
+        expected_revision: int,
     ) -> AsyncGenerator[tuple[str, Any], None]:
         """Stream ending blocks using the batch writer.
 
         The caller (advance_streamed) has already claimed the command receipt;
         this helper uses the same idempotency_key and fingerprint to commit.
+        ``prior_events`` contains events accumulated before the ending check
+        (e.g. ``SceneAcknowledged``).  ``expected_revision`` is the store's
+        original revision that ``commit_command`` must match.
         """
-        draft = await self.writer.write_ending(pack, state, ending)
-        if draft.ending_id != ending.id:
-            raise ModelContractError("writer changed ending id")
+        try:
+            draft = await self.writer.write_ending(pack, state, ending)
+            if draft.ending_id != ending.id:
+                raise ModelContractError("writer changed ending id")
+        except ModelContractError as exc:
+            raise RuntimeGenerationUnavailable(
+                "the model could not produce a valid ending"
+            ) from exc
 
         for block in draft.blocks:
             yield ("block", block.model_dump(mode="json"))
@@ -421,16 +435,21 @@ class RuntimeService:
             present_character_ids=state.world.present_character_ids,
             blocks=draft.blocks,
         )
-        events = (
+        ending_events = (
             EndingEntered(ending=ending_runtime),
             committed,
             SessionEnded(ending_id=ending.id),
         )
+        events = tuple(prior_events) + ending_events
+        simulate_events(state, ending_events)
 
         def result_factory(updated: SessionState, envelopes) -> str:
             scene_event = next(
-                e for e in envelopes if isinstance(e.event, SceneCommitted)
+                (e for e in envelopes if isinstance(e.event, SceneCommitted)),
+                None,
             )
+            if scene_event is None:
+                raise RuntimeError("no SceneCommitted in committed events")
             return RuntimeScene.from_committed(updated, scene_event.event).model_dump_json()
 
         updated_state, _, _ = self.store.commit_command(
@@ -438,7 +457,7 @@ class RuntimeService:
             idempotency_key,
             "advance",
             fingerprint,
-            state.revision,
+            expected_revision,
             events,
             result_factory,
         )
