@@ -7,10 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.story.runtime.stream_writer import (
-    STREAMING_WRITER_INSTRUCTIONS,
-    StreamingSceneGenerator,
-)
+from src.story.runtime.stream_writer import StreamingSceneGenerator
 
 
 def _make_streaming_response(deltas: list[str]):
