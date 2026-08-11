@@ -28,11 +28,53 @@ REST API  /api/v2/sessions...
 CLI       play-live
 ```
 
-Design docs:
+## Status
 
-- [V2 runtime + DeepSeek cutover design](docs/superpowers/specs/2026-08-10-v2-runtime-deepseek-cutover-design.md)
-- [Constrained dynamic galgame design](docs/superpowers/specs/2026-08-10-constrained-dynamic-galgame-design.md)
-- [Implementation plan](docs/superpowers/plans/2026-08-10-v2-runtime-deepseek-responses-cutover.md)
+- V1 (Agents SDK Director/Character, WebSocket, `plot.md` beats) is **removed**; V2 is the only runtime and state authority. `tests/test_v2_only_layout.py` rejects legacy paths and routes structurally.
+- The V2 runtime is implemented and offline-verified: Planner/Writer share one `OpenAIResponsesModel`; only Validator → Simulator → reducer → EventStore can mutate session state.
+- Verification so far: `99 passed, 1 skipped` (skipped = live test, needs a rotated key), Ruff clean, `cafe_mystery` pack valid (4 normal + 1 fallback endings), frontend shell builds.
+- **Not done yet:** real-model verification (live test and `play-live` autoplay need `OPENCODE_GO_API_KEY`), a real V2 frontend client (the shell still shows “V2 Runtime 尚未连接”), and the evaluation milestone (trace store, automated player policies, metrics, human playtest workflow).
+
+## Design notes
+
+Core invariants (archived design docs are superseded by this README):
+
+- **Kernel is judge; agents propose and write.** Agents never mutate state directly; every irreversible change passes deterministic validation, simulation, and typed-event reduction.
+- **World truth ≠ character statements.** Facts, knowledge, beliefs, and spoken words are separate data; characters may lie or be mistaken, but never know unexplained facts.
+- **No rewind, no free text.** Players send only backend-presented choice IDs with an `expected_revision`; committed facts are immutable.
+- **Choices express intent, not pre-written outcomes.** Options describe what the player does; consequences are resolved and bounded by rules.
+- **Endings are semantic contracts.** The pack defines when an ending is eligible and what it must deliver; the Writer may polish the final chapter but cannot change ending semantics.
+- **Summaries are not fact sources.** Event Log and pack facts are authoritative; model history is only context cache.
+- **Responses-only, no fallback protocol.** `GAL_LLM_API=responses` is the only accepted API; there is no Chat Completions path and no V1/stub fallback in production. Deterministic fallbacks only keep a session safe or terminating.
+
+### Round flow
+
+Scene generation:
+
+```text
+compiled pack + replayed session
+  → ContextAssembler → Planner (EventProposal[])
+  → Validator → Simulator (copied state, ending reachability)
+  → Writer (SceneDraft) → Scene Validator
+  → typed events, atomic append with expected_revision
+```
+
+Player choice: the server accepts only a current, unforgeable choice ID; the Planner may propose action results but never writes relationship/fact/goal/ending directly; the Validator bounds effects; the Simulator checks consistency and that at least one ending stays reachable; committed events trigger the Ending Evaluator.
+
+Failure rules: on timeout/network error nothing is committed and the revision is unchanged; invalid JSON gets one contract-repair retry then a deterministic fallback; invalid proposals are dropped (all-fail → standard-action fallback); revision conflicts discard the stale result and recompute once.
+
+### Security rules
+
+- Keys must be rotated and never committed; the repo only ships an empty `.env.example`.
+- `OPENAI_API_KEY` may alias `OPENCODE_GO_API_KEY` only when identical; mismatched values fail startup.
+- Logs show variable names, model, and host only; OpenAI tracing is disabled by default.
+
+## Deferred / next steps
+
+- V2 frontend client: create sessions, render scenes, present 2-4 options (current shell is a static status page).
+- Streaming output and a V2 WebSocket channel, after the HTTP protocol stabilizes.
+- Evaluation milestone: trace store, automated player policies, deterministic/model-backed runs, metrics, human playtest workflow.
+- Optional visual assets (sprites, backgrounds, BGM) — reserved in pack/event contracts but out of scope.
 
 ## Prerequisites
 
@@ -147,7 +189,6 @@ gal_agent/
 │   ├── tests/                   # offline suite + tests/live/ (opt-in)
 │   └── .env.example
 ├── frontend/                    # Vite React shell (no V1 game client)
-├── docs/superpowers/
 └── README.md
 ```
 
