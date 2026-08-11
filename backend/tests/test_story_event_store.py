@@ -164,7 +164,7 @@ def test_command_receipt_replays_completed_result(tmp_path):
         "fingerprint",
         0,
         [RelationshipChanged(character_id="alice", axis="trust", delta=1)],
-        lambda state, _: '{"revision": %d}' % state.revision,
+        lambda state, _: '{"revision": ' + str(state.revision) + '}',
         now=_NOW,
     )
     replay = store.claim_command("session_01", "command-1", "advance", "fingerprint", now=_NOW)
@@ -218,7 +218,7 @@ def test_command_receipt_failed_transition_rolls_back_events_and_receipt(tmp_pat
                 RelationshipChanged(character_id="alice", axis="trust", delta=5),
                 FactRevealed(fact_id="who_took_notebook"),
             ],
-            lambda state, _: '{"revision": %d}' % state.revision,
+            lambda state, _: '{"revision": ' + str(state.revision) + '}',
             now=_NOW,
         )
     assert store.load_session("session_01") == original

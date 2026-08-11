@@ -39,7 +39,7 @@ from src.story.state import (
     apply_events,
 )
 from src.story.state.events import StoryEvent
-from src.story.storage import RevisionConflict, StoryEventStore
+from src.story.storage import StoryEventStore
 
 
 def _command_fingerprint(kind: str, expected_revision: int, choice_id: str | None = None) -> str:
