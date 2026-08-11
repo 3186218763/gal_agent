@@ -131,7 +131,7 @@ def _decision_bundle(tmp_path: Path) -> tuple[TestClient, SimpleNamespace]:
     session_id = created.json()["session_id"]
     scene = http.post(
         f"/api/v2/sessions/{session_id}/advance",
-        json={"expected_revision": 0},
+        json={"expected_revision": 0, "idempotency_key": "req-00"},
     )
     assert scene.status_code == 200
     payload = scene.json()
@@ -174,7 +174,7 @@ def test_create_advance_and_choose_v2_session(tmp_path: Path):
 
     scene = client.post(
         f"/api/v2/sessions/{session_id}/advance",
-        json={"expected_revision": 0},
+        json={"expected_revision": 0, "idempotency_key": "req-00"},
     )
     assert scene.status_code == 200
     payload = scene.json()
@@ -215,7 +215,7 @@ def test_unoffered_choice_returns_422(decision_client: TestClient, decision_sess
 def test_pending_decision_returns_409(decision_client: TestClient, decision_session: SimpleNamespace):
     response = decision_client.post(
         f"/api/v2/sessions/{decision_session.id}/advance",
-        json={"expected_revision": decision_session.revision},
+        json={"expected_revision": decision_session.revision, "idempotency_key": "advance-09"},
     )
     assert response.status_code == 409
     assert response.json() == {"detail": {"code": "command_conflict"}}
@@ -241,7 +241,8 @@ def test_missing_runtime_configuration_fails_default_app_start(monkeypatch):
 
 def test_provider_failure_is_redacted(provider_failure_client: TestClient):
     response = provider_failure_client.post(
-        "/api/v2/sessions/session_01/advance", json={"expected_revision": 0}
+        "/api/v2/sessions/session_01/advance",
+        json={"expected_revision": 0, "idempotency_key": "provider-advance"},
     )
     assert response.status_code == 503
     assert response.json() == {"detail": {"code": "model_provider_unavailable"}}
@@ -313,7 +314,7 @@ def test_get_session_keeps_ending_title_and_epilogue_after_end(tmp_path: Path):
 
     scene = http.post(
         "/api/v2/sessions/session_ending/advance",
-        json={"expected_revision": 0},
+        json={"expected_revision": 0, "idempotency_key": "ending-advance"},
     )
     assert scene.status_code == 200
     advance_body = scene.json()

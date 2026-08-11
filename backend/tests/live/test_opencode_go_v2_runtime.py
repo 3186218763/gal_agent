@@ -70,7 +70,9 @@ async def test_deepseek_responses_runs_one_v2_choice_roundtrip(tmp_path):
             return await sdk_planner.resolve_action(pack, state, choice)
 
     runtime = RuntimeService(store, FixedScenePlanner(), writer)
-    scene = await runtime.advance(pack, state.session_id, state.revision)
+    scene = await runtime.advance(
+        pack, state.session_id, state.revision, idempotency_key="live-advance-1"
+    )
     assert scene.blocks
     assert len(scene.choices) == 2
 

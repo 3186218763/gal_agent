@@ -18,6 +18,7 @@ from src.story.runtime.contracts import (
     DecisionRequired,
     InvalidChoice,
     PackMismatch,
+    RuntimeGenerationUnavailable,
     RuntimeRevisionConflict,
     RuntimeScene,
     RuntimeSessionEnded,
@@ -80,10 +81,11 @@ class CreateSessionRequest(BaseModel):
 
 class RevisionRequest(BaseModel):
     expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=120)
 
 
 class ChoiceRequest(RevisionRequest):
-    idempotency_key: str = Field(min_length=1, max_length=120)
+    pass
 
 
 class SessionResponse(BaseModel):
@@ -165,6 +167,13 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
             content={"detail": {"code": "model_provider_unavailable"}},
         )
 
+    @app.exception_handler(RuntimeGenerationUnavailable)
+    async def generation_unavailable(request, exc):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": {"code": "generation_unavailable"}},
+        )
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "runtime": "v2"}
@@ -190,7 +199,12 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
     async def advance(session_id: str, command: RevisionRequest) -> RuntimeScene:
         state = deps.store.load_session(session_id)
         pack = deps.registry.get(state.pack_id)
-        return await deps.runtime.advance(pack, session_id, command.expected_revision)
+        return await deps.runtime.advance(
+            pack,
+            session_id,
+            command.expected_revision,
+            command.idempotency_key,
+        )
 
     @app.post(
         "/api/v2/sessions/{session_id}/choices/{choice_id}",

@@ -71,7 +71,12 @@ async def autoplay(
             )
             _print(result.model_dump(mode="json"))
         else:
-            scene = await runtime.advance(pack, session_id, expected_revision=state.revision)
+            scene = await runtime.advance(
+                pack,
+                session_id,
+                expected_revision=state.revision,
+                idempotency_key=f"autoplay-advance-{commands}",
+            )
             _print(scene.model_dump(mode="json"))
         state = store.load_session(session_id)
         commands += 1
