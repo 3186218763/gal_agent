@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import yaml
@@ -17,12 +20,17 @@ from src.story.runtime.contracts import (
     ModelContractError,
     SceneDraft,
     ScenePlan,
+    StreamingGeneratorPort,
     WrittenChoice,
 )
 from src.story.runtime.service import RuntimeService
 from src.story.state import NarrativeBlock, initial_session_state
 from src.story.storage import StoryEventStore
 from tests.story_factories import minimal_script_pack_dict
+
+# ---------------------------------------------------------------------------
+# Fakes
+# ---------------------------------------------------------------------------
 
 
 class FakePlanner:
@@ -45,20 +53,55 @@ class FakeWriter:
         )
 
 
-class FailingPlanner:
-    async def plan_scene(self, pack, state):
+class FakeStreamingGenerator:
+    """Fake StreamingGeneratorPort that yields canned blocks + choices."""
+
+    def __init__(
+        self,
+        blocks: list[dict[str, Any]] | None = None,
+        complete: dict[str, Any] | None = None,
+    ) -> None:
+        self._blocks = blocks if blocks is not None else [
+            {"kind": "narration", "text": "The cafe hums quietly."},
+        ]
+        self._complete = complete or {
+            "scene_id": "scene_01",
+            "terminal": "decision",
+            "decision_id": "decision_01",
+            "choices": [
+                {
+                    "option_id": "ask",
+                    "action_id": "ask",
+                    "label": "ask directly",
+                    "intent": "ask directly",
+                },
+                {
+                    "option_id": "observe",
+                    "action_id": "observe",
+                    "label": "watch carefully",
+                    "intent": "watch carefully",
+                },
+            ],
+        }
+
+    async def generate_scene(
+        self, pack, state
+    ) -> AsyncGenerator[tuple[str, dict[str, Any]], None]:
+        for blk in self._blocks:
+            yield ("block", blk)
+        yield ("complete", self._complete)
+
+
+class ProviderFailingGenerator:
+    async def generate_scene(self, pack, state):
         raise OpenAIError("provider secret token leaked")
-
-    async def resolve_action(self, pack, state, choice):
-        raise OpenAIError("provider secret token leaked")
+        yield  # type: ignore[unreachable]
 
 
-class ContractFailingPlanner:
-    async def plan_scene(self, pack, state):
+class ContractFailingGenerator:
+    async def generate_scene(self, pack, state):
         raise ModelContractError("planner contract failed")
-
-    async def resolve_action(self, pack, state, choice):
-        raise ModelContractError("resolution contract failed")
+        yield  # type: ignore[unreachable]
 
 
 def valid_decision_plan() -> ScenePlan:
@@ -87,6 +130,11 @@ def valid_scene_draft(plan: ScenePlan) -> SceneDraft:
     )
 
 
+# ---------------------------------------------------------------------------
+# Test helpers
+# ---------------------------------------------------------------------------
+
+
 def write_test_pack(root: Path) -> Path:
     packs_root = root / "script_packs"
     pack_dir = packs_root / "test_pack"
@@ -102,6 +150,7 @@ def build_test_dependencies(
     tmp_path: Path,
     planner=None,
     writer=None,
+    generator: StreamingGeneratorPort | None = None,
 ) -> AppDependencies:
     packs_root = write_test_pack(tmp_path)
     store = StoryEventStore(tmp_path / "story.db")
@@ -110,8 +159,70 @@ def build_test_dependencies(
         store,
         planner if planner is not None else FakePlanner(),
         writer if writer is not None else FakeWriter(),
+        generator if generator is not None else FakeStreamingGenerator(),
     )
     return AppDependencies(store=store, registry=registry, runtime=runtime)
+
+
+def _parse_sse_lines(response) -> list[tuple[str, dict]]:
+    """Parse SSE frames from a streaming TestClient response."""
+    events: list[tuple[str, dict]] = []
+    current_event = "message"
+    current_data = ""
+    for line in response.iter_lines():
+        line = line.strip()
+        if line.startswith("event: "):
+            current_event = line[7:]
+        elif line.startswith("data: "):
+            current_data = line[6:]
+        elif line == "":
+            if current_data:
+                events.append((current_event, json.loads(current_data)))
+            current_event = "message"
+            current_data = ""
+    return events
+
+
+def _sse_advance(
+    client: TestClient, session_id: str, revision: int, key: str
+) -> dict[str, Any]:
+    """Call the SSE advance endpoint and return a dict similar to the old JSON response."""
+    with client.stream(
+        "POST",
+        f"/api/v2/sessions/{session_id}/advance",
+        json={"expected_revision": revision, "idempotency_key": key},
+    ) as resp:
+        raw_text = resp.read().decode()
+        events = _parse_sse_lines(resp)
+
+    result: dict[str, Any] = {"blocks": [], "choices": [], "_raw": raw_text}
+    for evt_type, data in events:
+        if evt_type == "block":
+            result["blocks"].append(data)
+        elif evt_type == "choices":
+            result["choices"] = data
+        elif evt_type == "done":
+            result.update(data)
+        elif evt_type == "error":
+            result["error"] = data["code"]
+    return result
+
+
+def _sse_advance_raw(
+    client: TestClient, session_id: str, revision: int, key: str
+) -> str:
+    """Return the raw SSE response text for inspection."""
+    with client.stream(
+        "POST",
+        f"/api/v2/sessions/{session_id}/advance",
+        json={"expected_revision": revision, "idempotency_key": key},
+    ) as resp:
+        return resp.read().decode()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -129,16 +240,12 @@ def _decision_bundle(tmp_path: Path) -> tuple[TestClient, SimpleNamespace]:
     )
     assert created.status_code == 201
     session_id = created.json()["session_id"]
-    scene = http.post(
-        f"/api/v2/sessions/{session_id}/advance",
-        json={"expected_revision": 0, "idempotency_key": "req-00"},
-    )
-    assert scene.status_code == 200
-    payload = scene.json()
+    scene = _sse_advance(http, session_id, 0, "req-00")
+    assert "error" not in scene
     session = SimpleNamespace(
         id=session_id,
-        revision=payload["revision"],
-        choices=payload["choices"],
+        revision=scene["revision"],
+        choices=scene["choices"],
     )
     return http, session
 
@@ -153,13 +260,9 @@ def decision_session(_decision_bundle) -> SimpleNamespace:
     return _decision_bundle[1]
 
 
-@pytest.fixture
-def provider_failure_client(tmp_path: Path) -> TestClient:
-    deps = build_test_dependencies(tmp_path, planner=FailingPlanner(), writer=FakeWriter())
-    pack = deps.registry.get("test_pack")
-    state = initial_session_state(pack, "session_01", session_seed=1)
-    deps.store.create_session(state)
-    return TestClient(create_app(deps))
+# ---------------------------------------------------------------------------
+# Tests: full lifecycle
+# ---------------------------------------------------------------------------
 
 
 def test_create_advance_and_choose_v2_session(tmp_path: Path):
@@ -172,17 +275,12 @@ def test_create_advance_and_choose_v2_session(tmp_path: Path):
     assert created.status_code == 201
     session_id = created.json()["session_id"]
 
-    scene = client.post(
-        f"/api/v2/sessions/{session_id}/advance",
-        json={"expected_revision": 0, "idempotency_key": "req-00"},
-    )
-    assert scene.status_code == 200
-    payload = scene.json()
-    assert len(payload["choices"]) == 2
+    scene = _sse_advance(client, session_id, 0, "req-00")
+    assert len(scene["choices"]) == 2
 
     chosen = client.post(
-        f"/api/v2/sessions/{session_id}/choices/{payload['choices'][0]['id']}",
-        json={"expected_revision": payload["revision"], "idempotency_key": "req-01"},
+        f"/api/v2/sessions/{session_id}/choices/{scene['choices'][0]['id']}",
+        json={"expected_revision": scene["revision"], "idempotency_key": "req-01"},
     )
     assert chosen.status_code == 200
 
@@ -200,6 +298,11 @@ def test_unknown_pack_and_session_return_404(client: TestClient):
     assert client.get("/api/v2/sessions/missing").status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# Tests: choice endpoint (unchanged JSON)
+# ---------------------------------------------------------------------------
+
+
 def test_unoffered_choice_returns_422(decision_client: TestClient, decision_session: SimpleNamespace):
     response = decision_client.post(
         f"/api/v2/sessions/{decision_session.id}/choices/invented",
@@ -212,15 +315,6 @@ def test_unoffered_choice_returns_422(decision_client: TestClient, decision_sess
     assert response.json() == {"detail": {"code": "invalid_choice"}}
 
 
-def test_pending_decision_returns_409(decision_client: TestClient, decision_session: SimpleNamespace):
-    response = decision_client.post(
-        f"/api/v2/sessions/{decision_session.id}/advance",
-        json={"expected_revision": decision_session.revision, "idempotency_key": "advance-09"},
-    )
-    assert response.status_code == 409
-    assert response.json() == {"detail": {"code": "command_conflict"}}
-
-
 def test_stale_revision_returns_409(decision_client: TestClient, decision_session: SimpleNamespace):
     choice_id = decision_session.choices[0]["id"]
     response = decision_client.post(
@@ -231,26 +325,37 @@ def test_stale_revision_returns_409(decision_client: TestClient, decision_sessio
     assert response.json() == {"detail": {"code": "command_conflict"}}
 
 
-def test_missing_runtime_configuration_fails_default_app_start(monkeypatch):
-    monkeypatch.delenv("GAL_LLM_PROVIDER", raising=False)
-    monkeypatch.delenv("OPENCODE_GO_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(ConfigurationError):
-        create_app()
+# ---------------------------------------------------------------------------
+# Tests: advance SSE error handling
+# ---------------------------------------------------------------------------
 
 
-def test_provider_failure_is_redacted(provider_failure_client: TestClient):
-    response = provider_failure_client.post(
-        "/api/v2/sessions/session_01/advance",
-        json={"expected_revision": 0, "idempotency_key": "provider-advance"},
+def test_pending_decision_returns_error_event(decision_client: TestClient, decision_session: SimpleNamespace):
+    """Advancing when a decision is pending yields an SSE error event."""
+    result = _sse_advance(
+        decision_client, decision_session.id, decision_session.revision, "advance-09"
     )
-    assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "model_provider_unavailable"}}
-    assert "secret" not in response.text
+    assert result["error"] == "decision_required"
+
+
+def test_provider_failure_sends_generation_error(tmp_path: Path):
+    deps = build_test_dependencies(
+        tmp_path, generator=ProviderFailingGenerator()
+    )
+    pack = deps.registry.get("test_pack")
+    state = initial_session_state(pack, "session_01", session_seed=1)
+    deps.store.create_session(state)
+    http = TestClient(create_app(deps))
+
+    raw = _sse_advance_raw(http, "session_01", 0, "provider-advance")
+    assert "generation_unavailable" in raw
+    assert "secret" not in raw
 
 
 def test_generation_contract_failure_is_retryable_and_redacted(tmp_path: Path):
-    deps = build_test_dependencies(tmp_path, planner=ContractFailingPlanner(), writer=FakeWriter())
+    deps = build_test_dependencies(
+        tmp_path, generator=ContractFailingGenerator()
+    )
     http = TestClient(create_app(deps))
     created = http.post(
         "/api/v2/sessions",
@@ -258,16 +363,27 @@ def test_generation_contract_failure_is_retryable_and_redacted(tmp_path: Path):
     )
     assert created.status_code == 201
     session_id = created.json()["session_id"]
-    response = http.post(
-        f"/api/v2/sessions/{session_id}/advance",
-        json={"expected_revision": 0, "idempotency_key": "advance-1"},
-    )
-    assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "generation_unavailable"}}
-    assert "contract failed" not in response.text
+
+    result = _sse_advance(http, session_id, 0, "advance-1")
+    assert result["error"] == "generation_unavailable"
+    assert "contract failed" not in result["_raw"]
+
     loaded = http.get(f"/api/v2/sessions/{session_id}")
     assert loaded.status_code == 200
     assert loaded.json()["revision"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: misc endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_missing_runtime_configuration_fails_default_app_start(monkeypatch):
+    monkeypatch.delenv("GAL_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("OPENCODE_GO_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(ConfigurationError):
+        create_app()
 
 
 def test_health_reports_v2(client: TestClient):
@@ -305,22 +421,17 @@ def test_get_session_keeps_ending_title_and_epilogue_after_end(tmp_path: Path):
     )
     store = StoryEventStore(tmp_path / "story.db")
     registry = ScriptPackRegistry(packs_root)
-    runtime = RuntimeService(store, FakePlanner(), FakeWriter())
+    runtime = RuntimeService(store, FakePlanner(), FakeWriter(), FakeStreamingGenerator())
     pack = registry.get("test_pack")
     state = initial_session_state(pack, "session_ending", session_seed=9)
     world = state.world.model_copy(update={"scene_count": state.world.max_scenes})
     store.create_session(state.model_copy(update={"world": world}))
     http = TestClient(create_app(AppDependencies(store=store, registry=registry, runtime=runtime)))
 
-    scene = http.post(
-        "/api/v2/sessions/session_ending/advance",
-        json={"expected_revision": 0, "idempotency_key": "ending-advance"},
-    )
-    assert scene.status_code == 200
-    advance_body = scene.json()
-    assert advance_body["ending_id"] == "safe_exit"
-    assert advance_body["ending_title"] == "Closing Time"
-    assert advance_body["blocks"][0]["text"] == "Ending: Closing Time"
+    scene = _sse_advance(http, "session_ending", 0, "ending-advance")
+    assert scene["ending_id"] == "safe_exit"
+    assert scene["ending_title"] == "Closing Time"
+    assert scene["blocks"][0]["text"] == "Ending: Closing Time"
 
     loaded = http.get("/api/v2/sessions/session_ending")
     assert loaded.status_code == 200
@@ -343,23 +454,20 @@ def test_advance_requires_idempotency_key(client: TestClient):
     assert response.status_code == 422
 
 
-def test_repeated_advance_with_same_key_replays_without_extra_events(tmp_path: Path):
+def test_repeated_advance_with_same_key_replays_identical_events(tmp_path: Path):
     app = create_app(build_test_dependencies(tmp_path))
     http = TestClient(app)
     created = http.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 2})
     session_id = created.json()["session_id"]
-    first = http.post(
-        f"/api/v2/sessions/{session_id}/advance",
-        json={"expected_revision": 0, "idempotency_key": "advance-1"},
-    )
-    replay = http.post(
-        f"/api/v2/sessions/{session_id}/advance",
-        json={"expected_revision": 0, "idempotency_key": "advance-1"},
-    )
-    assert replay.status_code == 200
-    assert replay.json() == first.json()
+    first = _sse_advance(http, session_id, 0, "advance-1")
+    replay = _sse_advance(http, session_id, 0, "advance-1")
+
+    assert replay["revision"] == first["revision"]
+    assert [b["text"] for b in replay["blocks"]] == [b["text"] for b in first["blocks"]]
+    assert replay["choices"] == first["choices"]
+
     session = http.get(f"/api/v2/sessions/{session_id}").json()
-    assert session["revision"] == first.json()["revision"]
+    assert session["revision"] == first["revision"]
 
 
 def test_get_session_returns_public_projection_without_internal_state(client: TestClient):
