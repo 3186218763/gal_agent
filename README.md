@@ -216,9 +216,11 @@ uv run pytest tests/ -q
 Default suite is offline. Live network tests are skipped unless:
 
 ```bash
-RUN_LIVE_ZEN_TEST=1 GAL_LLM_PROVIDER=opencode_go \
-  uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
+cd backend
+RUN_LIVE_ZEN_TEST=1 uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
 ```
+
+The live command reads the ignored `backend/.env` with `override=False`, so an explicitly exported CI secret wins.
 
 ## License
 

@@ -120,9 +120,10 @@ uv run pytest tests/ -q
 uv run ruff check src/story src/main.py tests
 
 # live capability (rotated key required)
-RUN_LIVE_ZEN_TEST=1 GAL_LLM_PROVIDER=opencode_go \
-  uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
+RUN_LIVE_ZEN_TEST=1 uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
 ```
+
+The live command reads the ignored `backend/.env` with `override=False`, so an explicitly exported CI secret wins.
 
 ## License
 
