@@ -12,6 +12,12 @@ from fastapi.responses import JSONResponse
 from openai import OpenAIError
 from pydantic import BaseModel, Field
 
+from src.story.projection import (
+    PackProjection,
+    SessionProjection,
+    project_pack,
+    project_session,
+)
 from src.story.runtime.config import OpenCodeGoSettings
 from src.story.runtime.contracts import (
     ActionResult,
@@ -29,7 +35,7 @@ from src.story.runtime.service import RuntimeService
 from src.story.runtime.writer import SdkWriter
 from src.story.script_pack import PackCompileError, compile_script_pack
 from src.story.script_pack.models import CompiledScriptPack
-from src.story.state import NarrativeBlock, PresentedChoice, SessionState, initial_session_state
+from src.story.state import initial_session_state
 from src.story.storage import RevisionConflict, SessionNotFound, StoryEventStore
 
 
@@ -88,54 +94,6 @@ class ChoiceRequest(RevisionRequest):
     pass
 
 
-class SessionResponse(BaseModel):
-    session_id: str
-    pack_id: str
-    revision: int
-    status: str
-    phase: str
-    scene_count: int
-    pending_decision_id: str | None
-    scene_id: str | None
-    blocks: tuple[NarrativeBlock, ...] = ()
-    choices: tuple[PresentedChoice, ...] = ()
-    ending_id: str | None = None
-    ending_title: str | None = None
-
-    @classmethod
-    def from_state(cls, state: SessionState) -> SessionResponse:
-        if state.pending_scene is not None:
-            scene_id = state.pending_scene.scene_id
-            blocks = state.pending_scene.blocks
-        elif state.ending is not None:
-            # SessionEnded clears pending_scene; epilogue lives on ending.
-            scene_id = None
-            blocks = state.ending.blocks
-        else:
-            scene_id = None
-            blocks = ()
-        return cls(
-            session_id=state.session_id,
-            pack_id=state.pack_id,
-            revision=state.revision,
-            status=state.status.value,
-            phase=state.world.phase.value,
-            scene_count=state.world.scene_count,
-            pending_decision_id=(
-                state.pending_decision.decision_id
-                if state.pending_decision is not None
-                else None
-            ),
-            scene_id=scene_id,
-            blocks=blocks,
-            choices=(
-                state.pending_decision.choices if state.pending_decision is not None else ()
-            ),
-            ending_id=state.ending.ending_id if state.ending is not None else None,
-            ending_title=state.ending.title if state.ending is not None else None,
-        )
-
-
 def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
     deps = dependencies or default_dependencies()
     app = FastAPI(title="Galgame AI V2")
@@ -178,8 +136,8 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "runtime": "v2"}
 
-    @app.post("/api/v2/sessions", response_model=SessionResponse, status_code=201)
-    async def create_session(command: CreateSessionRequest) -> SessionResponse:
+    @app.post("/api/v2/sessions", response_model=SessionProjection, status_code=201)
+    async def create_session(command: CreateSessionRequest) -> SessionProjection:
         try:
             pack = deps.registry.get(command.pack_id)
         except PackCompileError as exc:
@@ -189,11 +147,15 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
             ) from exc
         state = initial_session_state(pack, str(uuid4()), command.session_seed)
         deps.store.create_session(state)
-        return SessionResponse.from_state(state)
+        return project_session(state)
 
-    @app.get("/api/v2/sessions/{session_id}", response_model=SessionResponse)
-    async def get_session(session_id: str) -> SessionResponse:
-        return SessionResponse.from_state(deps.store.load_session(session_id))
+    @app.get("/api/v2/sessions/{session_id}", response_model=SessionProjection)
+    async def get_session(session_id: str) -> SessionProjection:
+        return project_session(deps.store.load_session(session_id))
+
+    @app.get("/api/v2/packs/{pack_id}", response_model=PackProjection)
+    async def get_pack(pack_id: str) -> PackProjection:
+        return project_pack(deps.registry.get(pack_id))
 
     @app.post("/api/v2/sessions/{session_id}/advance", response_model=RuntimeScene)
     async def advance(session_id: str, command: RevisionRequest) -> RuntimeScene:
@@ -235,7 +197,6 @@ __all__ = [
     "PackNotFound",
     "RevisionRequest",
     "ScriptPackRegistry",
-    "SessionResponse",
     "create_app",
     "default_dependencies",
 ]

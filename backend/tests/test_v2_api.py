@@ -330,3 +330,65 @@ def test_get_session_keeps_ending_title_and_epilogue_after_end(tmp_path: Path):
     assert body["ending_title"] == "Closing Time"
     assert body["blocks"][0]["text"] == "Ending: Closing Time"
     assert body["scene_id"] is None
+
+
+def test_advance_requires_idempotency_key(client: TestClient):
+    created = client.post(
+        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1}
+    )
+    session_id = created.json()["session_id"]
+    response = client.post(
+        f"/api/v2/sessions/{session_id}/advance", json={"expected_revision": 0}
+    )
+    assert response.status_code == 422
+
+
+def test_repeated_advance_with_same_key_replays_without_extra_events(tmp_path: Path):
+    app = create_app(build_test_dependencies(tmp_path))
+    http = TestClient(app)
+    created = http.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 2})
+    session_id = created.json()["session_id"]
+    first = http.post(
+        f"/api/v2/sessions/{session_id}/advance",
+        json={"expected_revision": 0, "idempotency_key": "advance-1"},
+    )
+    replay = http.post(
+        f"/api/v2/sessions/{session_id}/advance",
+        json={"expected_revision": 0, "idempotency_key": "advance-1"},
+    )
+    assert replay.status_code == 200
+    assert replay.json() == first.json()
+    session = http.get(f"/api/v2/sessions/{session_id}").json()
+    assert session["revision"] == first.json()["revision"]
+
+
+def test_get_session_returns_public_projection_without_internal_state(client: TestClient):
+    created = client.post(
+        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 4}
+    )
+    session_id = created.json()["session_id"]
+    body = client.get(f"/api/v2/sessions/{session_id}").json()
+    assert body["status"] == "active"
+    assert body["location_id"] == "cafe"
+    assert body["time_label"] == "opening"
+    assert body["present_character_ids"] == ["alice"]
+    assert "truth_status" not in body
+    assert "knowledge" not in body
+    assert "suspicions" not in body
+    assert "pack_hash" not in body
+    assert "session_seed" not in body
+
+
+def test_pack_projection_endpoint_exposes_public_metadata(client: TestClient):
+    response = client.get("/api/v2/packs/test_pack")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pack_id"] == "test_pack"
+    assert body["title"] == "Test Pack"
+    assert body["locations"][0]["location_id"] == "cafe"
+    assert "secrets" not in body
+    assert "personality" not in body
+
+
+def test_unknown_pack_projection_returns_404(client: TestClient):
+    assert client.get("/api/v2/packs/missing").status_code == 404
