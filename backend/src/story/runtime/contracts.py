@@ -166,6 +166,15 @@ class WriterPort(Protocol):
         raise NotImplementedError
 
 
+class StreamingGeneratorPort(Protocol):
+    async def generate_scene(
+        self,
+        pack: CompiledScriptPack,
+        state: SessionState,
+    ):  # -> AsyncGenerator[tuple[str, dict], None]
+        raise NotImplementedError
+
+
 class RuntimeScene(RuntimeModel):
     session_id: str
     revision: int
