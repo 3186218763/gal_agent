@@ -126,6 +126,29 @@ def test_planner_and_writer_outputs_support_strict_json_schema():
     assert AgentOutputSchema(WriterOutput).is_strict_json_schema() is True
 
 
+def _anyof_branches_without_type(schema: Any) -> list[list[Any]]:
+    bad: list[list[Any]] = []
+    if isinstance(schema, dict):
+        any_of = schema.get("anyOf")
+        if isinstance(any_of, list):
+            missing = [branch for branch in any_of if "type" not in branch]
+            if missing:
+                bad.append(missing)
+        for value in schema.values():
+            bad.extend(_anyof_branches_without_type(value))
+    elif isinstance(schema, list):
+        for item in schema:
+            bad.extend(_anyof_branches_without_type(item))
+    return bad
+
+
+def test_provider_schemas_have_no_bare_refs_in_anyof():
+    from src.story.runtime.model import ProviderStrictOutputSchema
+
+    assert _anyof_branches_without_type(ProviderStrictOutputSchema(PlannerOutput)._output_schema) == []
+    assert _anyof_branches_without_type(ProviderStrictOutputSchema(WriterOutput)._output_schema) == []
+
+
 @pytest.mark.asyncio
 async def test_planner_uses_one_agent_for_scene_and_resolution(
     monkeypatch, shared_model, pack, state, decision_state, offered_choice

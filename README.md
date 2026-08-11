@@ -198,9 +198,12 @@ gal_agent/
 |--------|------|---------|
 | `GET` | `/health` | `{"status":"ok","runtime":"v2"}` |
 | `POST` | `/api/v2/sessions` | Create session (`pack_id`, `session_seed`) |
-| `GET` | `/api/v2/sessions/{id}` | Load session snapshot |
-| `POST` | `/api/v2/sessions/{id}/advance` | Generate next scene (`expected_revision`) |
+| `GET` | `/api/v2/sessions/{id}` | Public session projection |
+| `GET` | `/api/v2/packs/{id}` | Public pack metadata projection |
+| `POST` | `/api/v2/sessions/{id}/advance` | Generate next scene (`expected_revision`, `idempotency_key`) |
 | `POST` | `/api/v2/sessions/{id}/choices/{choice_id}` | Apply presented choice (`expected_revision`, `idempotency_key`) |
+
+Every mutation requires an `idempotency_key`; retrying a completed command with the same key replays its stored result and appends no new events. Reads return safe public projections — internal state (fact truth values, character knowledge, beliefs, suspicions, goals, seeds, pack hashes) never crosses the API boundary. A generation failure maps to `503 {"code":"generation_unavailable"}` and leaves the session unmodified, so a client can retry safely.
 
 OpenAPI: `http://127.0.0.1:8000/docs` when the server is running.
 
@@ -220,7 +223,7 @@ cd backend
 RUN_LIVE_ZEN_TEST=1 uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
 ```
 
-The live command reads the ignored `backend/.env` with `override=False`, so an explicitly exported CI secret wins.
+The live command reads the ignored `backend/.env` with `override=False`, so an explicitly exported CI secret wins. If the provider answers slowly, raise the timeout: `RUN_LIVE_ZEN_TEST=1 GAL_LLM_TIMEOUT_SECONDS=120 uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v`. The real model is nondeterministic; failures fail closed and never modify the session.
 
 ## License
 

@@ -5,8 +5,10 @@ V2-only FastAPI + CLI runtime. Script packs compile offline; live scene generati
 ## Features
 
 - Event-sourced sessions (`StoryEventStore`, revisioned append)
+- Idempotent mutations via atomic SQLite command receipts (events + result commit together)
 - Shared Planner / Writer model bundle (Responses API only)
-- Validator + Simulator gate model proposals before reducer commits
+- Strict-schema Planner/Writer outputs; Validator + Simulator gate model proposals before reducer commits; invalid turns fail closed without committing
+- Safe public pack/session projections for a future browser player
 - Offline pack validation and session inspect without a model key
 - Opt-in live tests and `play-live` autoplay when a key is configured
 
@@ -64,12 +66,17 @@ uv run python -m src.story.cli inspect-session local_demo --database data/story.
 | Method | Path | Body / notes |
 |--------|------|----------------|
 | `GET` | `/health` | `runtime: v2` |
-| `POST` | `/api/v2/sessions` | `{ "pack_id", "session_seed" }` → 201 |
-| `GET` | `/api/v2/sessions/{session_id}` | snapshot |
-| `POST` | `/api/v2/sessions/{session_id}/advance` | `{ "expected_revision" }` |
+| `POST` | `/api/v2/sessions` | `{ "pack_id", "session_seed" }` → 201, public session projection |
+| `GET` | `/api/v2/sessions/{session_id}` | public session projection |
+| `GET` | `/api/v2/packs/{pack_id}` | public pack metadata projection |
+| `POST` | `/api/v2/sessions/{session_id}/advance` | `{ "expected_revision", "idempotency_key" }` |
 | `POST` | `/api/v2/sessions/{session_id}/choices/{choice_id}` | `{ "expected_revision", "idempotency_key" }` |
 
-Common error codes in `detail.code`: `pack_not_found`, `session_not_found`, `invalid_choice`, `command_conflict`, `invalid_script_pack`, `model_provider_unavailable`.
+All mutations require an `idempotency_key`; replaying a completed command with the same key returns the stored result without new events. `GET` responses are safe public projections: internal state (fact truth values, character knowledge, beliefs, suspicions, goals, seeds, pack hashes) is never exposed.
+
+Common error codes in `detail.code`: `pack_not_found`, `session_not_found`, `invalid_choice`, `command_conflict`, `invalid_script_pack`, `model_provider_unavailable`, `generation_unavailable`.
+
+`generation_unavailable` (503) means the real model could not produce a valid, committable turn; the session is left unmodified and the request is safe to retry with a new key. `model_provider_unavailable` (503) covers provider outages and is equally non-committing.
 
 Swagger: `http://127.0.0.1:8000/docs`
 
@@ -80,9 +87,10 @@ backend/
 ├── src/
 │   ├── main.py                 # app = create_app()
 │   └── story/
-│       ├── api.py              # REST surface
+│       ├── api.py              # REST surface (idempotent mutations, projections)
 │       ├── cli.py
 │       ├── conditions.py
+│       ├── projection.py        # public pack/session projections
 │       ├── runtime/            # config, model, planner, writer, validator, …
 │       ├── script_pack/
 │       ├── state/
@@ -123,7 +131,14 @@ uv run ruff check src/story src/main.py tests
 RUN_LIVE_ZEN_TEST=1 uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
 ```
 
-The live command reads the ignored `backend/.env` with `override=False`, so an explicitly exported CI secret wins.
+The live command reads the ignored `backend/.env` with `override=False`, so an explicitly exported CI secret wins. If the provider answers slowly, raise the timeout (default 45s):
+
+```bash
+cd backend
+RUN_LIVE_ZEN_TEST=1 GAL_LLM_TIMEOUT_SECONDS=120 uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
+```
+
+The live test drives the real model through the strict planner/writer contract; the model is nondeterministic, so an occasional run fails closed (`ProposalRejected`) or times out without committing anything — a pass proves the roundtrip works, and the session stays unmodified on failure.
 
 ## License
 
