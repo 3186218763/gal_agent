@@ -14,6 +14,7 @@ from src.story.runtime.contracts import (
     ActionResolution,
     ChoicePlan,
     EndingDraft,
+    ModelContractError,
     SceneDraft,
     ScenePlan,
     WrittenChoice,
@@ -50,6 +51,14 @@ class FailingPlanner:
 
     async def resolve_action(self, pack, state, choice):
         raise OpenAIError("provider secret token leaked")
+
+
+class ContractFailingPlanner:
+    async def plan_scene(self, pack, state):
+        raise ModelContractError("planner contract failed")
+
+    async def resolve_action(self, pack, state, choice):
+        raise ModelContractError("resolution contract failed")
 
 
 def valid_decision_plan() -> ScenePlan:
@@ -237,6 +246,27 @@ def test_provider_failure_is_redacted(provider_failure_client: TestClient):
     assert response.status_code == 503
     assert response.json() == {"detail": {"code": "model_provider_unavailable"}}
     assert "secret" not in response.text
+
+
+def test_generation_contract_failure_is_retryable_and_redacted(tmp_path: Path):
+    deps = build_test_dependencies(tmp_path, planner=ContractFailingPlanner(), writer=FakeWriter())
+    http = TestClient(create_app(deps))
+    created = http.post(
+        "/api/v2/sessions",
+        json={"pack_id": "test_pack", "session_seed": 13},
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    response = http.post(
+        f"/api/v2/sessions/{session_id}/advance",
+        json={"expected_revision": 0, "idempotency_key": "advance-1"},
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "generation_unavailable"}}
+    assert "contract failed" not in response.text
+    loaded = http.get(f"/api/v2/sessions/{session_id}")
+    assert loaded.status_code == 200
+    assert loaded.json()["revision"] == 0
 
 
 def test_health_reports_v2(client: TestClient):

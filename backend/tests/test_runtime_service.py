@@ -9,6 +9,8 @@ from src.story.runtime.contracts import (
     ChoicePlan,
     DecisionRequired,
     EndingDraft,
+    ModelContractError,
+    RuntimeGenerationUnavailable,
     RuntimeRevisionConflict,
     SceneDraft,
     ScenePlan,
@@ -36,6 +38,14 @@ class FakeWriter:
 
     async def write_ending(self, pack, state, ending):
         return valid_ending_draft(ending)
+
+
+class ContractFailingPlanner:
+    async def plan_scene(self, pack, state):
+        raise ModelContractError("planner contract failed")
+
+    async def resolve_action(self, pack, state, choice):
+        raise ModelContractError("resolution contract failed")
 
 
 def valid_decision_plan() -> ScenePlan:
@@ -174,3 +184,30 @@ async def test_eligible_ending_commits_atomic_epilogue(tmp_path):
         "scene_committed",
         "session_ended",
     ]
+
+
+@pytest.mark.asyncio
+async def test_scene_generation_failure_leaves_session_unmodified(tmp_path):
+    service, pack, store = service_fixture(tmp_path, ContractFailingPlanner(), FakeWriter())
+    with pytest.raises(RuntimeGenerationUnavailable):
+        await service.advance(pack, "session_01", expected_revision=0)
+    assert store.load_session("session_01").revision == 0
+    assert store.event_count("session_01") == 0
+
+
+@pytest.mark.asyncio
+async def test_choice_generation_failure_keeps_pending_choice_available(tmp_path):
+    service, pack, store = decision_service_fixture(tmp_path)
+    service = RuntimeService(store, ContractFailingPlanner(), FakeWriter())
+    state = store.load_session("session_01")
+    with pytest.raises(RuntimeGenerationUnavailable):
+        await service.select_choice(
+            pack,
+            state.session_id,
+            state.pending_decision.choices[0].id,
+            state.revision,
+            "request-01",
+        )
+    after = store.load_session("session_01")
+    assert after.pending_decision is not None
+    assert after.pending_decision.choices[0].id == state.pending_decision.choices[0].id

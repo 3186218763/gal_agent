@@ -9,18 +9,13 @@ from src.story.runtime.contracts import (
     ModelContractError,
     PackMismatch,
     PlannerPort,
+    RuntimeGenerationUnavailable,
     RuntimeRevisionConflict,
     RuntimeScene,
     RuntimeSessionEnded,
     WriterPort,
 )
 from src.story.runtime.endings import select_ending
-from src.story.runtime.fallbacks import (
-    fallback_ending_draft,
-    fallback_resolution,
-    fallback_scene_draft,
-    fallback_scene_plan,
-)
 from src.story.runtime.simulator import simulate_events, simulate_resolution, simulate_scene
 from src.story.runtime.validator import (
     ProposalRejected,
@@ -104,13 +99,17 @@ class RuntimeService:
         try:
             proposed = await self.planner.plan_scene(pack, state)
             plan = validate_scene_plan(pack, state, proposed)
-        except (ModelContractError, ProposalRejected):
-            plan = validate_scene_plan(pack, state, fallback_scene_plan(pack, state))
+        except (ModelContractError, ProposalRejected) as exc:
+            raise RuntimeGenerationUnavailable(
+                "the model could not produce a valid scene plan"
+            ) from exc
         try:
             written = await self.writer.write_scene(pack, state, plan)
             draft = validate_scene_draft(plan, written)
-        except (ModelContractError, ProposalRejected):
-            draft = validate_scene_draft(plan, fallback_scene_draft(plan))
+        except (ModelContractError, ProposalRejected) as exc:
+            raise RuntimeGenerationUnavailable(
+                "the model could not produce a valid scene draft"
+            ) from exc
         events = simulate_scene(pack, state, plan, draft)
         updated, _ = self.store.append(state.session_id, state.revision, events)
         return RuntimeScene.from_committed(updated, events[-1])
@@ -142,13 +141,10 @@ class RuntimeService:
                 proposed,
                 expected_action_id=choice.action_id,
             )
-        except (ModelContractError, ProposalRejected):
-            resolution = validate_action_resolution(
-                pack,
-                state,
-                fallback_resolution(choice),
-                expected_action_id=choice.action_id,
-            )
+        except (ModelContractError, ProposalRejected) as exc:
+            raise RuntimeGenerationUnavailable(
+                "the model could not produce a valid resolution"
+            ) from exc
         events = simulate_resolution(state, choice, resolution, idempotency_key)
         try:
             updated, _ = self.store.append(session_id, state.revision, events)
@@ -171,8 +167,10 @@ class RuntimeService:
             draft = await self.writer.write_ending(pack, state, ending)
             if draft.ending_id != ending.id:
                 raise ModelContractError("writer changed ending id")
-        except ModelContractError:
-            draft = fallback_ending_draft(ending)
+        except ModelContractError as exc:
+            raise RuntimeGenerationUnavailable(
+                "the model could not produce a valid ending"
+            ) from exc
         ending_runtime = EndingRuntime(
             ending_id=ending.id,
             entered_at_revision=state.revision + 1,

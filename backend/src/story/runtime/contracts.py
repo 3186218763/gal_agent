@@ -18,6 +18,10 @@ class ModelContractError(RuntimeError):
     pass
 
 
+class RuntimeGenerationUnavailable(RuntimeError):
+    """The real model could not produce a valid, committable turn."""
+
+
 class ChoicePlan(RuntimeModel):
     option_id: str
     action_id: str
