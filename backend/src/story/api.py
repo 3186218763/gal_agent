@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from openai import OpenAIError
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 from src.story.projection import (
     PackProjection,
@@ -26,7 +30,6 @@ from src.story.runtime.contracts import (
     PackMismatch,
     RuntimeGenerationUnavailable,
     RuntimeRevisionConflict,
-    RuntimeScene,
     RuntimeSessionEnded,
 )
 from src.story.runtime.model import build_model_bundle
@@ -97,6 +100,10 @@ class ChoiceRequest(RevisionRequest):
     pass
 
 
+def _sse_error(code: str) -> str:
+    return f"event: error\ndata: {json.dumps({'code': code})}\n\n"
+
+
 def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
     deps = dependencies or default_dependencies()
     app = FastAPI(title="Galgame AI V2")
@@ -160,15 +167,39 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
     async def get_pack(pack_id: str) -> PackProjection:
         return project_pack(deps.registry.get(pack_id))
 
-    @app.post("/api/v2/sessions/{session_id}/advance", response_model=RuntimeScene)
-    async def advance(session_id: str, command: RevisionRequest) -> RuntimeScene:
+    @app.post(
+        "/api/v2/sessions/{session_id}/advance",
+        response_class=StreamingResponse,
+    )
+    async def advance(session_id: str, command: RevisionRequest):
         state = deps.store.load_session(session_id)
         pack = deps.registry.get(state.pack_id)
-        return await deps.runtime.advance(
-            pack,
-            session_id,
-            command.expected_revision,
-            command.idempotency_key,
+
+        async def event_stream():
+            try:
+                async for event_type, data in deps.runtime.advance_streamed(
+                    pack,
+                    session_id,
+                    command.expected_revision,
+                    command.idempotency_key,
+                ):
+                    yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            except (RuntimeRevisionConflict, RevisionConflict):
+                yield _sse_error("revision_conflict")
+            except DecisionRequired:
+                yield _sse_error("decision_required")
+            except RuntimeSessionEnded:
+                yield _sse_error("session_ended")
+            except PackMismatch:
+                yield _sse_error("pack_mismatch")
+            except (OpenAIError, RuntimeGenerationUnavailable) as exc:
+                logger.warning("advance stream failed: %s", exc)
+                yield _sse_error("generation_unavailable")
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     @app.post(

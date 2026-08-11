@@ -276,3 +276,139 @@ def test_advance_streamed_ending_path_yields_ending_metadata(tmp_path: Path):
     done = next(r[1] for r in results if r[0] == "done")
     assert done["ending_id"] == "fallback_ending"
     assert "ending_title" in done
+
+
+# ---------------------------------------------------------------------------
+# SSE HTTP endpoint tests (Task 4)
+# ---------------------------------------------------------------------------
+
+def _parse_sse_lines(response) -> list[tuple[str, dict]]:
+    """Parse SSE frames from a Starlette TestClient streaming response."""
+    import json
+
+    events: list[tuple[str, dict]] = []
+    current_event = "message"
+    current_data = ""
+    for line in response.iter_lines():
+        line = line.strip()
+        if line.startswith("event: "):
+            current_event = line[7:]
+        elif line.startswith("data: "):
+            current_data = line[6:]
+        elif line == "":
+            if current_data:
+                events.append((current_event, json.loads(current_data)))
+            current_event = "message"
+            current_data = ""
+    return events
+
+
+def test_sse_advance_streams_blocks_and_choices(tmp_path: Path):
+    """POST /advance returns text/event-stream with block, choices, done events."""
+    from fastapi.testclient import TestClient
+
+    from src.story.api import create_app
+
+    deps = build_streaming_deps(tmp_path)
+    client = TestClient(create_app(deps))
+
+    created = client.post(
+        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1}
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/api/v2/sessions/{session_id}/advance",
+        json={"expected_revision": 0, "idempotency_key": "sse-1"},
+    ) as resp:
+        assert resp.status_code == 200
+        events = _parse_sse_lines(resp)
+
+    event_types = [e[0] for e in events]
+    assert "block" in event_types
+    assert "choices" in event_types
+    assert event_types[-1] == "done"
+
+    blocks = [e[1] for e in events if e[0] == "block"]
+    assert len(blocks) == 2
+    assert "text" in blocks[0]
+
+    choices = next(e[1] for e in events if e[0] == "choices")
+    assert len(choices) == 2
+
+    done = next(e[1] for e in events if e[0] == "done")
+    assert done["session_id"] == session_id
+    assert done["revision"] == 1
+
+
+def test_sse_advance_idempotent_replay(tmp_path: Path):
+    """Replaying the same idempotency key yields the same blocks via SSE."""
+    from fastapi.testclient import TestClient
+
+    from src.story.api import create_app
+
+    deps = build_streaming_deps(tmp_path)
+    client = TestClient(create_app(deps))
+
+    created = client.post(
+        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 2}
+    )
+    session_id = created.json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/api/v2/sessions/{session_id}/advance",
+        json={"expected_revision": 0, "idempotency_key": "sse-replay"},
+    ) as r1:
+        events1 = _parse_sse_lines(r1)
+
+    with client.stream(
+        "POST",
+        f"/api/v2/sessions/{session_id}/advance",
+        json={"expected_revision": 0, "idempotency_key": "sse-replay"},
+    ) as r2:
+        events2 = _parse_sse_lines(r2)
+
+    blocks1 = [e[1] for e in events1 if e[0] == "block"]
+    blocks2 = [e[1] for e in events2 if e[0] == "block"]
+    assert len(blocks1) == len(blocks2)
+    assert blocks1[0]["text"] == blocks2[0]["text"]
+
+
+def test_sse_advance_error_sends_error_event(tmp_path: Path):
+    """When generation fails, an error SSE event is emitted instead of a crash."""
+    from fastapi.testclient import TestClient
+
+    from src.story.api import create_app
+    from src.story.runtime.contracts import ModelContractError
+
+    class FailingGenerator:
+        async def generate_scene(self, pack, state):
+            raise ModelContractError("simulated failure")
+            yield  # type: ignore[unreachable]
+
+    packs_root = write_test_pack(tmp_path)
+    store = StoryEventStore(tmp_path / "story.db")
+    registry = ScriptPackRegistry(packs_root)
+    runtime = RuntimeService(store, _NoOpPlanner(), FakeWriter(), generator=FailingGenerator())
+    deps = AppDependencies(store=store, registry=registry, runtime=runtime)
+    client = TestClient(create_app(deps))
+
+    created = client.post(
+        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 3}
+    )
+    session_id = created.json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/api/v2/sessions/{session_id}/advance",
+        json={"expected_revision": 0, "idempotency_key": "sse-err"},
+    ) as resp:
+        assert resp.status_code == 200
+        events = _parse_sse_lines(resp)
+
+    error_events = [e for e in events if e[0] == "error"]
+    assert len(error_events) == 1
+    assert error_events[0][1]["code"] == "generation_unavailable"

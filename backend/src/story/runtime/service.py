@@ -306,12 +306,17 @@ class RuntimeService:
             # Stream regular scene
             collected_blocks: list = []
             complete_data: dict[str, Any] | None = None
-            async for event_type, data in self.generator.generate_scene(pack, state):
-                if event_type == "block":
-                    collected_blocks.append(data)
-                    yield ("block", data)
-                elif event_type == "complete":
-                    complete_data = data
+            try:
+                async for event_type, data in self.generator.generate_scene(pack, state):
+                    if event_type == "block":
+                        collected_blocks.append(data)
+                        yield ("block", data)
+                    elif event_type == "complete":
+                        complete_data = data
+            except ModelContractError as exc:
+                raise RuntimeGenerationUnavailable(
+                    "streaming generator failed"
+                ) from exc
 
             if complete_data is None:
                 raise RuntimeGenerationUnavailable("stream ended without complete data")
