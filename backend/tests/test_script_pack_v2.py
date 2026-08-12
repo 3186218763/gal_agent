@@ -460,3 +460,64 @@ class TestFakesModule:
         # Last should be "complete", all before should be "block"
         assert results[-1][0] == "complete"
         assert all(r[0] == "block" for r in results[:-1])
+
+
+# ---------------------------------------------------------------------------
+# Task 7: cafe_mystery v2.0 migration
+# ---------------------------------------------------------------------------
+
+from pathlib import Path
+
+from src.story.script_pack.compiler import compile_script_pack
+
+
+class TestCafeMysteryV2:
+    def test_cafe_mystery_compiles_as_v2(self):
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+        compiled = compile_script_pack(pack_path)
+        assert compiled.source.schema_version == "2.0"
+        assert len(compiled.completion_requirement_ids) >= 2
+        assert compiled.ending_ids == frozenset()
+
+    def test_cafe_mystery_has_no_endings_field(self):
+        import yaml
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+        raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
+        assert "endings" not in raw
+        assert raw["schema_version"] == "2.0"
+
+    def test_cafe_mystery_has_world_setting(self):
+        import yaml
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+        raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
+        assert "world_setting" in raw
+        assert raw["world_setting"]["premise"]
+        assert len(raw["world_setting"]["locations"]) >= 2
+
+    def test_cafe_mystery_has_story_history(self):
+        import yaml
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+        raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
+        assert "story_history" in raw
+        assert raw["story_history"]["summary"]
+
+    def test_cafe_mystery_has_opening_state(self):
+        import yaml
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+        raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
+        assert "opening_state" in raw
+        assert raw["opening_state"]["location"] == "cafe"
+
+    def test_cafe_mystery_completion_requirements_have_evidence_hints(self):
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+        compiled = compile_script_pack(pack_path)
+        req = compiled.source.completion_requirements[0]
+        assert req.evidence_hints.fact_ids or req.evidence_hints.goal_ids
+
+    def test_cafe_mystery_preserves_all_facts_goals_characters(self):
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+        compiled = compile_script_pack(pack_path)
+        assert compiled.character_ids == frozenset({"alice", "bob", "mina"})
+        assert "cafe_is_open" in compiled.fact_ids
+        assert "notebook_holder" in compiled.fact_ids
+        assert "alice_find_ally" in compiled.goal_ids

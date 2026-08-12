@@ -9,6 +9,7 @@ from pathlib import Path
 
 from src.story.runtime.contracts import PackMismatch
 from src.story.script_pack import PackCompileError, compile_script_pack
+from src.story.script_pack.models import ScriptPackSourceV2
 from src.story.state import SessionState, SessionStatus, initial_session_state
 from src.story.storage import SessionAlreadyExists, SessionNotFound, StoryEventStore
 
@@ -88,18 +89,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "validate":
             pack = compile_script_pack(args.pack_path)
-            endings = pack.source.endings
-            _print(
-                {
-                    "pack_id": pack.source.identity.id,
-                    "pack_hash": pack.pack_hash,
-                    "characters": len(pack.character_ids),
-                    "facts": len(pack.fact_ids),
-                    "goals": len(pack.goal_ids),
-                    "normal_endings": sum(item.type != "fallback" for item in endings),
-                    "fallback_endings": sum(item.type == "fallback" for item in endings),
-                }
-            )
+            result = {
+                "pack_id": pack.source.identity.id,
+                "pack_hash": pack.pack_hash,
+                "characters": len(pack.character_ids),
+                "facts": len(pack.fact_ids),
+                "goals": len(pack.goal_ids),
+            }
+            if isinstance(pack.source, ScriptPackSourceV2):
+                result["completion_requirements"] = len(pack.completion_requirement_ids)
+            else:
+                endings = pack.source.endings
+                result["normal_endings"] = sum(item.type != "fallback" for item in endings)
+                result["fallback_endings"] = sum(item.type == "fallback" for item in endings)
+            _print(result)
             return 0
         if args.command == "init-session":
             pack = compile_script_pack(args.pack_path)
