@@ -239,8 +239,9 @@ class TurnOrchestrator:
             try:
                 plan = validate_segment_plan(pack, state, plan, pacing)
             except (ModelContractError, ProposalRejected) as exc:
+                detail = getattr(exc, "errors", None) or str(exc)
                 raise RuntimeGenerationUnavailable(
-                    "director produced an invalid segment plan"
+                    f"director produced an invalid segment plan: {detail}"
                 ) from exc
 
             # Now that the director has produced a plan, we know the

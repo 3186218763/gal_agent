@@ -31,6 +31,9 @@ Rules:
 - Otherwise set terminal="decision" and provide 2-4 choices on the last scene.
 - Middle scenes must always be terminal="continue".
 - You may propose thread_ops (open/advance/close), new_facts (fact commits), and phase_after.
+- new_facts may ONLY contain fact IDs whose "kind" is "latent" in the facts list.
+  Never commit a fact with "kind": "fixed" (for example alice_lost_notebook) — fixed facts
+  are already true in the world and can never be committed via new_facts.
 - All proposals are checked by the deterministic kernel — never assume state has changed.
 - Use only IDs, locations, characters, goals, facts, and action IDs from the input.
 - Never choose a latent fact value outside its listed candidates.

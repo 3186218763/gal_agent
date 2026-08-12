@@ -50,6 +50,7 @@ def _fact_summary_views(
             {
                 "id": fact.id,
                 "kind": "fixed",
+                "committable": False,
                 "visibility": runtime.visibility.value,
                 "known_by": sorted(runtime.known_by),
             }
@@ -59,6 +60,7 @@ def _fact_summary_views(
         view: dict[str, Any] = {
             "id": question.id,
             "kind": "latent",
+            "committable": True,
             "question": question.question,
             "truth_status": runtime.truth_status.value,
             "visibility": runtime.visibility.value,
