@@ -240,7 +240,10 @@ def validate_segment_plan(
             )
 
     # Scene count must not exceed remaining budget.
-    if len(plan.scenes) > pacing.remaining_budget:
+    # Exception: must_end forces a mandatory ending, which is allowed even
+    # when the remaining budget is 0 (the ending scene does not increment
+    # scene_count because EndingGenerated carries its content).
+    if not pacing.must_end and len(plan.scenes) > pacing.remaining_budget:
         errors.append(
             f"segment has {len(plan.scenes)} scenes but only "
             f"{pacing.remaining_budget} remaining in budget"
@@ -300,12 +303,48 @@ def validate_segment_draft(
         if errors:
             raise ProposalRejected(errors)
 
-    # Validate each scene draft against its plan.
+    # Validate each scene draft's content (blocks, speakers).  In the segment
+    # engine, choices live on SegmentDraft, not SceneDraft, so we validate
+    # them separately below rather than delegating to validate_scene_draft.
     for scene_plan, scene_draft in zip(plan.scenes, draft.scene_drafts):
-        try:
-            validate_scene_draft(scene_plan, scene_draft)
-        except ProposalRejected as exc:
-            errors.extend(f"scene {scene_plan.scene_id}: {e}" for e in exc.errors)
+        if scene_draft.scene_id != scene_plan.scene_id:
+            errors.append(
+                f"scene {scene_plan.scene_id}: id mismatch "
+                f"(expected {scene_plan.scene_id}, got {scene_draft.scene_id})"
+            )
+        if not scene_draft.blocks or any(
+            not block.text.strip() for block in scene_draft.blocks
+        ):
+            errors.append(f"scene {scene_plan.scene_id}: requires non-empty blocks")
+        for block in scene_draft.blocks:
+            if (
+                block.kind == "dialogue"
+                and block.character_id not in scene_plan.present_character_ids
+            ):
+                errors.append(
+                    f"scene {scene_plan.scene_id}: "
+                    f"dialogue speaker not present: {block.character_id}"
+                )
+
+    # Validate segment-level choices for decision terminal.
+    if plan.terminal == "decision":
+        last_scene = plan.scenes[-1]
+        if last_scene.choices:
+            written_map = {wc.option_id: wc for wc in draft.choices}
+            planned_ids = {c.option_id for c in last_scene.choices}
+            written_ids = set(written_map)
+            if written_ids != planned_ids:
+                errors.append(
+                    "segment choice ids must match last scene's planned choices"
+                )
+            for wc in draft.choices:
+                if not wc.label.strip():
+                    errors.append(f"choice label cannot be empty: {wc.option_id}")
+            labels = [wc.label.strip().casefold() for wc in draft.choices]
+            if len(labels) != len(set(labels)):
+                errors.append("segment choice labels must be unique")
+        elif not 2 <= len(draft.choices) <= 4:
+            errors.append("decision terminal requires 2-4 segment choices")
 
     # For ending terminal, draft must have ending.
     if plan.terminal == "ending" and draft.ending is None:
