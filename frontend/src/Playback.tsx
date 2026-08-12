@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import './Playback.css'
 import type { NarrativeBlock, PackProjection, PresentedChoice } from './api'
-import { newCommandId } from './api'
+import { ApiError, newCommandId } from './api'
 import { streamTurn } from './stream'
 import { SegmentPlayer, type EndingMeta, type SegmentPlayerState } from './segmentPlayer'
 
@@ -178,10 +178,14 @@ export default function Playback({
         if (player.state === 'buffering_segment' || player.state === 'generating_after_choice') {
           if (!cancelled) onError('连接中断，请重试')
         }
-      } catch {
+      } catch (reason) {
         if (!cancelled) {
           // Network error — if segment not ready, old revision is intact
-          onError('网络错误，请重试')
+          if (reason instanceof ApiError) {
+            onError(errorMessageFor(reason.code))
+          } else {
+            onError('网络错误，请重试')
+          }
         }
       }
     }
