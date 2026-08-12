@@ -85,6 +85,10 @@ def default_dependencies() -> AppDependencies:
     bundle = build_model_bundle(settings)
     store = StoryEventStore(Path(os.getenv("GAL_DATABASE_PATH", "data/story-v2.db")))
     registry = ScriptPackRegistry(Path(os.getenv("GAL_SCRIPT_PACK_ROOT", "script_packs")))
+    from src.story.runtime.completion_judge import CompletionJudge
+    from src.story.runtime.director import SdkDirector
+    from src.story.runtime.guard import Guard
+    from src.story.runtime.segment_writer import SdkSegmentWriter
     from src.story.runtime.stream_writer import StreamingSceneGenerator
 
     runtime = RuntimeService(
@@ -93,7 +97,26 @@ def default_dependencies() -> AppDependencies:
         SdkWriter(bundle.model),
         StreamingSceneGenerator(bundle.client, settings.model),
     )
-    return AppDependencies(store=store, registry=registry, runtime=runtime)
+    director = SdkDirector(bundle.model)
+    segment_writer = SdkSegmentWriter(bundle.model)
+    guard = Guard()
+    orchestrator = TurnOrchestrator(
+        store,
+        director,
+        segment_writer,
+        guard,
+        CompletionJudge(),
+        planner=SdkPlanner(bundle.model),
+    )
+    return AppDependencies(
+        store=store,
+        registry=registry,
+        runtime=runtime,
+        orchestrator=orchestrator,
+        director=director,
+        segment_writer=segment_writer,
+        guard=guard,
+    )
 
 
 class CreateSessionRequest(BaseModel):

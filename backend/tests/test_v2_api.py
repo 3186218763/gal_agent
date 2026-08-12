@@ -284,6 +284,68 @@ def test_generation_contract_failure_is_retryable_and_redacted(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Tests: dependency wiring
+# ---------------------------------------------------------------------------
+
+
+def test_default_dependencies_include_segment_pipeline(monkeypatch, tmp_path):
+    """Verify default_dependencies() wires the segment pipeline agents.
+
+    The test runs fully offline: the model bundle and settings are stubbed,
+    and the store points at a tmp_path database. Construction of the real
+    SdkDirector/SdkSegmentWriter/Guard/CompletionJudge/TurnOrchestrator proves
+    the wiring path is sound without any provider credentials.
+    """
+    import dataclasses
+
+    from agents.models.interface import Model
+
+    import src.story.api as api_module
+    from src.story.runtime.completion_judge import CompletionJudge
+    from src.story.runtime.director import SdkDirector
+    from src.story.runtime.guard import Guard
+    from src.story.runtime.planner import SdkPlanner
+    from src.story.runtime.segment_writer import SdkSegmentWriter
+    from src.story.runtime.turn_orchestrator import TurnOrchestrator
+
+    fields = {f.name for f in dataclasses.fields(AppDependencies)}
+    assert {"orchestrator", "director", "segment_writer", "guard"} <= fields
+
+    class FakeModel(Model):
+        async def get_response(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("network model calls are not allowed in offline tests")
+
+        async def stream_response(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("network model calls are not allowed in offline tests")
+            if False:  # pragma: no cover - signature-compatible async generator
+                yield None
+
+    fake_bundle = SimpleNamespace(model=FakeModel(), client=object())
+    monkeypatch.setattr(
+        api_module, "build_model_bundle", lambda _settings: fake_bundle
+    )
+    monkeypatch.setattr(
+        api_module.OpenCodeGoSettings,
+        "from_env",
+        staticmethod(lambda: SimpleNamespace(model="fake-model")),
+    )
+    monkeypatch.setenv("GAL_DATABASE_PATH", str(tmp_path / "story.db"))
+    monkeypatch.setenv("GAL_SCRIPT_PACK_ROOT", str(tmp_path / "script_packs"))
+
+    deps = api_module.default_dependencies()
+
+    assert isinstance(deps.director, SdkDirector)
+    assert isinstance(deps.segment_writer, SdkSegmentWriter)
+    assert isinstance(deps.guard, Guard)
+    assert isinstance(deps.orchestrator, TurnOrchestrator)
+    assert deps.orchestrator.director is deps.director
+    assert deps.orchestrator.writer is deps.segment_writer
+    assert deps.orchestrator.guard is deps.guard
+    assert isinstance(deps.orchestrator.completion_judge, CompletionJudge)
+    assert isinstance(deps.orchestrator.planner, SdkPlanner)
+
+
+# ---------------------------------------------------------------------------
 # Tests: misc endpoints
 # ---------------------------------------------------------------------------
 
