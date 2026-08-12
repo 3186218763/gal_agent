@@ -23,6 +23,12 @@ from src.story.state import (
     apply_events,
     initial_session_state,
 )
+from src.story.state.events import (
+    CompletionEvaluated,
+    DecisionPresented,
+    EndingGenerated,
+)
+from src.story.state.models import CompletionAssessmentRecord
 from src.story.state.reducer import StateTransitionError
 from tests.story_factories import minimal_script_pack_dict
 
@@ -367,3 +373,54 @@ def test_ended_session_rejects_new_events():
                 RelationshipChanged(character_id="alice", axis="trust", delta=1),
             ),
         )
+
+
+def test_decision_presented_event_serialization():
+    event = DecisionPresented(
+        decision_id="dec_01",
+        choices=(
+            PresentedChoice(id="opt_a", action_id="ask", label="Ask", intent="Ask directly"),
+            PresentedChoice(id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"),
+        ),
+    )
+    assert event.type == "decision_presented"
+    assert len(event.choices) == 2
+
+
+def test_ending_generated_event_serialization():
+    event = EndingGenerated(
+        ending_id="ending_sess_001",
+        title="The Long Goodbye",
+        tone="bittersweet",
+        terminal_state_summary="Alice left the city.",
+        blocks=(NarrativeBlock(kind="narration", text="They parted."),),
+    )
+    assert event.type == "ending_generated"
+    assert event.tone == "bittersweet"
+
+
+def test_completion_evaluated_event_serialization():
+    event = CompletionEvaluated(
+        cleared=True,
+        assessments=(
+            CompletionAssessmentRecord(
+                requirement_id="req_a",
+                satisfied=True,
+                rationale="Fact committed",
+            ),
+        ),
+    )
+    assert event.type == "completion_evaluated"
+    assert event.cleared is True
+
+
+def test_scene_committed_default_terminal_is_continue():
+    event = SceneCommitted(
+        scene_id="scene_01",
+        location_id="cafe",
+        present_character_ids=("alice",),
+        blocks=(NarrativeBlock(kind="narration", text="A quiet day."),),
+    )
+    assert event.terminal == "continue"
+    assert event.decision_id is None
+    assert event.choices == ()
