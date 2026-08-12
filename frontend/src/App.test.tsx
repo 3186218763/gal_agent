@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from './App'
@@ -26,6 +27,48 @@ function sseResponse(events: string[], delayMs = 20): Response {
         await new Promise((r) => setTimeout(r, delayMs))
       }
       controller.close()
+    },
+  })
+  return new Response(stream, {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  })
+}
+
+/**
+ * SSE response that stops delivering events when the fetch init's signal
+ * aborts (StrictMode double-mount cleanup): the stream errors so the
+ * abandoned mount's turn cannot deliver a late segment_ready.
+ */
+function sseResponseAbortAware(
+  events: string[],
+  delayMs: number,
+  signal?: AbortSignal | null,
+  onDone?: (aborted: boolean) => void,
+): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      let aborted = false
+      const onAbort = () => {
+        aborted = true
+        controller.error(signal?.reason ?? new DOMException('Aborted', 'AbortError'))
+      }
+      if (signal) signal.addEventListener('abort', onAbort)
+      try {
+        for (const evt of events) {
+          if (aborted) break
+          controller.enqueue(encoder.encode(evt + '\n\n'))
+          await new Promise((r) => setTimeout(r, delayMs))
+        }
+      } catch {
+        // controller was errored by an abort landing mid-enqueue
+      }
+      if (!aborted) {
+        controller.close()
+        signal?.removeEventListener('abort', onAbort)
+      }
+      onDone?.(aborted)
     },
   })
   return new Response(stream, {
@@ -148,17 +191,41 @@ async function clickThrough(log: HTMLElement): Promise<void> {
 
 // ── Spec 12.4 Test 1: Blocks arrive before playback starts, played in order ──
 // The plan's two Test 1 snippets are literal equivalents of the two
-// 'streaming playback' tests below, so the existing (equal) versions are kept:
-//   - 'shows start screen and starts game on click' == plan snippet 1a
-//     (first block renders only after segment_ready unlocks the buffer)
+// 'streaming playback' tests below, so the existing versions are kept and
+// hardened:
+//   - 'shows start screen and starts game on click' ≈ plan snippet 1a
+//     (first block renders only after segment_ready unlocks the buffer; the
+//     buffering window also asserts provisional blocks stay hidden)
 //   - 'displays dialogue after advancing past narration' == plan snippet 1b
 //     (second block plays only after clicking past the first)
 
 describe('streaming playback', () => {
   it('shows start screen and starts game on click', async () => {
+    // Delay segment_ready after the first block so the buffering window
+    // (provisional blocks hidden behind the overlay) is observable.
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url === '/api/v2/sessions' && method === 'POST') return jsonResponse(SESSION_BODY, 201)
+      if (url.endsWith('/turns') && method === 'POST') {
+        return sseResponse([...SEGMENT_BLOCKS.slice(0, 2), SEGMENT_READY_DECISION], 50)
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
     render(<App />)
     const start = await screen.findByRole('button', { name: '开始新游戏' })
     fireEvent.click(start)
+
+    // Before segment_ready the buffering overlay is up and provisional
+    // blocks must NOT be displayed.
+    expect(await screen.findByRole('status', {}, { timeout: 3000 })).toHaveTextContent('正在生成…')
+    expect(screen.queryByText(/第一幕/)).not.toBeInTheDocument()
+
+    // segment_ready unlocks the buffer — the first block renders.
     expect(await screen.findByText(/第一幕/, {}, { timeout: 3000 })).toBeInTheDocument()
   })
 
@@ -514,5 +581,53 @@ describe('spec 12.4: no client request between internal scenes', () => {
 
     // One turn covered both internal scenes — no extra requests.
     expect(turnsCallCount).toBe(1)
+  })
+})
+
+// ── StrictMode regression (fix 1f7c320): the first StrictMode mount's turn
+//    is aborted; it must not surface an error or count as a real turn ──
+
+describe('spec 12.4: StrictMode double-mount aborts the first turn cleanly', () => {
+  it('streams to choices with exactly one non-aborted /turns call', async () => {
+    let turnCalls = 0
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url === '/api/v2/sessions' && method === 'POST') return jsonResponse(SESSION_BODY, 201)
+      if (url.endsWith('/turns') && method === 'POST') {
+        // Count only turns whose stream completed without being aborted:
+        // StrictMode's first mount aborts its fetch before any segment_ready.
+        return sseResponseAbortAware([...SEGMENT_BLOCKS, SEGMENT_READY_DECISION], 20, init?.signal, (aborted) => {
+          if (!aborted) turnCalls++
+        })
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>
+    )
+    fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+
+    // The second (non-aborted) mount streams the segment to choices.
+    const log = await screen.findByRole('button', { name: '对话框（点击继续）' }, { timeout: 3000 })
+    await screen.findByText(/第一幕/, {}, { timeout: 3000 })
+    await clickThrough(log) // block 1
+    await screen.findByText('你好。', {}, { timeout: 3000 })
+    await clickThrough(log) // block 2 — queue drains, choices surface
+
+    expect(await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 })).toBeInTheDocument()
+    // The aborted first mount must not surface an error screen.
+    expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/状态已改变/)).not.toBeInTheDocument()
+    // Exactly one non-aborted turn — the StrictMode abort is not counted.
+    await waitFor(() => {
+      expect(turnCalls).toBe(1)
+    }, { timeout: 3000 })
   })
 })
