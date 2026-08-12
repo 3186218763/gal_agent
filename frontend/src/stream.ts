@@ -1,19 +1,30 @@
-import { ApiError, advanceUrl } from './api'
-import type { NarrativeBlock, PresentedChoice } from './api'
+import { ApiError, turnSessionUrl } from './api'
+import type {
+  SegmentStartedData,
+  BlockEventData,
+  SegmentReadyData,
+} from './segmentPlayer'
+
+// ── SSE Event Types ──
+
+export interface StreamSegmentStarted {
+  event: 'segment_started'
+  data: SegmentStartedData
+}
 
 export interface StreamBlock {
   event: 'block'
-  data: NarrativeBlock
+  data: BlockEventData
 }
 
-export interface StreamChoices {
-  event: 'choices'
-  data: PresentedChoice[]
+export interface StreamSegmentReady {
+  event: 'segment_ready'
+  data: SegmentReadyData
 }
 
-export interface StreamDone {
-  event: 'done'
-  data: { session_id: string; revision: number; ending_id?: string; ending_title?: string }
+export interface StreamHeartbeat {
+  event: 'heartbeat'
+  data: Record<string, never>
 }
 
 export interface StreamError {
@@ -21,25 +32,43 @@ export interface StreamError {
   data: { code: string }
 }
 
-export type StreamEvent = StreamBlock | StreamChoices | StreamDone | StreamError
+export interface StreamRetryAfter {
+  event: 'retry_after'
+  data: { reason: string }
+}
+
+export type StreamEvent =
+  | StreamSegmentStarted
+  | StreamBlock
+  | StreamSegmentReady
+  | StreamHeartbeat
+  | StreamError
+  | StreamRetryAfter
 
 /**
- * POST to the advance endpoint and yield SSE events as they arrive.
+ * POST to the turn endpoint and yield SSE events as they arrive.
  *
- * The response is a `text/event-stream` — each frame is separated by `\n\n`
+ * The response is `text/event-stream`. Each frame is separated by `\n\n`
  * and contains an `event:` line and a `data:` line.
+ *
+ * @param sessionId   - Current session ID
+ * @param choiceId    - Selected choice ID, or null for opening
+ * @param expectedRevision - Current session revision
+ * @param idempotencyKey - Unique command key for idempotent replay
  */
-export async function* streamAdvance(
+export async function* streamTurn(
   sessionId: string,
+  choiceId: string | null,
   expectedRevision: number,
   idempotencyKey: string,
 ): AsyncGenerator<StreamEvent> {
-  const response = await fetch(advanceUrl(sessionId), {
+  const response = await fetch(turnSessionUrl(sessionId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       expected_revision: expectedRevision,
       idempotency_key: idempotencyKey,
+      choice_id: choiceId,
     }),
   })
 
@@ -104,5 +133,20 @@ function parseSSEChunk(chunk: string): StreamEvent | null {
     return null
   }
 
+  // Only return known event types
+  const known: StreamEvent['event'][] = [
+    'segment_started',
+    'block',
+    'segment_ready',
+    'heartbeat',
+    'error',
+    'retry_after',
+  ]
+  if (!known.includes(eventType as StreamEvent['event'])) return null
+
   return { event: eventType, data } as StreamEvent
 }
+
+// ── Legacy export (deprecated, will be removed after full migration) ──
+
+export { streamAdvance } from './streamLegacy'

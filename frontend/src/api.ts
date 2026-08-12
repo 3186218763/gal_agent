@@ -13,6 +13,13 @@ export interface PresentedChoice {
   preview?: string | null
 }
 
+export interface SegmentEndingMeta {
+  ending_id: string
+  title: string
+  tone: string
+  terminal_state_summary: string
+}
+
 export interface SessionProjection {
   session_id: string
   pack_id: string
@@ -29,6 +36,21 @@ export interface SessionProjection {
   location_id: string
   time_label: string
   present_character_ids: string[]
+  // Segment replay fields (Plan 2 protocol) — REQUIRED
+  segment_blocks: NarrativeBlock[]
+  segment_revision: number | null
+  segment_choices: PresentedChoice[]
+  segment_ending: SegmentEndingMeta | null
+  // Session completion fields (present only when ended) — OPTIONAL
+  cleared: boolean | null
+  completion_summaries: CompletionSummary[] | null
+}
+
+export interface CompletionSummary {
+  requirement_id: string
+  description: string
+  satisfied: boolean
+  rationale: string
 }
 
 export interface PackCharacterProjection {
@@ -144,4 +166,9 @@ export function newSessionSeed(): number {
 /** Build the full URL for the SSE advance endpoint (used by stream.ts). */
 export function advanceUrl(sessionId: string): string {
   return apiPath(`/api/v2/sessions/${sessionId}/advance`)
+}
+
+/** Build the full URL for the segment turn SSE endpoint (used by stream.ts). */
+export function turnSessionUrl(sessionId: string): string {
+  return apiPath(`/api/v2/sessions/${sessionId}/turns`)
 }
