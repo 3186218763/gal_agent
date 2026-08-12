@@ -16,7 +16,6 @@ import hashlib
 import json
 from collections.abc import AsyncGenerator
 from typing import Any
-from uuid import uuid4
 
 from src.story.runtime.completion_judge import CompletionJudge
 from src.story.runtime.contracts import (
@@ -156,16 +155,6 @@ class TurnOrchestrator:
             if state.status == SessionStatus.ENDED:
                 raise RuntimeSessionEnded(session_id)
 
-            segment_id = f"seg_{session_id}_{uuid4().hex[:8]}"
-
-            yield (
-                "segment_started",
-                {
-                    "segment_id": segment_id,
-                    "expected_revision": expected_revision,
-                },
-            )
-
             # --------------------------------------------------------------
             # Step 1: Resolve choice (if non-opening turn).
             # --------------------------------------------------------------
@@ -253,6 +242,16 @@ class TurnOrchestrator:
                 raise RuntimeGenerationUnavailable(
                     "director produced an invalid segment plan"
                 ) from exc
+
+            # Now that the director has produced a plan, we know the
+            # segment_id and can emit the segment_started event.
+            yield (
+                "segment_started",
+                {
+                    "segment_id": plan.segment_id,
+                    "expected_revision": expected_revision,
+                },
+            )
 
             # --------------------------------------------------------------
             # Step 5: Writer produces draft.

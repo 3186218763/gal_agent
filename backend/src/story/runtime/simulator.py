@@ -224,11 +224,9 @@ def segment_events(
     events.extend(_thread_op_events(state, plan.thread_ops))
 
     # Build per-scene events with auto-acknowledge between scenes.
-    num_scenes = len(plan.scenes)
     for i, (scene_plan, scene_draft) in enumerate(
         zip(plan.scenes, draft.scene_drafts)
     ):
-        is_last = i == num_scenes - 1
         if i > 0:
             events.append(
                 SceneAcknowledged(scene_id=plan.scenes[i - 1].scene_id)
@@ -255,11 +253,11 @@ def segment_events(
                 for cid in fact.learned_by
             )
 
-        # For the last scene of an ending segment, EndingGenerated carries the
-        # blocks and does not increment scene_count.  This allows endings at
-        # max_scenes (where a SceneCommitted with terminal="continue" would be
-        # rejected by the reducer).
-        if plan.terminal == "ending" and is_last:
+        # For ending segments, EndingGenerated carries all blocks and does
+        # not increment scene_count.  Skip SceneCommitted for every scene so
+        # that multi-scene endings at max_scenes do not trip the reducer's
+        # scene_count < max_scenes guard.
+        if plan.terminal == "ending":
             continue
 
         # SceneCommitted with content only (terminal/decision/choices handled separately).
