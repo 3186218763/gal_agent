@@ -18,6 +18,8 @@ from src.story.runtime.contracts import (
     RuntimeRevisionConflict,
     RuntimeScene,
     RuntimeSessionEnded,
+    ScenePlan,
+    SegmentPlan,
     StreamingGeneratorPort,
     WriterPort,
 )
@@ -51,6 +53,59 @@ from src.story.storage import StoryEventStore
 def _command_fingerprint(kind: str, expected_revision: int, choice_id: str | None = None) -> str:
     payload = {"kind": kind, "expected_revision": expected_revision, "choice_id": choice_id}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _trivial_segment_plan(state: SessionState) -> SegmentPlan:
+    """Build a minimal single-scene SegmentPlan for the legacy streaming path.
+
+    The single scene continues the story without a decision, so the adapter
+    cannot invent choices, facts, or terminal states.  The segment-level
+    ``terminal`` literal must be one of "decision"/"ending"; a "continue"
+    scene under a "decision" segment keeps validation satisfied.
+    """
+    return SegmentPlan(
+        segment_id=f"scene-{state.revision}",
+        scenes=(
+            ScenePlan(
+                scene_id=f"scene_{state.revision + 1}",
+                summary="Continue the story from the current state.",
+                location_id=state.world.location_id,
+                present_character_ids=state.world.present_character_ids,
+                terminal="continue",
+            ),
+        ),
+        terminal="decision",
+    )
+
+
+def _translate_segment_complete(
+    complete_data: dict[str, Any],
+    plan: SegmentPlan,
+) -> dict[str, Any]:
+    """Translate a SegmentWriterOutput ``complete`` payload to the legacy scene shape.
+
+    The new adapter yields ``{"segment_draft": {...}}`` while the legacy
+    streaming flow expects ``terminal``/``choices``/``scene_id`` keys.
+    Terminal is derived from the plan: a decision scene exposes the draft's
+    choices; anything else downgrades to ``terminal="continue"`` with empty
+    choices.
+    """
+    segment_draft = complete_data.get("segment_draft") or {}
+    scene_drafts = segment_draft.get("scene_drafts") or []
+    last_scene = plan.scenes[-1]
+    translated: dict[str, Any] = {
+        "scene_id": (
+            scene_drafts[0]["scene_id"] if scene_drafts else plan.scenes[0].scene_id
+        ),
+    }
+    if last_scene.terminal == "decision":
+        translated["terminal"] = "decision"
+        translated["decision_id"] = last_scene.decision_id
+        translated["choices"] = list(segment_draft.get("choices", []))
+    else:
+        translated["terminal"] = "continue"
+        translated["choices"] = []
+    return translated
 
 
 class RuntimeService:
@@ -250,6 +305,30 @@ class RuntimeService:
         simulate_events(state, events)
         return events
 
+    async def _legacy_generate_scene_wrapper(
+        self,
+        pack: CompiledScriptPack,
+        state: SessionState,
+    ) -> AsyncGenerator[tuple[str, dict[str, Any]], None]:
+        """Compatibility wrapper (brief Step 8, Option B) for the legacy
+        generate_scene call site.
+
+        Generators that only implement the legacy ``generate_scene`` protocol
+        (e.g. test fakes) are used unchanged.  Plan-aware generators receive a
+        minimal single-scene SegmentPlan and their ``complete`` payload
+        (a SegmentWriterOutput dump) is translated back into the legacy scene
+        shape expected by the streaming advance flow.
+        """
+        if not hasattr(self.generator, "generate_segment"):
+            async for event_type, data in self.generator.generate_scene(pack, state):
+                yield event_type, data
+            return
+        plan = _trivial_segment_plan(state)
+        async for event_type, data in self.generator.generate_segment(pack, state, plan):
+            if event_type == "complete":
+                data = _translate_segment_complete(data, plan)
+            yield event_type, data
+
     async def advance_streamed(
         self,
         pack: CompiledScriptPack,
@@ -307,7 +386,7 @@ class RuntimeService:
             collected_blocks: list = []
             complete_data: dict[str, Any] | None = None
             try:
-                async for event_type, data in self.generator.generate_scene(pack, state):
+                async for event_type, data in self._legacy_generate_scene_wrapper(pack, state):
                     if event_type == "block":
                         collected_blocks.append(data)
                         yield ("block", data)

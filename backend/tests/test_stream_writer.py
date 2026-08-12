@@ -1,104 +1,224 @@
-"""Tests for the streaming scene generator."""
+"""Tests for the plan-consuming streaming segment writer adapter."""
 
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from openai import AsyncOpenAI
 
+from src.story.runtime.contracts import (
+    ChoicePlan,
+    ScenePlan,
+    SegmentPlan,
+)
 from src.story.runtime.stream_writer import StreamingSceneGenerator
+from src.story.script_pack import compile_source
+from src.story.state import initial_session_state
+from tests.story_factories import minimal_script_pack_dict
 
 
-def _make_streaming_response(deltas: list[str]):
-    """Build a mock async iterator that yields delta events."""
-
-    class DeltaEvent:
-        type = "response.output_text.delta"
-
-        def __init__(self, delta: str) -> None:
-            self.delta = delta
-
-    events = [DeltaEvent(d) for d in deltas]
-
-    class FakeStream:
-        def __init__(self) -> None:
-            self._events = list(events)
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            if not self._events:
-                raise StopAsyncIteration
-            return self._events.pop(0)
-
-    return FakeStream()
+@pytest.fixture
+def pack():
+    return compile_source(minimal_script_pack_dict())
 
 
-def _minimal_pack_and_state():
-    """Build a minimal pack and state for testing."""
-    from src.story.script_pack.compiler import compile_source
-    from src.story.state import initial_session_state
-    from tests.story_factories import minimal_script_pack_dict
-
-    raw = minimal_script_pack_dict()
-    pack = compile_source(raw)
-    state = initial_session_state(pack, "test-session", session_seed=42)
-    return pack, state
+@pytest.fixture
+def state(pack):
+    return initial_session_state(pack, "session_01", session_seed=42)
 
 
-@pytest.mark.asyncio
-async def test_generate_scene_yields_blocks_then_complete():
-    full_output = json.dumps({
-        "blocks": [
-            {"kind": "narration", "text": "The cafe hums quietly."},
-            {"kind": "dialogue", "character_id": "alice", "text": "Hello there."},
-        ],
-        "terminal": "decision",
-        "decision_id": "d_1",
-        "choices": [
-            {"option_id": "opt_1", "action_id": "ask", "label": "Ask", "intent": "ask"},
-        ],
-    })
-    # Split into small chunks to simulate streaming
-    chunk_size = 8
-    deltas = [full_output[i : i + chunk_size] for i in range(0, len(full_output), chunk_size)]
-
-    mock_client = MagicMock()
-    mock_client.responses = MagicMock()
-    mock_client.responses.create = AsyncMock(return_value=_make_streaming_response(deltas))
-
-    generator = StreamingSceneGenerator(mock_client, "test-model")
-    pack, state = _minimal_pack_and_state()
-
-    events = []
-    async for event_type, data in generator.generate_scene(pack, state):
-        events.append((event_type, data))
-
-    # Should have 2 block events + 1 complete event
-    block_events = [e for e in events if e[0] == "block"]
-    complete_events = [e for e in events if e[0] == "complete"]
-    assert len(block_events) == 2
-    assert len(complete_events) == 1
-    assert block_events[0][1]["text"] == "The cafe hums quietly."
-    assert block_events[1][1]["character_id"] == "alice"
-    assert complete_events[0][1]["terminal"] == "decision"
-
-
-@pytest.mark.asyncio
-async def test_generate_scene_raises_on_unparseable_output():
-    mock_client = MagicMock()
-    mock_client.responses = MagicMock()
-    mock_client.responses.create = AsyncMock(
-        return_value=_make_streaming_response(["not json at all"])
+def _approved_plan() -> SegmentPlan:
+    return SegmentPlan(
+        segment_id="seg_01",
+        scenes=(
+            ScenePlan(
+                scene_id="scene_01",
+                summary="A quiet moment.",
+                location_id="cafe",
+                present_character_ids=("alice",),
+                terminal="continue",
+            ),
+            ScenePlan(
+                scene_id="scene_02",
+                summary="Decision.",
+                location_id="cafe",
+                present_character_ids=("alice",),
+                terminal="decision",
+                decision_id="dec_01",
+                choices=(
+                    ChoicePlan(option_id="opt_a", action_id="ask", intent="ask"),
+                    ChoicePlan(option_id="opt_b", action_id="observe", intent="watch"),
+                ),
+            ),
+        ),
+        terminal="decision",
     )
 
-    generator = StreamingSceneGenerator(mock_client, "test-model")
-    pack, state = _minimal_pack_and_state()
+
+class FakeStreamEvent:
+    def __init__(self, event_type: str, delta: str = "") -> None:
+        self.type = event_type
+        self.delta = delta
+
+
+class FakeStream:
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self):
+        self._idx = 0
+        return self
+
+    async def __anext__(self):
+        if self._idx >= len(self._chunks):
+            raise StopAsyncIteration
+        chunk = self._chunks[self._idx]
+        self._idx += 1
+        return FakeStreamEvent("response.output_text.delta", chunk)
+
+
+@pytest.mark.asyncio
+async def test_streaming_adapter_consumes_approved_plan(pack, state):
+    """The streaming adapter should use the approved plan to build its prompt,
+    not invent facts, choices, or terminal states."""
+    plan = _approved_plan()
+
+    # Build a valid JSON output matching the plan
+    output_json = json.dumps({
+        "segment_draft": {
+            "segment_id": "seg_01",
+            "scene_drafts": [
+                {
+                    "scene_id": "scene_01",
+                    "blocks": [
+                        {"kind": "narration", "text": "The cafe was quiet."},
+                    ],
+                },
+                {
+                    "scene_id": "scene_02",
+                    "blocks": [
+                        {"kind": "narration", "text": "Alice looked up."},
+                        {"kind": "dialogue", "character_id": "alice", "text": "Well?"},
+                    ],
+                    "choices": [
+                        {"option_id": "opt_a", "label": "Ask"},
+                        {"option_id": "opt_b", "label": "Watch"},
+                    ],
+                },
+            ],
+            "choices": [
+                {"option_id": "opt_a", "label": "Ask"},
+                {"option_id": "opt_b", "label": "Watch"},
+            ],
+        },
+    })
+
+    mock_client = MagicMock(spec=AsyncOpenAI)
+    mock_client.responses = MagicMock()
+    mock_client.responses.create = AsyncMock(
+        return_value=FakeStream([output_json])
+    )
+
+    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
+    events = []
+    async for event_type, data in generator.generate_segment(pack, state, plan):
+        events.append((event_type, data))
+
+    assert any(et == "block" for et, _ in events)
+    assert events[-1][0] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_streaming_adapter_builds_prompt_from_plan(pack, state):
+    """Verify the adapter prompt references the plan, not just state."""
+    plan = _approved_plan()
+    captured_kwargs: dict[str, Any] = {}
+
+    output_json = json.dumps({
+        "segment_draft": {
+            "segment_id": "seg_01",
+            "scene_drafts": [
+                {
+                    "scene_id": "scene_01",
+                    "blocks": [{"kind": "narration", "text": "test"}],
+                },
+                {
+                    "scene_id": "scene_02",
+                    "blocks": [{"kind": "narration", "text": "test2"}],
+                    "choices": [
+                        {"option_id": "opt_a", "label": "A"},
+                        {"option_id": "opt_b", "label": "B"},
+                    ],
+                },
+            ],
+            "choices": [
+                {"option_id": "opt_a", "label": "A"},
+                {"option_id": "opt_b", "label": "B"},
+            ],
+        },
+    })
+
+    async def fake_create(**kwargs):
+        captured_kwargs.update(kwargs)
+        return FakeStream([output_json])
+
+    mock_client = MagicMock(spec=AsyncOpenAI)
+    mock_client.responses = MagicMock()
+    mock_client.responses.create = fake_create
+
+    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
+    events = []
+    async for event_type, data in generator.generate_segment(pack, state, plan):
+        events.append((event_type, data))
+
+    # The prompt should contain the plan
+    prompt_str = captured_kwargs.get("input", "")
+    assert "seg_01" in prompt_str
+
+
+@pytest.mark.asyncio
+async def test_streaming_segment_parses_json(pack, state):
+    """Verify the streaming adapter parses JSON output correctly."""
+    plan = _approved_plan()
+    output_json = json.dumps({
+        "segment_draft": {
+            "segment_id": "seg_01",
+            "scene_drafts": [
+                {"scene_id": "scene_01", "blocks": [{"kind": "narration", "text": "test"}]},
+            ],
+            "choices": [],
+        },
+    })
+
+    mock_client = MagicMock(spec=AsyncOpenAI)
+    mock_client.responses = MagicMock()
+    mock_client.responses.create = AsyncMock(return_value=FakeStream([output_json]))
+
+    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
+    events = []
+    async for event_type, data in generator.generate_segment(pack, state, plan):
+        events.append((event_type, data))
+
+    assert events[-1][0] == "complete"
+    assert "segment_draft" in events[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_streaming_segment_validates_output(pack, state):
+    """Verify invalid JSON is rejected with ModelContractError."""
+    plan = _approved_plan()
+    invalid_json = "{invalid json"
+
+    mock_client = MagicMock(spec=AsyncOpenAI)
+    mock_client.responses = MagicMock()
+    mock_client.responses.create = AsyncMock(return_value=FakeStream([invalid_json]))
 
     from src.story.runtime.contracts import ModelContractError
 
-    with pytest.raises(ModelContractError):
-        async for _ in generator.generate_scene(pack, state):
+    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
+    with pytest.raises(ModelContractError, match="could not be parsed"):
+        async for _ in generator.generate_segment(pack, state, plan):
             pass

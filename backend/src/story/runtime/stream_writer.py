@@ -1,4 +1,8 @@
-"""Streaming scene generator using raw OpenAI Responses API."""
+"""Streaming segment writer adapter using raw OpenAI Responses API.
+
+Consumes an approved SegmentPlan and streams provisional blocks.
+Does NOT invent facts, choices, terminal states, or effects.
+"""
 
 from __future__ import annotations
 
@@ -8,100 +12,65 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from src.story.runtime.contracts import ModelContractError
+from src.story.runtime.contracts import ModelContractError, SegmentPlan, SegmentWriterOutput
+from src.story.runtime.segment_context import build_segment_writer_context
 from src.story.runtime.stream_parser import BlockStreamParser
-from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
+from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import SessionState
 
 STREAMING_WRITER_INSTRUCTIONS = """\
-You are the narrator and dialogue writer for a visual novel game.
-Generate immersive narration and character dialogue.
+You are the streaming segment writer for a visual novel.
+Render ONLY the approved SegmentPlan as narration and dialogue blocks.
 
 Output ONLY valid JSON in this exact structure:
-{"blocks":[{"kind":"narration","text":"..."},{"kind":"dialogue","character_id":"...","text":"..."}],"terminal":"decision","decision_id":"d_N","choices":[{"option_id":"opt_N","action_id":"...","label":"...","intent":"..."}]}
+{"segment_draft":{"segment_id":"...","scene_drafts":[{"scene_id":"...","blocks":[{"kind":"narration","text":"..."},{"kind":"dialogue","character_id":"...","text":"..."}],"choices":[{"option_id":"...","label":"..."}]}],"choices":[{"option_id":"...","label":"..."}],"ending":{"title":"...","blocks":[{"kind":"narration","text":"..."}]}}
 
 Rules:
-- Generate 5-15 blocks alternating between narration and dialogue.
+- Each scene_id must match the plan exactly.
 - Use "narration" for descriptive text and inner monologue (no character_id).
-- Use "dialogue" with the speaking character's "character_id".
-- Present a decision (terminal="decision") roughly every 2-3 scenes with 2-4 choices.
-- Between decisions, use terminal="continue" with an empty choices array.
-- Each choice must use an action_id from the provided available_actions.
-- Write in the specified language and prose style.
-- Keep each character's dialogue matching their personality and voice.
+- Use "dialogue" with the speaking character's "character_id" from the plan's present characters.
+- For a decision terminal, include choices matching the plan's option_ids exactly.
+- For an ending terminal, include the ending title and final blocks from the ending_proposal.
+- Keep each character's dialogue within that character's knowledge and voice.
 - Do NOT output anything outside the JSON.
 """
 
 
-def _build_scene_prompt(pack: CompiledScriptPack, state: SessionState) -> str:
-    """Build the user-input JSON for the streaming model call."""
-    source = pack.source
-    locations = (
-        source.world_setting.locations
-        if isinstance(source, ScriptPackSourceV2)
-        else source.world.locations
+def _build_segment_prompt(
+    pack: CompiledScriptPack,
+    state: SessionState,
+    plan: SegmentPlan,
+) -> str:
+    """Build the user-input JSON from the approved plan."""
+    context = build_segment_writer_context(pack, state, plan)
+    return json.dumps(
+        {
+            "operation": "write_segment",
+            "context": context,
+        },
+        ensure_ascii=False,
     )
-    location_name = next(
-        (loc.name for loc in locations if loc.id == state.world.location_id),
-        state.world.location_id,
-    )
-    characters = []
-    for char in source.characters:
-        if char.id in state.world.present_character_ids:
-            characters.append({
-                "id": char.id,
-                "name": char.name,
-                "public_profile": char.public_profile,
-                "personality": char.personality.model_dump(mode="json"),
-                "voice": char.voice.model_dump(mode="json"),
-                "drives": char.drives,
-            })
-
-    recent_blocks = []
-    if state.pending_scene is not None:
-        recent_blocks = [b.model_dump(mode="json") for b in state.pending_scene.blocks]
-
-    available_actions = sorted(
-        pack.action_ids & set(source.protagonist.capabilities)
-    )
-
-    return json.dumps({
-        "scene_number": state.world.scene_count + 1,
-        "phase": state.world.phase.value,
-        "location": {"id": state.world.location_id, "name": location_name},
-        "premise": (
-            source.world_setting.premise
-            if isinstance(source, ScriptPackSourceV2)
-            else source.world.premise
-        ),
-        "prose_style": source.experience.prose_style,
-        "tone": source.experience.tone,
-        "forbidden_content": source.experience.forbidden_content,
-        "language": source.identity.language,
-        "characters": characters,
-        "recent_blocks": recent_blocks,
-        "available_actions": list(available_actions),
-    }, ensure_ascii=False)
 
 
 class StreamingSceneGenerator:
-    """Generates scene content via a single streaming model call.
+    """Streaming adapter that consumes an approved SegmentPlan.
 
     Yields ``("block", block_dict)`` for each completed NarrativeBlock,
     then yields ``("complete", full_result_dict)`` with the parsed full
-    output including choices.
+    SegmentWriterOutput.
     """
 
     def __init__(self, client: AsyncOpenAI, model: str) -> None:
         self._client = client
         self._model = model
 
-    async def generate_scene(
+    async def generate_segment(
         self,
         pack: CompiledScriptPack,
         state: SessionState,
+        plan: SegmentPlan,
     ) -> AsyncGenerator[tuple[str, dict[str, Any]], None]:
-        prompt = _build_scene_prompt(pack, state)
+        prompt = _build_segment_prompt(pack, state, plan)
         parser = BlockStreamParser()
 
         stream = await self._client.responses.create(
@@ -122,4 +91,16 @@ class StreamingSceneGenerator:
         final = parser.finalize()
         if final is None:
             raise ModelContractError("streaming output could not be parsed as JSON")
-        yield ("complete", final)
+        # Validate as SegmentWriterOutput
+        validated = SegmentWriterOutput.model_validate(final)
+        yield ("complete", validated.model_dump(mode="json"))
+
+    async def generate_scene(
+        self,
+        pack: CompiledScriptPack,
+        state: SessionState,
+    ) -> AsyncGenerator[tuple[str, dict[str, Any]], None]:
+        """Deprecated: use generate_segment with an approved plan."""
+        raise RuntimeError(
+            "generate_scene is deprecated; use generate_segment with an approved SegmentPlan"
+        )
