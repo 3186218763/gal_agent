@@ -6,7 +6,15 @@ from pathlib import Path
 import pytest
 
 from src.story.runtime.completion_judge import CompletionJudge
-from src.story.runtime.contracts import RuntimeGenerationUnavailable
+from src.story.runtime.contracts import (
+    NarrativeBlock,
+    RuntimeGenerationUnavailable,
+    SceneDraft,
+    ScenePlan,
+    SegmentDraft,
+    SegmentPlan,
+    WrittenChoice,
+)
 from src.story.runtime.turn_orchestrator import TurnOrchestrator
 from src.story.script_pack.compiler import compile_source
 from src.story.state import initial_session_state
@@ -63,6 +71,94 @@ def test_opening_turn_streams_segment_started_blocks_ready(tmp_path: Path):
     ready = next(data for t, data in events if t == "segment_ready")
     assert ready["terminal"] == "decision"
     assert len(ready["choices"]) == 2
+
+
+def test_segment_ready_choices_come_from_draft_when_plan_scene_has_none(
+    tmp_path: Path,
+):
+    """A decision plan whose last scene carries no scene-level choices must
+    still deliver the draft's 2-4 written choices in segment_ready."""
+
+    class NoSceneChoicesDirector(FakeDirector):
+        async def plan_segment(self, pack, state, pacing):
+            segment_id = f"seg_{state.session_id}_draft_choices"
+            # model_construct bypasses ScenePlan's "decision scenes require
+            # 2-4 choices" constructor check — the validator layer explicitly
+            # permits empty scene choices when the draft has 2-4 choices.
+            return SegmentPlan.model_construct(
+                segment_id=segment_id,
+                scenes=(
+                    ScenePlan.model_construct(
+                        scene_id=f"scene_{segment_id}",
+                        summary="A scene unfolds",
+                        location_id=state.world.location_id,
+                        present_character_ids=state.world.present_character_ids,
+                        terminal="decision",
+                        decision_id=f"dec_{segment_id}",
+                        choices=(),
+                    ),
+                ),
+                terminal="decision",
+            )
+
+    class DraftChoicesWriter(FakeSegmentWriter):
+        async def write_segment(self, pack, state, plan):
+            if plan.terminal != "decision":
+                return await super().write_segment(pack, state, plan)
+            return SegmentDraft(
+                segment_id=plan.segment_id,
+                scene_drafts=(
+                    SceneDraft(
+                        scene_id=plan.scenes[-1].scene_id,
+                        blocks=(
+                            NarrativeBlock(
+                                kind="narration",
+                                text="The cafe hums quietly.",
+                            ),
+                        ),
+                    ),
+                ),
+                choices=(
+                    WrittenChoice(
+                        option_id="ask",
+                        label="Ask about the notebook",
+                        preview="Ask Alice about the notebook",
+                    ),
+                    WrittenChoice(
+                        option_id="observe",
+                        label="Watch quietly",
+                        preview="Observe the room",
+                    ),
+                ),
+            )
+
+    pack = compile_source(budget_test_pack_dict())
+    store = StoryEventStore(tmp_path / "draft_choices_test.db")
+    state = initial_session_state(pack, "s1", session_seed=42)
+    store.create_session(state)
+    orch = TurnOrchestrator(
+        store=store,
+        director=NoSceneChoicesDirector(),
+        writer=DraftChoicesWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=FakePlanner(),
+    )
+
+    gen = orch.execute_turn(pack, "s1", 0, "cmd-00", None)
+    events = _collect_events(gen)
+    ready = next(data for t, data in events if t == "segment_ready")
+
+    assert ready["terminal"] == "decision"
+    assert [c["id"] for c in ready["choices"]] == ["ask", "observe"]
+    assert [c["label"] for c in ready["choices"]] == [
+        "Ask about the notebook",
+        "Watch quietly",
+    ]
+    assert [c["preview"] for c in ready["choices"]] == [
+        "Ask Alice about the notebook",
+        "Observe the room",
+    ]
 
 
 def test_turn_increases_revision(tmp_path: Path):

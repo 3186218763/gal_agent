@@ -70,6 +70,35 @@ describe('SegmentPlayer state machine', () => {
     expect(p.ending).toEqual({ ending_id: 'end-1', title: 'Truth', tone: 'bittersweet', terminal_state_summary: 'They parted ways.' })
   })
 
+  it('loadFromProjection with empty blocks but provided choices is drainable', () => {
+    const p = new SegmentPlayer()
+    p.loadFromProjection([], 5, [CHOICES[0]], null)
+    expect(p.state).toBe('playing')
+    expect(p.isDrained()).toBe(true)
+    p.onDrained()
+    expect(p.state).toBe('waiting_choice')
+  })
+
+  it('loadFromProjection stays idle only when blocks, choices, and ending are all absent', () => {
+    const p = new SegmentPlayer()
+    p.loadFromProjection([], 5, null, null)
+    expect(p.state).toBe('idle')
+  })
+
+  it('stores the cleared flag from segment_ready', () => {
+    const p = new SegmentPlayer()
+    p.start()
+    p.onSegmentStarted('seg-1', 12)
+    p.onSegmentReady({
+      segment_id: 'seg-1',
+      revision: 20,
+      terminal: 'ending',
+      cleared: true,
+      ending: { ending_id: 'end-1', title: 'Truth', tone: 'bittersweet', terminal_state_summary: 'They parted ways.' },
+    })
+    expect(p.cleared).toBe(true)
+  })
+
   it('handles zero-block segment_ready with decision terminal', () => {
     const p = new SegmentPlayer()
     p.start()

@@ -67,6 +67,7 @@ function sessionBody(overrides: Partial<SessionProjection> = {}): SessionProject
 }
 
 const CHOICE = { id: 'c1', action_id: 'ask', label: '询问', intent: 'ask' }
+const SECOND_CHOICE = { id: 'c2', action_id: 'observe', label: '观察', intent: 'observe' }
 
 const TURN_EVENTS = [
   'event: segment_started\ndata: {"segment_id":"seg-1","expected_revision":0}',
@@ -115,7 +116,48 @@ describe('App screen transitions', () => {
     expect(await screen.findByText(/新的故事开始了/, {}, { timeout: 3000 })).toBeInTheDocument()
   })
 
-  it('boots with stored session and replays committed segment blocks without a turn', async () => {
+  it('boots with a stored pending-decision session and shows choices without a turn', async () => {
+    saveSessionId('s1')
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url.match(/\/sessions\/[^/]+$/) && method === 'GET') {
+        // REAL backend shape at pending decision: segment_blocks is empty and
+        // segment_choices is populated (DecisionPresented clears pending_scene).
+        return jsonResponse(
+          sessionBody({
+            segment_blocks: [],
+            segment_choices: [CHOICE, SECOND_CHOICE],
+          }),
+        )
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    render(<App />)
+    expect(await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /B 观察/ })).toBeInTheDocument()
+    const turnCalls = fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/turns'))
+    expect(turnCalls).toHaveLength(0)
+  })
+
+  it('clears a stale stored session and returns to start on session_not_found', async () => {
+    saveSessionId('s1')
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url.match(/\/sessions\/[^/]+$/) && method === 'GET') {
+        return jsonResponse({ detail: { code: 'session_not_found' } }, 404)
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    render(<App />)
+    expect(await screen.findByRole('button', { name: '开始新游戏' }, { timeout: 3000 })).toBeInTheDocument()
+    expect(localStorage.getItem('gal.session_id')).toBeNull()
+  })
+
+  it('shows the ending screen from a stored ended session with cleared=true', async () => {
     saveSessionId('s1')
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -124,17 +166,96 @@ describe('App screen transitions', () => {
       if (url.match(/\/sessions\/[^/]+$/) && method === 'GET') {
         return jsonResponse(
           sessionBody({
-            segment_blocks: [{ kind: 'narration', text: '回忆片段。' }],
-            segment_choices: [CHOICE],
+            status: 'ended',
+            segment_ending: {
+              ending_id: 'truth',
+              title: '真相大白',
+              tone: '苦涩',
+              terminal_state_summary: '两人各奔东西。',
+            },
+            cleared: true,
           }),
         )
       }
       return jsonResponse({ detail: { code: 'not_found' } }, 404)
     })
     render(<App />)
-    expect(await screen.findByText(/回忆片段/, {}, { timeout: 3000 })).toBeInTheDocument()
-    const turnCalls = fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/turns'))
-    expect(turnCalls).toHaveLength(0)
+    expect(await screen.findByText('真相大白', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByText('已通过')).toBeInTheDocument()
+  })
+
+  it('shows the not-cleared badge from a stored ended session with cleared=false', async () => {
+    saveSessionId('s1')
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url.match(/\/sessions\/[^/]+$/) && method === 'GET') {
+        return jsonResponse(
+          sessionBody({
+            status: 'ended',
+            segment_ending: {
+              ending_id: 'truth',
+              title: '真相大白',
+              tone: '苦涩',
+              terminal_state_summary: '两人各奔东西。',
+            },
+            cleared: false,
+          }),
+        )
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    render(<App />)
+    expect(await screen.findByText('真相大白', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByText('未通过')).toBeInTheDocument()
+  })
+
+  it('falls back to legacy ending fields when segment_ending is absent', async () => {
+    saveSessionId('s1')
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url.match(/\/sessions\/[^/]+$/) && method === 'GET') {
+        return jsonResponse(
+          sessionBody({
+            status: 'ended',
+            ending_id: 'legacy_end',
+            ending_title: '旧日结局',
+            segment_ending: null,
+          }),
+        )
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    render(<App />)
+    expect(await screen.findByText('旧日结局', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByText('END')).toBeInTheDocument()
+  })
+
+  it('re-boots (re-fetches the pack) when retrying from the error screen', async () => {
+    saveSessionId('s1')
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url.match(/\/sessions\/[^/]+$/) && method === 'GET') return jsonResponse(sessionBody())
+      if (url.endsWith('/turns') && method === 'POST') {
+        return sseResponse(['event: error\ndata: {"code":"generation_unavailable"}'])
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    render(<App />)
+    const retry = await screen.findByRole('button', { name: '重试' }, { timeout: 3000 })
+    const packCallsBefore = fetchMock.mock.calls.filter(([input]) => String(input).includes('/packs/')).length
+    expect(packCallsBefore).toBe(1)
+    fireEvent.click(retry)
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([input]) => String(input).includes('/packs/')).length,
+      ).toBeGreaterThan(1)
+    })
   })
 
   it('shows choices screen after playback drains', async () => {
@@ -145,6 +266,25 @@ describe('App screen transitions', () => {
     fireEvent.click(log) // skip typewriter
     fireEvent.click(log) // advance — queue drains, choices surface
     expect(await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 })).toBeInTheDocument()
+  })
+
+  it('shows an explicit error screen when the segment delivers no choices', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url === '/api/v2/sessions' && method === 'POST') return jsonResponse(sessionBody({ revision: 0 }), 201)
+      if (url.endsWith('/turns') && method === 'POST') {
+        return sseResponse([
+          'event: segment_started\ndata: {"segment_id":"seg-1","expected_revision":0}',
+          'event: segment_ready\ndata: {"segment_id":"seg-1","revision":1,"terminal":"decision","choices":[]}',
+        ])
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+    expect(await screen.findByText('未收到可选项，请重试', {}, { timeout: 3000 })).toBeInTheDocument()
   })
 
   it('shows ending screen after segment_ready with terminal ending', async () => {

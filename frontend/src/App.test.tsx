@@ -188,8 +188,17 @@ describe('streaming playback', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /A 询问/ })).toBeInTheDocument()
     }, { timeout: 5000 })
-  })
 
+    // The choice turn's POST /turns body must carry the chosen id, the
+    // decision revision, and a fresh idempotency key.
+    const turnCalls = fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/turns'))
+    const choiceTurn = turnCalls[turnCalls.length - 1]
+    const body = JSON.parse(choiceTurn[1].body as string)
+    expect(body.choice_id).toBe('ch1')
+    expect(body.expected_revision).toBe(1)
+    expect(typeof body.idempotency_key).toBe('string')
+    expect(body.idempotency_key.length).toBeGreaterThan(0)
+  })
   it('shows ending screen when segment_ready has an ending', async () => {
     fetchMock.mockReset()
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

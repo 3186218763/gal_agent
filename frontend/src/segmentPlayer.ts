@@ -27,6 +27,7 @@ export interface SegmentReadyData {
     terminal_state_summary: string
   }
   blocks?: NarrativeBlock[]
+  cleared?: boolean | null
 }
 
 export interface EndingMeta {
@@ -62,6 +63,7 @@ export class SegmentPlayer {
   private _ending: EndingMeta | null = null
   private _committedRevision: number | null = null
   private _errorCode: string | null = null
+  private _cleared: boolean | null = null
   private _isReplay = false
 
   get state(): SegmentPlayerState { return this._state }
@@ -71,6 +73,7 @@ export class SegmentPlayer {
   get ending(): EndingMeta | null { return this._ending }
   get committedRevision(): number | null { return this._committedRevision }
   get errorCode(): string | null { return this._errorCode }
+  get cleared(): boolean | null { return this._cleared }
   get isReplay(): boolean { return this._isReplay }
 
   /** Begin a new turn — player transitions to generating_after_choice. */
@@ -116,6 +119,7 @@ export class SegmentPlayer {
     } else if (data.terminal === 'ending' && data.ending) {
       this._ending = data.ending
     }
+    this._cleared = data.cleared ?? null
 
     // If there are no blocks (edge case), immediately check drain
     if (this._unlocked.length === 0) {
@@ -168,7 +172,10 @@ export class SegmentPlayer {
     this._isReplay = true
     if (choices) this._choices = choices
     if (ending) this._ending = ending
-    if (blocks.length === 0) {
+    // A pending-decision projection has empty blocks but non-empty choices;
+    // keep the player drainable so the component can surface them. Only a
+    // fully empty projection stays idle.
+    if (blocks.length === 0 && !choices && !ending) {
       this._state = 'idle'
     } else {
       this._state = 'playing'
@@ -200,6 +207,7 @@ export class SegmentPlayer {
     this._ending = null
     this._committedRevision = null
     this._errorCode = null
+    this._cleared = null
     this._isReplay = false
   }
 }

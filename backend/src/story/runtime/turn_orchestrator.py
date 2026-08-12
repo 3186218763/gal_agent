@@ -380,18 +380,21 @@ class TurnOrchestrator:
                 }
 
                 if plan.terminal == "decision":
-                    written_map = {wc.option_id: wc for wc in draft.choices}
-                    last_scene = plan.scenes[-1]
+                    # Choices are authoritative on SegmentDraft: the plan's
+                    # last scene may carry no scene-level choices (the
+                    # validator permits this when the draft has 2-4), and the
+                    # committed DecisionPresented is built from draft.choices.
+                    # Keep the same dict shape as the old plan-derived build.
                     ready_data["choices"] = [
                         {
-                            "id": c.option_id,
-                            "action_id": c.action_id,
-                            "label": written_map[c.option_id].label,
-                            "intent": c.intent,
-                            "target_character_id": c.target_character_id,
-                            "preview": written_map[c.option_id].preview,
+                            "id": wc.option_id,
+                            "action_id": wc.option_id,
+                            "label": wc.label,
+                            "intent": wc.label,
+                            "target_character_id": None,
+                            "preview": wc.preview,
                         }
-                        for c in last_scene.choices
+                        for wc in draft.choices
                     ]
                 elif (
                     plan.terminal == "ending" and draft.ending is not None

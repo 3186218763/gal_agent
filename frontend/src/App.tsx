@@ -63,7 +63,7 @@ export default function App() {
               pack,
               sessionId: storedId,
               ending: session.segment_ending,
-              cleared: null,
+              cleared: session.cleared,
             })
           } else if (session.ending_id) {
             setScreen({
@@ -76,7 +76,7 @@ export default function App() {
                 tone: '',
                 terminal_state_summary: '',
               },
-              cleared: null,
+              cleared: session.cleared,
             })
           } else {
             setScreen({ kind: 'start', pack })
@@ -162,11 +162,15 @@ export default function App() {
       if (choices.length > 0) {
         setScreen({ kind: 'choices', pack, sessionId, revision, choices })
       } else {
-        // Internal scene continuation — no client request between scenes.
-        // The segment protocol already delivered all blocks; empty choices
-        // means the backend will be polled on next interaction, but with
-        // segment protocol this shouldn't happen. Just go back to play.
-        setScreen({ kind: 'play', pack, sessionId, revision, choiceId: null })
+        // Empty choices is a backend anomaly (DecisionRequired dead-end).
+        // Surface an explicit error instead of re-streaming into a loop.
+        setScreen({
+          kind: 'error',
+          pack,
+          sessionId,
+          revision,
+          message: '未收到可选项，请重试',
+        })
       }
     },
     [screen],
@@ -189,7 +193,7 @@ export default function App() {
   )
 
   const handleEnding = useCallback(
-    (ending: SegmentEndingMeta, _blocks: NarrativeBlock[], _revision: number) => {
+    (ending: SegmentEndingMeta, _blocks: NarrativeBlock[], _revision: number, cleared?: boolean | null) => {
       const pack = packRef.current
       if (!pack) return
       const sessionId = screen.kind === 'play' ? screen.sessionId : ''
@@ -198,7 +202,7 @@ export default function App() {
         pack,
         sessionId,
         ending,
-        cleared: null,
+        cleared: cleared ?? null,
       })
     },
     [screen],

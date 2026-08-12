@@ -122,6 +122,33 @@ describe('streamTurn', () => {
     expect(body.idempotency_key).toBe('key-2')
   })
 
+  it('throws ApiError network when the signal is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    fetchMock.mockImplementation(async (_input, init) => {
+      if (init?.signal?.aborted) {
+        throw new DOMException('The operation was aborted.', 'AbortError')
+      }
+      throw new Error('fetch should not proceed with an aborted signal')
+    })
+
+    const events: unknown[] = []
+    let error: unknown = null
+    try {
+      for await (const evt of streamTurn('s1', null, 0, 'key-ab', controller.signal)) {
+        events.push(evt)
+      }
+    } catch (e) {
+      error = e
+    }
+
+    expect(events).toHaveLength(0)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('network')
+    expect((error as ApiError).status).toBe(0)
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal)
+  })
+
   it('sends null choice_id for opening turn', async () => {
     fetchMock.mockResolvedValueOnce(
       makeSSEResponse([

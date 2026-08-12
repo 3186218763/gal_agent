@@ -31,7 +31,7 @@ export interface PlaybackProps {
   replayChoices?: PresentedChoice[]
   replayEnding?: EndingMeta | null
   onChoices: (choices: PresentedChoice[], revision: number) => void
-  onEnding: (ending: EndingMeta, blocks: NarrativeBlock[], revision: number) => void
+  onEnding: (ending: EndingMeta, blocks: NarrativeBlock[], revision: number, cleared?: boolean | null) => void
   onError: (message: string) => void
 }
 
@@ -55,7 +55,16 @@ export default function Playback({
   const [waiting, setWaiting] = useState(false)
   const [isBuffering, setIsBuffering] = useState(!replayBlocks)
 
-  const playerRef = useRef<SegmentPlayer>(new SegmentPlayer())
+  // Lazy-init: SegmentPlayer is a class instance, so creating it in the
+  // useRef initializer would allocate a new player on every render.
+  const playerRef = useRef<SegmentPlayer | null>(null)
+  if (playerRef.current === null) {
+    playerRef.current = new SegmentPlayer()
+  }
+  const keyRef = useRef<string | null>(null)
+  if (keyRef.current === null) {
+    keyRef.current = newCommandId()
+  }
   const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isMountedRef = useRef(true)
   const logRef = useRef<HTMLDivElement>(null)
@@ -85,7 +94,7 @@ export default function Playback({
   }, [])
 
   const dequeueNext = useCallback(() => {
-    const player = playerRef.current
+    const player = playerRef.current!
     const next = player.dequeueBlock()
     if (next && isMountedRef.current) {
       setCurrentBlock(next)
@@ -107,7 +116,7 @@ export default function Playback({
         if (stateAfterDrain === 'waiting_choice' && player.choices) {
           onChoices(player.choices, rev)
         } else if (stateAfterDrain === 'playing_ending' && player.ending) {
-          onEnding(player.ending, [...archiveRef.current], rev)
+          onEnding(player.ending, [...archiveRef.current], rev, player.cleared ?? null)
         }
       }
     }
@@ -118,16 +127,17 @@ export default function Playback({
     isMountedRef.current = true
     drainedNotifiedRef.current = false
     let cancelled = false
-    const player = playerRef.current
+    const controller = new AbortController()
+    const player = playerRef.current!
+    const key = keyRef.current!
 
     async function startStream() {
       setWaiting(true)
       setIsBuffering(true)
       player.start()
-      const key = newCommandId()
 
       try {
-        for await (const evt of streamTurn(sessionId, choiceId, expectedRevision, key)) {
+        for await (const evt of streamTurn(sessionId, choiceId, expectedRevision, key, controller.signal)) {
           if (cancelled) return
 
           if (evt.event === 'segment_started') {
@@ -149,14 +159,14 @@ export default function Playback({
               if (player.state === 'waiting_choice' && player.choices) {
                 onChoices(player.choices, rev)
               } else if (player.state === 'playing_ending' && player.ending) {
-                onEnding(player.ending, [], rev)
+                onEnding(player.ending, [], rev, player.cleared ?? null)
               }
             }
           } else if (evt.event === 'heartbeat') {
             // Keep-alive, no state change
           } else if (evt.event === 'retry_after') {
-            // Command lease still active — show retry message, keep old revision
-            onError(`重试中: ${evt.data.message || '请稍后重试'}`)
+            // Command lease still active — show fixed retry text, keep old revision
+            onError('正在处理中，请稍后重试')
             return
           } else if (evt.event === 'error') {
             onError(errorMessageFor(evt.data.code))
@@ -182,9 +192,9 @@ export default function Playback({
       // Pass choices/ending through loadFromProjection so onDrained() can access them
       player.loadFromProjection(blocks, replayRevision ?? expectedRevision, replayChoices, replayEnding)
       setWaiting(blocks.length === 0)
-      if (blocks.length > 0) {
-        dequeueNext()
-      }
+      // Dequeue unconditionally: with zero blocks the drain-notify path fires
+      // onChoices/onEnding immediately (pending-decision projections).
+      dequeueNext()
     }
 
     if (replayBlocks !== undefined) {
@@ -196,6 +206,7 @@ export default function Playback({
     return () => {
       cancelled = true
       isMountedRef.current = false
+      controller.abort()
       if (typingTimerRef.current) clearInterval(typingTimerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

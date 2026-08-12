@@ -1,9 +1,29 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import Playback from './Playback'
 import { SegmentPlayer, type EndingMeta } from './segmentPlayer'
 import type { PackProjection, NarrativeBlock, PresentedChoice } from './api'
+import type { StreamEvent } from './stream'
+
+const { streamTurnMock, setStreamEvents } = vi.hoisted(() => {
+  let events: StreamEvent[] = []
+  return {
+    streamTurnMock: vi.fn(async function* (): AsyncGenerator<StreamEvent> {
+      for (const evt of events) {
+        await new Promise((r) => setTimeout(r, 1))
+        yield evt
+      }
+    }),
+    setStreamEvents: (evts: StreamEvent[]) => {
+      events = evts
+    },
+  }
+})
+
+vi.mock('./stream', () => ({
+  streamTurn: streamTurnMock,
+}))
 
 const MOCK_PACK: PackProjection = {
   pack_id: 'test-pack',
@@ -12,6 +32,15 @@ const MOCK_PACK: PackProjection = {
   characters: [{ character_id: 'alice', name: 'Alice', public_profile: '' }],
   locations: [{ location_id: 'cafe', name: 'Cafe' }],
 }
+
+const TWO_CHOICES: PresentedChoice[] = [
+  { id: 'c1', action_id: 'ask', label: 'Ask', intent: 'ask', target_character_id: 'alice', preview: 'Ask Alice' },
+  { id: 'c2', action_id: 'observe', label: 'Observe', intent: 'observe', target_character_id: null, preview: null },
+]
+
+beforeEach(() => {
+  streamTurnMock.mockClear()
+})
 
 describe('Playback streaming integration', () => {
   it('buffers blocks until segment_ready, then drains queue', async () => {
@@ -25,16 +54,14 @@ describe('Playback streaming integration', () => {
         segment_id: 'seg-1',
         revision: 1,
         terminal: 'decision',
-        choices: [{ id: 'c1', action_id: 'ask', label: 'Ask', intent: 'ask', target_character_id: 'alice', preview: 'Ask Alice about the mystery' }],
+        choices: TWO_CHOICES,
       })
       return player
     })
 
     expect(result.current.playableBlocks).toHaveLength(2)
     expect(result.current.state).toBe('playing') // Not notified until drained
-    expect(result.current.choices).toEqual([
-      { id: 'c1', action_id: 'ask', label: 'Ask', intent: 'ask', target_character_id: 'alice', preview: 'Ask Alice about the mystery' },
-    ])
+    expect(result.current.choices).toEqual(TWO_CHOICES)
 
     result.current.dequeueBlock()
     expect(result.current.isDrained()).toBe(false)
@@ -43,7 +70,7 @@ describe('Playback streaming integration', () => {
 
     result.current.onDrained()
     expect(result.current.state).toBe('waiting_choice')
-    expect(result.current.choices).toEqual([{ id: 'c1', action_id: 'ask', label: 'Ask', intent: 'ask', target_character_id: 'alice', preview: 'Ask Alice about the mystery' }])
+    expect(result.current.choices).toEqual(TWO_CHOICES)
   })
 
   it('shows error and discards provisional buffer on error event before segment_ready', async () => {
@@ -59,6 +86,84 @@ describe('Playback streaming integration', () => {
     expect(result.current.state).toBe('error')
     expect(result.current.provisionalCount).toBe(0)
     expect(result.current.playableBlocks).toEqual([])
+  })
+
+  it('shows buffering overlay until segment_ready, then auto-dequeues first block', async () => {
+    setStreamEvents([
+      { event: 'segment_started', data: { segment_id: 'seg-1', expected_revision: 0 } },
+      { event: 'block', data: { segment_id: 'seg-1', index: 0, kind: 'narration', text: 'Hello.' } },
+      { event: 'segment_ready', data: { segment_id: 'seg-1', revision: 1, terminal: 'decision', choices: TWO_CHOICES } },
+    ])
+
+    render(
+      <Playback
+        pack={MOCK_PACK}
+        sessionId="s1"
+        expectedRevision={0}
+        choiceId={null}
+        onChoices={vi.fn()}
+        onEnding={vi.fn()}
+        onError={vi.fn()}
+      />
+    )
+
+    // Buffering overlay is visible while the segment is generating.
+    expect(screen.getByRole('status')).toHaveTextContent('正在生成…')
+
+    // segment_ready arrives -> overlay disappears and the block is auto-dequeued.
+    expect(await screen.findByText('Hello.', {}, { timeout: 3000 })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    })
+  })
+
+  it('maps error events to zh-CN messages via onError', async () => {
+    const onError = vi.fn()
+    setStreamEvents([
+      { event: 'segment_started', data: { segment_id: 'seg-1', expected_revision: 0 } },
+      { event: 'block', data: { segment_id: 'seg-1', index: 0, kind: 'narration', text: 'Provisional.' } },
+      { event: 'error', data: { code: 'generation_failed' } },
+    ])
+
+    render(
+      <Playback
+        pack={MOCK_PACK}
+        sessionId="s1"
+        expectedRevision={0}
+        choiceId={null}
+        onChoices={vi.fn()}
+        onEnding={vi.fn()}
+        onError={onError}
+      />
+    )
+
+    await waitFor(() => {
+      expect(onError).toHaveBeenCalledWith('生成失败，请重试')
+    })
+  })
+
+  it('reports disconnect when the stream ends before segment_ready', async () => {
+    const onError = vi.fn()
+    setStreamEvents([
+      { event: 'segment_started', data: { segment_id: 'seg-1', expected_revision: 0 } },
+      { event: 'block', data: { segment_id: 'seg-1', index: 0, kind: 'narration', text: 'Provisional.' } },
+    ])
+
+    render(
+      <Playback
+        pack={MOCK_PACK}
+        sessionId="s1"
+        expectedRevision={0}
+        choiceId={null}
+        onChoices={vi.fn()}
+        onEnding={vi.fn()}
+        onError={onError}
+      />
+    )
+
+    await waitFor(() => {
+      expect(onError).toHaveBeenCalledWith('连接中断，请重试')
+    })
   })
 })
 
@@ -160,7 +265,33 @@ describe('Playback replay integration', () => {
     fireEvent.click(log) // advance - queue drains
 
     await waitFor(() => {
-      expect(onEnding).toHaveBeenCalledWith(ending, [blocks[0]], 2)
+      expect(onEnding).toHaveBeenCalledWith(ending, [blocks[0]], 2, null)
     })
+  })
+
+  it('surfaces choices immediately when replaying a pending-decision projection with no blocks', async () => {
+    const onChoices = vi.fn()
+    const onError = vi.fn()
+
+    render(
+      <Playback
+        pack={MOCK_PACK}
+        sessionId="s1"
+        expectedRevision={1}
+        choiceId={null}
+        replayBlocks={[]}
+        replayRevision={1}
+        replayChoices={TWO_CHOICES}
+        onChoices={onChoices}
+        onEnding={vi.fn()}
+        onError={onError}
+      />
+    )
+
+    await waitFor(() => {
+      expect(onChoices).toHaveBeenCalledWith(TWO_CHOICES, 1)
+    })
+    expect(streamTurnMock).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
   })
 })

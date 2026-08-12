@@ -55,22 +55,31 @@ export type StreamEvent =
  * @param choiceId    - Selected choice ID, or null for opening
  * @param expectedRevision - Current session revision
  * @param idempotencyKey - Unique command key for idempotent replay
+ * @param signal        - Optional AbortSignal; aborting rejects with ApiError('network', 0)
  */
 export async function* streamTurn(
   sessionId: string,
   choiceId: string | null,
   expectedRevision: number,
   idempotencyKey: string,
+  signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
-  const response = await fetch(turnSessionUrl(sessionId), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      expected_revision: expectedRevision,
-      idempotency_key: idempotencyKey,
-      choice_id: choiceId,
-    }),
-  })
+  let response: Response
+  try {
+    response = await fetch(turnSessionUrl(sessionId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expected_revision: expectedRevision,
+        idempotency_key: idempotencyKey,
+        choice_id: choiceId,
+      }),
+      signal,
+    })
+  } catch (err) {
+    if (signal?.aborted) throw new ApiError('network', 0)
+    throw err
+  }
 
   if (!response.ok) {
     let code = `http_error_${response.status}`
