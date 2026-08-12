@@ -45,7 +45,7 @@ class ScenePlan(RuntimeModel):
     focus_goal_ids: tuple[str, ...] = ()
     related_fact_ids: tuple[str, ...] = ()
     fact_commits: tuple[FactCommitPlan, ...] = ()
-    terminal: Literal["continue", "decision"]
+    terminal: Literal["continue", "decision", "ending"]
     decision_id: str | None = None
     choices: tuple[ChoicePlan, ...] = ()
 
@@ -55,7 +55,7 @@ class ScenePlan(RuntimeModel):
             if self.decision_id is None or not 2 <= len(self.choices) <= 4:
                 raise ValueError("decision scenes require decision_id and 2-4 choices")
         elif self.decision_id is not None or self.choices:
-            raise ValueError("continue scenes cannot contain a decision")
+            raise ValueError("non-decision scenes cannot contain a decision")
         return self
 
 
@@ -101,6 +101,8 @@ class EndingDraft(RuntimeModel):
     ending_id: str
     title: str
     blocks: tuple[NarrativeBlock, ...] = Field(min_length=1)
+    tone: str | None = None
+    terminal_state_summary: str | None = None
 
 
 class PlannerOutput(RuntimeModel):
