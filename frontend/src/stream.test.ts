@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from './api'
 import { streamTurn } from './stream'
+import type { StreamEvent } from './stream'
 
 function makeSSEResponse(events: string[]): Response {
   const encoder = new TextEncoder()
@@ -157,5 +158,153 @@ describe('streamTurn', () => {
       expect(ready.data.terminal).toBe('ending')
       expect(ready.data.ending?.title).toBe('Dawn')
     }
+  })
+
+  it('yields retry_after with backend payload', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        'event: retry_after\ndata: {"retry_after_seconds":5,"message":"Command is already being processed"}',
+      ]),
+    )
+
+    const results: StreamEvent[] = []
+    for await (const evt of streamTurn('s1', null, 0, 'key-r')) {
+      results.push(evt)
+    }
+
+    expect(results).toHaveLength(1)
+    const retry = results[0]
+    expect(retry.event).toBe('retry_after')
+    if (retry.event === 'retry_after') {
+      expect(retry.data.retry_after_seconds).toBe(5)
+      expect(retry.data.message).toBe('Command is already being processed')
+    }
+  })
+
+  it('parses multi-line data joined with newline', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        'event: segment_started\ndata: {"segment_id":"seg-ml",\ndata: "expected_revision":7}',
+      ]),
+    )
+
+    const events: StreamEvent[] = []
+    for await (const evt of streamTurn('s1', null, 0, 'key-ml')) {
+      events.push(evt)
+    }
+
+    expect(events).toHaveLength(1)
+    expect(events[0].event).toBe('segment_started')
+    if (events[0].event === 'segment_started') {
+      expect(events[0].data.segment_id).toBe('seg-ml')
+      expect(events[0].data.expected_revision).toBe(7)
+    }
+  })
+
+  it('parses event and data prefixes without a space', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        'event:segment_started\ndata:{"segment_id":"seg-ns","expected_revision":3}',
+      ]),
+    )
+
+    const events: StreamEvent[] = []
+    for await (const evt of streamTurn('s1', null, 0, 'key-ns')) {
+      events.push(evt)
+    }
+
+    expect(events).toHaveLength(1)
+    expect(events[0].event).toBe('segment_started')
+    if (events[0].event === 'segment_started') {
+      expect(events[0].data.segment_id).toBe('seg-ns')
+    }
+  })
+
+  it('ignores unknown event types', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        'event: segment_started\ndata: {"segment_id":"seg-1","expected_revision":0}',
+        'event: unknown_type\ndata: {"foo":1}',
+        'event: segment_ready\ndata: {"segment_id":"seg-1","revision":1,"terminal":"decision","choices":[]}',
+      ]),
+    )
+
+    const events: string[] = []
+    for await (const evt of streamTurn('s1', null, 0, 'key-u')) {
+      events.push(evt.event)
+    }
+
+    expect(events).toEqual(['segment_started', 'segment_ready'])
+  })
+
+  it('ignores frames with malformed JSON', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        'event: segment_started\ndata: {"segment_id":"seg-1","expected_revision":0}',
+        'event: block\ndata: {not-json',
+        'event: segment_ready\ndata: {"segment_id":"seg-1","revision":1,"terminal":"decision","choices":[]}',
+      ]),
+    )
+
+    const events: string[] = []
+    for await (const evt of streamTurn('s1', null, 0, 'key-j')) {
+      events.push(evt.event)
+    }
+
+    expect(events).toEqual(['segment_started', 'segment_ready'])
+  })
+
+  it('reassembles a frame split across reader chunks', async () => {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: segment_started\ndata: {"segment_id":"seg-sp'))
+        controller.enqueue(encoder.encode('lit","expected_revision":4}\n\n'))
+        controller.close()
+      },
+    })
+    fetchMock.mockResolvedValueOnce(
+      new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      }),
+    )
+
+    const events: StreamEvent[] = []
+    for await (const evt of streamTurn('s1', null, 0, 'key-sp')) {
+      events.push(evt)
+    }
+
+    expect(events).toHaveLength(1)
+    expect(events[0].event).toBe('segment_started')
+    if (events[0].event === 'segment_started') {
+      expect(events[0].data.segment_id).toBe('seg-split')
+    }
+  })
+
+  it('flushes a trailing frame without final newline delimiter', async () => {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('event: segment_started\ndata: {"segment_id":"seg-f","expected_revision":0}\n\n'),
+        )
+        controller.enqueue(encoder.encode('event: heartbeat\ndata: {}'))
+        controller.close()
+      },
+    })
+    fetchMock.mockResolvedValueOnce(
+      new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      }),
+    )
+
+    const events: string[] = []
+    for await (const evt of streamTurn('s1', null, 0, 'key-f')) {
+      events.push(evt.event)
+    }
+
+    expect(events).toEqual(['segment_started', 'heartbeat'])
   })
 })

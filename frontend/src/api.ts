@@ -43,7 +43,7 @@ export interface SessionProjection {
   segment_ending: SegmentEndingMeta | null
   // Session completion fields (present only when ended) — OPTIONAL
   cleared: boolean | null
-  completion_summaries: CompletionSummary[] | null
+  completion_summaries: CompletionSummary[]
 }
 
 export interface CompletionSummary {

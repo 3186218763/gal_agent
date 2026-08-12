@@ -34,7 +34,7 @@ export interface StreamError {
 
 export interface StreamRetryAfter {
   event: 'retry_after'
-  data: { reason: string }
+  data: { retry_after_seconds: number; message: string }
 }
 
 export type StreamEvent =
@@ -114,16 +114,17 @@ export async function* streamTurn(
 
 function parseSSEChunk(chunk: string): StreamEvent | null {
   let eventType = 'message'
-  let dataStr = ''
+  const dataLines: string[] = []
 
   for (const line of chunk.split('\n')) {
-    if (line.startsWith('event: ')) {
-      eventType = line.slice(7).trim()
-    } else if (line.startsWith('data: ')) {
-      dataStr = line.slice(6)
+    if (line.startsWith('event:')) {
+      eventType = line.slice(6).trim()
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trimStart())
     }
   }
 
+  const dataStr = dataLines.join('\n')
   if (!dataStr) return null
 
   let data: unknown
