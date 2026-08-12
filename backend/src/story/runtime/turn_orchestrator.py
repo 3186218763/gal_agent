@@ -375,6 +375,8 @@ class TurnOrchestrator:
                     "revision": updated.revision,
                     "terminal": plan.terminal,
                     "blocks": streamed_blocks,
+                    "choices": None,
+                    "ending": None,
                 }
 
                 if plan.terminal == "decision":

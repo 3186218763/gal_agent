@@ -149,7 +149,7 @@ def project_session(
     if pack is not None and state.completion is not None:
         req_descriptions = {
             req.id: req.description
-            for req in pack.source.completion_requirements
+            for req in getattr(pack.source, "completion_requirements", ())
         }
 
     completion_summaries: tuple[CompletionSummary, ...] = ()

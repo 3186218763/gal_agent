@@ -62,6 +62,16 @@ def _make_continue_scene(scene_id="scene_01"):
     )
 
 
+def _make_ending_scene(scene_id="scene_03"):
+    return ScenePlan(
+        scene_id=scene_id,
+        summary="The ending",
+        location_id="cafe",
+        present_character_ids=("alice",),
+        terminal="ending",
+    )
+
+
 def _make_decision_scene(scene_id="scene_02"):
     return ScenePlan(
         scene_id=scene_id,
@@ -83,7 +93,7 @@ def test_valid_decision_segment_plan():
     pacing = _make_pacing()
     plan = SegmentPlan(
         segment_id="seg_01",
-        scenes=(_make_continue_scene(),),
+        scenes=(_make_decision_scene(),),
         terminal="decision",
     )
     result = validate_segment_plan(pack, state, plan, pacing)
@@ -96,7 +106,7 @@ def test_valid_ending_segment_plan():
     pacing = _make_pacing(can_end=True)
     plan = SegmentPlan(
         segment_id="seg_02",
-        scenes=(_make_continue_scene(),),
+        scenes=(_make_ending_scene(),),
         terminal="ending",
         ending_proposal=EndingProposal(
             title="Finale", tone="epic", terminal_state_summary="The end.",

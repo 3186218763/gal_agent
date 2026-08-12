@@ -249,6 +249,24 @@ def validate_segment_plan(
             f"{pacing.remaining_budget} remaining in budget"
         )
 
+    # Terminal consistency: the last scene's terminal must match the
+    # segment's terminal (Section 3 of cross-plan resolution).
+    last_scene = plan.scenes[-1]
+    if plan.terminal == "ending":
+        if last_scene.terminal != "ending":
+            errors.append(
+                "last scene must have terminal='ending' when segment "
+                "terminal is 'Ending'"
+            )
+        if plan.ending_proposal is None:
+            errors.append("ending_proposal is required when terminal is 'ending'")
+    elif plan.terminal == "decision":
+        if last_scene.terminal != "decision":
+            errors.append(
+                "last scene must have terminal='decision' when segment "
+                "terminal is 'decision'"
+            )
+
     # Validate each scene plan individually.
     for scene in plan.scenes:
         try:
