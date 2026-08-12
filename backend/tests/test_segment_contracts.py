@@ -250,3 +250,65 @@ def test_completion_result():
     )
     assert len(result.assessments) == 2
     assert result.cleared is False
+
+
+def test_fake_director_plan_segment():
+    import asyncio
+
+    from src.story.runtime.pacing import compute_pacing_envelope
+    from src.story.script_pack.compiler import compile_source
+    from src.story.state import initial_session_state
+    from tests.fakes import FakeDirector, budget_test_pack_dict
+
+    pack = compile_source(budget_test_pack_dict())
+    state = initial_session_state(pack, "s1", session_seed=1)
+    pacing = compute_pacing_envelope(state, pack)
+    director = FakeDirector()
+    plan = asyncio.run(director.plan_segment(pack, state, pacing))
+    assert plan.segment_id is not None
+    assert len(plan.scenes) >= 1
+    assert plan.terminal in ("decision", "ending")
+
+
+def test_fake_segment_writer_write_segment():
+    import asyncio
+
+    from src.story.runtime.pacing import compute_pacing_envelope
+    from src.story.script_pack.compiler import compile_source
+    from src.story.state import initial_session_state
+    from tests.fakes import FakeDirector, FakeSegmentWriter, budget_test_pack_dict
+
+    pack = compile_source(budget_test_pack_dict())
+    state = initial_session_state(pack, "s1", session_seed=1)
+    pacing = compute_pacing_envelope(state, pack)
+    director = FakeDirector()
+    plan = asyncio.run(director.plan_segment(pack, state, pacing))
+    writer = FakeSegmentWriter()
+    draft = asyncio.run(writer.write_segment(pack, state, plan))
+    assert draft.segment_id == plan.segment_id
+    assert len(draft.scene_drafts) == len(plan.scenes)
+
+
+def test_fake_guard_passes():
+    import asyncio
+
+    from src.story.runtime.pacing import compute_pacing_envelope
+    from src.story.script_pack.compiler import compile_source
+    from src.story.state import initial_session_state
+    from tests.fakes import (
+        FakeDirector,
+        FakeGuard,
+        FakeSegmentWriter,
+        budget_test_pack_dict,
+    )
+
+    pack = compile_source(budget_test_pack_dict())
+    state = initial_session_state(pack, "s1", session_seed=1)
+    pacing = compute_pacing_envelope(state, pack)
+    director = FakeDirector()
+    plan = asyncio.run(director.plan_segment(pack, state, pacing))
+    writer = FakeSegmentWriter()
+    draft = asyncio.run(writer.write_segment(pack, state, plan))
+    guard = FakeGuard()
+    result = guard.check_segment(pack, state, plan, draft)
+    assert result.passed is True
