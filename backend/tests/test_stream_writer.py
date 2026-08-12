@@ -222,3 +222,26 @@ async def test_streaming_segment_validates_output(pack, state):
     with pytest.raises(ModelContractError, match="could not be parsed"):
         async for _ in generator.generate_segment(pack, state, plan):
             pass
+
+
+@pytest.mark.asyncio
+async def test_streaming_segment_rejects_wrong_shape_output(pack, state):
+    """Valid JSON of the wrong shape (e.g. the legacy scene format) is
+    rejected with ModelContractError, matching the unparseable branch."""
+    plan = _approved_plan()
+    wrong_shape_json = json.dumps({
+        "blocks": [{"kind": "narration", "text": "test"}],
+        "terminal": "decision",
+        "choices": [],
+    })
+
+    mock_client = MagicMock(spec=AsyncOpenAI)
+    mock_client.responses = MagicMock()
+    mock_client.responses.create = AsyncMock(return_value=FakeStream([wrong_shape_json]))
+
+    from src.story.runtime.contracts import ModelContractError
+
+    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
+    with pytest.raises(ModelContractError, match="could not be validated"):
+        async for _ in generator.generate_segment(pack, state, plan):
+            pass

@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 
 from src.story.runtime.contracts import ModelContractError, SegmentPlan, SegmentWriterOutput
 from src.story.runtime.segment_context import build_segment_writer_context
@@ -91,8 +92,15 @@ class StreamingSceneGenerator:
         final = parser.finalize()
         if final is None:
             raise ModelContractError("streaming output could not be parsed as JSON")
-        # Validate as SegmentWriterOutput
-        validated = SegmentWriterOutput.model_validate(final)
+        # Validate as SegmentWriterOutput.  A ValidationError would embed the
+        # raw model output in its message, so it is wrapped in a
+        # ModelContractError (spec section 10: no raw model output escapes).
+        try:
+            validated = SegmentWriterOutput.model_validate(final)
+        except ValidationError as exc:
+            raise ModelContractError(
+                "streaming output could not be validated as SegmentWriterOutput"
+            ) from exc
         yield ("complete", validated.model_dump(mode="json"))
 
     async def generate_scene(
