@@ -101,8 +101,8 @@ class EndingDraft(RuntimeModel):
     ending_id: str
     title: str
     blocks: tuple[NarrativeBlock, ...] = Field(min_length=1)
-    tone: str | None = None
-    terminal_state_summary: str | None = None
+    tone: str = Field(default="", max_length=80)
+    terminal_state_summary: str = Field(default="", max_length=600)
 
 
 class PlannerOutput(RuntimeModel):

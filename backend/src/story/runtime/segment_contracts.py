@@ -23,9 +23,9 @@ from src.story.state import SessionState, StoryPhase
 
 
 class EndingProposal(RuntimeModel):
-    title: str
-    tone: str
-    terminal_state_summary: str
+    title: str = Field(min_length=1, max_length=120)
+    tone: str = Field(min_length=1, max_length=80)
+    terminal_state_summary: str = Field(min_length=1, max_length=600)
 
 
 # ---------------------------------------------------------------------------
