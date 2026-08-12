@@ -213,6 +213,45 @@ class EndingSource(StrictModel):
     closing_tone: str = Field(min_length=1)
 
 
+class EvidenceHintsSource(StrictModel):
+    fact_ids: tuple[SafeId, ...] = ()
+    goal_ids: tuple[SafeId, ...] = ()
+
+
+class CompletionRequirementSource(StrictModel):
+    id: SafeId
+    description: str = Field(min_length=1)
+    evidence_hints: EvidenceHintsSource = Field(default_factory=EvidenceHintsSource)
+
+
+class WorldSettingSource(StrictModel):
+    premise: str = Field(min_length=1)
+    immutable_rules: tuple[str, ...] = ()
+    locations: tuple[LocationSource, ...] = Field(min_length=1)
+    factions: tuple[FactionSource, ...] = ()
+    forbidden_content: tuple[str, ...] = ()
+    fact_rules: tuple[str, ...] = ()
+
+
+class HistoryEventSource(StrictModel):
+    summary: str = Field(min_length=1)
+    participants: tuple[SafeId, ...] = ()
+    remembered_differently_by: dict[SafeId, str] = Field(default_factory=dict)
+
+
+class StoryHistorySource(StrictModel):
+    summary: str = Field(min_length=1)
+    events: tuple[HistoryEventSource, ...] = ()
+
+
+class OpeningStateSource(StrictModel):
+    location: SafeId
+    present_characters: tuple[SafeId, ...] = ()
+    known_facts: tuple[SafeId, ...] = ()
+    time_label: str = "opening"
+    starting_pressure: float = Field(default=0.1, ge=0, le=1)
+
+
 class ScriptPackSource(StrictModel):
     schema_version: Literal["1.0"]
     identity: IdentitySource
