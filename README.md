@@ -32,8 +32,8 @@ CLI       play-live
 
 - V1 (Agents SDK Director/Character, WebSocket, `plot.md` beats) is **removed**; V2 is the only runtime and state authority. `tests/test_v2_only_layout.py` rejects legacy paths and routes structurally.
 - The V2 runtime is implemented and offline-verified: Planner/Writer share one `OpenAIResponsesModel`; only Validator → Simulator → reducer → EventStore can mutate session state.
-- Verification so far: `99 passed, 1 skipped` (skipped = live test, needs a rotated key), Ruff clean, `cafe_mystery` pack valid (4 normal + 1 fallback endings), frontend shell builds.
-- **Not done yet:** real-model verification (live test and `play-live` autoplay need `OPENCODE_GO_API_KEY`), a real V2 frontend client (the shell still shows “V2 Runtime 尚未连接”), and the evaluation milestone (trace store, automated player policies, metrics, human playtest workflow).
+- Verification so far: backend `349 passed, 2 skipped` (skips = live tests, need a rotated key), Ruff clean, `cafe_mystery` pack valid (4 normal + 1 fallback endings); frontend `74 passed`, `npm run build` + `npm run lint` clean.
+- **Not done yet:** real-model verification (live test and `play-live` autoplay need `OPENCODE_GO_API_KEY`) and the evaluation milestone (trace store, automated player policies, metrics, human playtest workflow).
 
 ## Design notes
 
@@ -71,8 +71,7 @@ Failure rules: on timeout/network error nothing is committed and the revision is
 
 ## Deferred / next steps
 
-- V2 frontend client: create sessions, render scenes, present 2-4 options (current shell is a static status page).
-- Streaming output and a V2 WebSocket channel, after the HTTP protocol stabilizes.
+- SSE segment streaming is live via `POST /api/v2/sessions/{id}/turns` (see HTTP API); optional WebSocket channel remains a future concern.
 - Evaluation milestone: trace store, automated player policies, deterministic/model-backed runs, metrics, human playtest workflow.
 - Optional visual assets (sprites, backgrounds, BGM) — reserved in pack/event contracts but out of scope.
 
@@ -140,9 +139,9 @@ uv run python -m src.story.cli play-live script_packs/cafe_mystery \
   --database data/live.db --session-id demo --seed 17
 ```
 
-### Frontend shell
+### Frontend player
 
-The React shell is intentionally disconnected from V1 WebSocket/session clients. It builds as a static “V2 Runtime 尚未连接” status page until a V2 client is wired.
+The React player is a real V2 client: it creates sessions, streams turns over SSE (`segment_started` → provisional `block` → `segment_ready`), buffers provisional blocks, plays them with a click/Enter typewriter, presents the 2-4 backend choices only after the local queue drains, shows endings with completion status, and replays committed segments from the projection after refresh (never issuing a duplicate turn). See `frontend/src/segmentPlayer.ts`, `frontend/src/Playback.tsx`, and `frontend/src/App.tsx`.
 
 ```bash
 cd frontend
@@ -188,7 +187,7 @@ gal_agent/
 │   │   └── cafe_mystery/
 │   ├── tests/                   # offline suite + tests/live/ (opt-in)
 │   └── .env.example
-├── frontend/                    # Vite React shell (no V1 game client)
+├── frontend/                    # Vite React segment-aware player (SSE /turns)
 └── README.md
 ```
 
@@ -200,10 +199,13 @@ gal_agent/
 | `POST` | `/api/v2/sessions` | Create session (`pack_id`, `session_seed`) |
 | `GET` | `/api/v2/sessions/{id}` | Public session projection |
 | `GET` | `/api/v2/packs/{id}` | Public pack metadata projection |
-| `POST` | `/api/v2/sessions/{id}/advance` | Generate next scene (`expected_revision`, `idempotency_key`) |
+| `POST` | `/api/v2/sessions/{id}/turns` | Stream one segment turn as SSE (`expected_revision`, `idempotency_key`, optional `choice_id`) |
+| `POST` | `/api/v2/sessions/{id}/advance` | Legacy per-scene generation (`expected_revision`, `idempotency_key`) — continue-only |
 | `POST` | `/api/v2/sessions/{id}/choices/{choice_id}` | Apply presented choice (`expected_revision`, `idempotency_key`) |
 
 Every mutation requires an `idempotency_key`; retrying a completed command with the same key replays its stored result and appends no new events. Reads return safe public projections — internal state (fact truth values, character knowledge, beliefs, suspicions, goals, seeds, pack hashes) never crosses the API boundary. A generation failure maps to `503 {"code":"generation_unavailable"}` and leaves the session unmodified, so a client can retry safely.
+
+The `/turns` endpoint streams `segment_started`, `block`, `segment_ready`, `heartbeat`, `retry_after`, and `error` SSE events; `segment_ready` always carries both `choices` and `ending` keys (one null), plus `revision` and the committed `blocks`. The frontend treats blocks as provisional until `segment_ready`.
 
 OpenAPI: `http://127.0.0.1:8000/docs` when the server is running.
 
