@@ -6,6 +6,8 @@ Layer 2: Bounded semantic critic for knowledge leaks and contradictions.
 
 from __future__ import annotations
 
+import re
+
 from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
 from src.story.state import (
     FactTruthStatus,
@@ -17,6 +19,33 @@ from .segment_contracts import (
     GuardViolation,
     SegmentDraft,
     SegmentPlan,
+)
+
+# Strong markers suggesting a speaker is explicitly reversing/contradicting an
+# immutable rule. This is a heuristic: plain negations like "not"/"never" are
+# deliberately excluded because immutable rules often contain them (e.g.
+# "cannot"), and ordinary modal verbs ("can", "will", "could", ...) are
+# excluded because they match compliant dialogue. Full contradiction detection
+# is the Layer 2 semantic critic.
+_WORLD_RULE_STRONG_CONTRADICTION_MARKERS = (
+    "actually",
+    "in fact",
+    "isn't true",
+    "not true",
+    "violat",
+    "broke",
+    "ignored",
+    "ignores",
+    "defied",
+    "defy",
+    "disobey",
+    "contradict",
+    "denies",
+    "deny",
+    "despite",
+    "nevertheless",
+    "no longer",
+    "regardless",
 )
 
 
@@ -258,7 +287,10 @@ class Guard:
                         )
                     )
 
-        # 9. World-rule references: check dialogue doesn't contradict immutable rules
+        # 9. World-rule references: check dialogue doesn't contradict immutable
+        # rules. Heuristic: only flag when the text outside the rule's own
+        # substring contains an explicit reversal/contradiction marker; full
+        # contradiction detection is the Layer 2 semantic critic.
         immutable_rules = (
             pack.source.world_setting.immutable_rules
             if isinstance(pack.source, ScriptPackSourceV2)
@@ -270,16 +302,23 @@ class Guard:
                 if block.kind == "dialogue" and block.character_id is not None:
                     text_lower = block.text.lower()
                     for rule in immutable_rules:
-                        if rule.lower() in text_lower and (
-                            "not" in text_lower or "never" in text_lower or "can't" in text_lower
-                        ):
-                            violations.append(
-                                GuardViolation(
-                                    kind="contradiction",
-                                    block_index=global_block_index,
-                                    detail=f"dialogue may contradict immutable rule: '{rule[:50]}...'",
+                        rule_lower = rule.lower()
+                        if rule_lower in text_lower:
+                            # Remove the first rule occurrence (replaced with a
+                            # space so adjacent words can't merge into a marker)
+                            # before scanning for strong reversal markers.
+                            remainder = re.sub(re.escape(rule_lower), " ", text_lower, count=1)
+                            if any(
+                                marker in remainder
+                                for marker in _WORLD_RULE_STRONG_CONTRADICTION_MARKERS
+                            ):
+                                violations.append(
+                                    GuardViolation(
+                                        kind="contradiction",
+                                        block_index=global_block_index,
+                                        detail=f"dialogue may contradict immutable rule: '{rule[:50]}...'",
+                                    )
                                 )
-                            )
                 global_block_index += 1
 
         # --- Layer 2: Bounded semantic critic ---

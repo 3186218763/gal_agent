@@ -416,7 +416,7 @@ def test_guard_detects_world_rule_contradiction(guard, pack, state):
     plan = _decision_plan()
     draft = _matching_draft()
     # The pack's immutable rule: "Dead characters cannot return." A speaker
-    # negating it with "not" should be flagged as a contradiction.
+    # reversing it with "Actually" should be flagged as a contradiction.
     bad_blocks = draft.scene_drafts[1].blocks + (
         NarrativeBlock(
             kind="dialogue",
@@ -433,3 +433,54 @@ def test_guard_detects_world_rule_contradiction(guard, pack, state):
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
     assert any(v.kind == "contradiction" for v in result.violations)
+
+
+def test_guard_does_not_flag_compliant_rule_restatement(guard, pack, state):
+    plan = _decision_plan()
+    draft = _matching_draft()
+    # The immutable rule is quoted verbatim (including its trailing period) so
+    # the whole-block negation scan would false-positive on "cannot" inside the
+    # rule. A compliant restatement must not be flagged as a contradiction.
+    good_blocks = draft.scene_drafts[1].blocks + (
+        NarrativeBlock(
+            kind="dialogue",
+            character_id="alice",
+            text="Dead characters cannot return. So we must move on.",
+        ),
+    )
+    draft = draft.model_copy(update={
+        "scene_drafts": (
+            draft.scene_drafts[0],
+            draft.scene_drafts[1].model_copy(update={"blocks": good_blocks}),
+        )
+    })
+    result = guard.check_segment(pack, state, plan, draft)
+    assert not any(v.kind == "contradiction" for v in result.violations)
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "Dead characters cannot return. I wish they could.",
+        "Dead characters cannot return, but their ghosts may haunt the cafe.",
+        "Dead characters cannot return. Their memories will live on.",
+    ),
+)
+def test_guard_does_not_flag_rule_reference_with_ordinary_modals(
+    guard, pack, state, text
+):
+    plan = _decision_plan()
+    draft = _matching_draft()
+    # Compliant dialogue mentioning the rule alongside ordinary modal/auxiliary
+    # verbs must not be flagged; only strong reversal markers count.
+    good_blocks = draft.scene_drafts[1].blocks + (
+        NarrativeBlock(kind="dialogue", character_id="alice", text=text),
+    )
+    draft = draft.model_copy(update={
+        "scene_drafts": (
+            draft.scene_drafts[0],
+            draft.scene_drafts[1].model_copy(update={"blocks": good_blocks}),
+        )
+    })
+    result = guard.check_segment(pack, state, plan, draft)
+    assert not any(v.kind == "contradiction" for v in result.violations)

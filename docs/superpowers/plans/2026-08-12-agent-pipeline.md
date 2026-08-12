@@ -1999,23 +1999,36 @@ class Guard:
                         )
                     )
 
-        # 9. World-rule references: check dialogue doesn't contradict immutable rules
-        # (This is a basic check; full contradiction detection is Layer 2 semantic)
-        immutable_rules = set(pack.source.world.immutable_rules)
+        # 9. World-rule references: check dialogue doesn't contradict immutable
+        # rules. Heuristic: only flag when the text outside the rule's own
+        # substring contains a strong reversal/contradiction marker; full
+        # contradiction detection is the Layer 2 semantic critic.
+        immutable_rules = (
+            pack.source.world_setting.immutable_rules
+            if isinstance(pack.source, ScriptPackSourceV2)
+            else pack.source.world.immutable_rules
+        )
+        global_block_index = 0
         for scene_draft in draft.scene_drafts:
             for block in scene_draft.blocks:
                 if block.kind == "dialogue" and block.character_id is not None:
-                    # Check for direct negations of immutable rules in dialogue
                     text_lower = block.text.lower()
                     for rule in immutable_rules:
-                        if rule.lower() in text_lower and ("not" in text_lower or "never" in text_lower or "can't" in text_lower):
-                            violations.append(
-                                GuardViolation(
-                                    kind="contradiction",
-                                    block_index=global_block_index,
-                                    detail=f"dialogue may contradict immutable rule: '{rule[:50]}...'",
+                        rule_lower = rule.lower()
+                        if rule_lower in text_lower:
+                            # Remove the first rule occurrence (replaced with a
+                            # space so adjacent words can't merge into a marker)
+                            # before scanning for strong reversal markers.
+                            remainder = re.sub(re.escape(rule_lower), " ", text_lower, count=1)
+                            if any(marker in remainder for marker in _WORLD_RULE_STRONG_CONTRADICTION_MARKERS):
+                                violations.append(
+                                    GuardViolation(
+                                        kind="contradiction",
+                                        block_index=global_block_index,
+                                        detail=f"dialogue may contradict immutable rule: '{rule[:50]}...'",
+                                    )
                                 )
-                            )
+                global_block_index += 1
 
         # --- Layer 2: Bounded semantic critic ---
 
