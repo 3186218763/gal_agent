@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from './App'
-import { clearSessionId } from './storage'
+import { clearSessionId, saveSessionId } from './storage'
 import type { PresentedChoice } from './api'
 
 const PACK = {
@@ -41,6 +41,8 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+// SessionProjection shape — includes the segment replay fields and the
+// optional completion fields the current App/Playback consume.
 const SESSION_BODY = {
   session_id: 's1',
   pack_id: 'cafe_mystery',
@@ -57,7 +59,31 @@ const SESSION_BODY = {
   location_id: 'cafe',
   time_label: 'opening',
   present_character_ids: ['alice'],
+  segment_blocks: [],
+  segment_revision: null,
+  segment_choices: [],
+  segment_ending: null,
+  cleared: null,
+  completion_summaries: [],
 }
+
+const SEGMENT_BLOCKS = [
+  'event: segment_started\ndata: {"segment_id":"seg-1","expected_revision":0}',
+  'event: block\ndata: {"segment_id":"seg-1","index":0,"kind":"narration","text":"第一幕：咖啡馆。"}',
+  'event: block\ndata: {"segment_id":"seg-1","index":1,"kind":"dialogue","character_id":"alice","text":"你好。"}',
+]
+
+const CHOICES: PresentedChoice[] = [
+  { id: 'ch1', action_id: 'ask', label: '询问', intent: 'ask', target_character_id: null, preview: 'Ask Alice about the mystery' },
+  { id: 'ch2', action_id: 'observe', label: '观察', intent: 'observe', target_character_id: null, preview: null },
+]
+
+const SEGMENT_READY_DECISION = `event: segment_ready\ndata: ${JSON.stringify({
+  segment_id: 'seg-1',
+  revision: 1,
+  terminal: 'decision',
+  choices: CHOICES,
+})}`
 
 let currentSceneBlocks: string[]
 let currentChoices: PresentedChoice[] | null
@@ -67,11 +93,7 @@ let currentEnding: { ending_id: string; title: string; tone: string; terminal_st
 const fetchMock = vi.fn()
 
 beforeEach(() => {
-  currentSceneBlocks = [
-    'event: segment_started\ndata: {"segment_id":"seg-1","expected_revision":0}',
-    'event: block\ndata: {"segment_id":"seg-1","index":0,"kind":"narration","text":"第一幕：咖啡馆。"}',
-    'event: block\ndata: {"segment_id":"seg-1","index":1,"kind":"dialogue","character_id":"alice","text":"你好。"}',
-  ]
+  currentSceneBlocks = [...SEGMENT_BLOCKS]
   currentChoices = null
   currentDoneRevision = 1
   currentEnding = null
@@ -124,6 +146,14 @@ async function clickThrough(log: HTMLElement): Promise<void> {
   fireEvent.click(log) // advance to next block
 }
 
+// ── Spec 12.4 Test 1: Blocks arrive before playback starts, played in order ──
+// The plan's two Test 1 snippets are literal equivalents of the two
+// 'streaming playback' tests below, so the existing (equal) versions are kept:
+//   - 'shows start screen and starts game on click' == plan snippet 1a
+//     (first block renders only after segment_ready unlocks the buffer)
+//   - 'displays dialogue after advancing past narration' == plan snippet 1b
+//     (second block plays only after clicking past the first)
+
 describe('streaming playback', () => {
   it('shows start screen and starts game on click', async () => {
     render(<App />)
@@ -144,23 +174,6 @@ describe('streaming playback', () => {
     await clickThrough(log)
 
     expect(await screen.findByText('你好。', {}, { timeout: 3000 })).toBeInTheDocument()
-  })
-
-  it('shows choice buttons after stream delivers choices and blocks drain', async () => {
-    currentChoices = [
-      { id: 'ch1', action_id: 'ask', label: '询问', intent: 'ask' },
-    ]
-    render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
-
-    // Segment blocks must drain before choices are shown
-    const log = await screen.findByRole('button', { name: '对话框（点击继续）' }, { timeout: 3000 })
-    await screen.findByText(/第一幕/, {}, { timeout: 3000 })
-    await clickThrough(log) // block 1
-    await screen.findByText('你好。', {}, { timeout: 3000 })
-    await clickThrough(log) // block 2 — queue drains, choices surface
-
-    expect(await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 })).toBeInTheDocument()
   })
 
   it('starts a new stream after selecting a choice', async () => {
@@ -199,20 +212,27 @@ describe('streaming playback', () => {
     expect(typeof body.idempotency_key).toBe('string')
     expect(body.idempotency_key.length).toBeGreaterThan(0)
   })
-  it('shows ending screen when segment_ready has an ending', async () => {
+})
+
+// ── Spec 12.4 Test 2: Player does NOT transition on transport done alone ──
+// EOF without segment_ready is a disconnect, not a terminal state: the
+// Playback surfaces 连接中断 and App shows the error screen — no choices,
+// no ending may appear from transport done alone.
+
+describe('spec 12.4: player does not transition on transport done alone', () => {
+  it('shows the connection error when EOF arrives without segment_ready', async () => {
     fetchMock.mockReset()
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
-      if (url.includes('/packs/')) return jsonResponse(PACK)
-      if (url === '/api/v2/sessions' && method === 'POST') {
-        return jsonResponse(SESSION_BODY, 201)
-      }
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url === '/api/v2/sessions' && method === 'POST') return jsonResponse(SESSION_BODY, 201)
       if (url.endsWith('/turns') && method === 'POST') {
+        // Blocks + unknown event, then EOF — no segment_ready ever arrives.
         return sseResponse([
-          'event: segment_started\ndata: {"segment_id":"seg-1","expected_revision":0}',
-          'event: block\ndata: {"segment_id":"seg-1","index":0,"kind":"narration","text":"故事结束。"}',
-          'event: segment_ready\ndata: {"segment_id":"seg-1","revision":5,"terminal":"ending","ending":{"ending_id":"truth","title":"真相","tone":"bittersweet","terminal_state_summary":"They parted ways."}}',
+          'event: segment_started\ndata: {"segment_id":"seg-x","expected_revision":0}',
+          'event: block\ndata: {"segment_id":"seg-x","index":0,"kind":"narration","text":"Some text."}',
+          'event: generation_done\ndata: {}',
         ])
       }
       return jsonResponse({ detail: { code: 'not_found' } }, 404)
@@ -221,10 +241,278 @@ describe('streaming playback', () => {
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
-    const log = await screen.findByRole('button', { name: '对话框（点击继续）' }, { timeout: 3000 })
-    await screen.findByText(/故事结束/, {}, { timeout: 3000 })
-    await clickThrough(log) // drain the final block — ending screen shows
-    expect(await screen.findByText('真相', {}, { timeout: 3000 })).toBeInTheDocument()
-    expect(screen.getByText('END')).toBeInTheDocument()
+
+    expect(await screen.findByText('连接中断，请重试', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /询问/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('END')).not.toBeInTheDocument()
+  })
+
+  it('does not show choices when the stream ends with heartbeats but no segment_ready', async () => {
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url === '/api/v2/sessions' && method === 'POST') return jsonResponse(SESSION_BODY, 201)
+      if (url.endsWith('/turns') && method === 'POST') {
+        // Blocks + heartbeats, then EOF — still no segment_ready.
+        return sseResponse([
+          'event: segment_started\ndata: {"segment_id":"seg-x","expected_revision":0}',
+          'event: block\ndata: {"segment_id":"seg-x","index":0,"kind":"narration","text":"Some text."}',
+          'event: heartbeat\ndata: {}',
+        ])
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+
+    expect(await screen.findByText('连接中断，请重试', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /询问/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('END')).not.toBeInTheDocument()
+  })
+})
+
+// ── Spec 12.4 Test 3: Choice not displayed until local queue drains ──
+// Stronger than the removed 'shows choice buttons after stream delivers
+// choices and blocks drain' test: it also asserts the negative case (choices
+// stay hidden while blocks remain in the local queue).
+
+describe('spec 12.4: choice not displayed until local queue drains', () => {
+  it('does not show choice buttons while blocks are still being played', async () => {
+    currentChoices = CHOICES
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+
+    // segment_ready has unlocked the buffer (first block is playing) but the
+    // local queue has not drained — choices must stay hidden.
+    await screen.findByText(/第一幕/, {}, { timeout: 3000 })
+    expect(screen.queryByRole('button', { name: /询问/ })).not.toBeInTheDocument()
+
+    const log = screen.getByRole('button', { name: '对话框（点击继续）' })
+    await clickThrough(log) // block 1 → block 2
+
+    await screen.findByText('你好。', {}, { timeout: 3000 })
+    expect(screen.queryByRole('button', { name: /询问/ })).not.toBeInTheDocument()
+
+    await clickThrough(log) // block 2 — queue drains, choices surface
+    expect(await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 })).toBeInTheDocument()
+  })
+})
+
+// ── Spec 12.4 Test 4: Ending metadata waits for final-block playback ──
+// Stronger than the removed 'shows ending screen when segment_ready has an
+// ending' test: it also asserts the ending stays hidden until the queue
+// drains, even though segment_ready already delivered the ending metadata.
+
+describe('spec 12.4: ending metadata waits for final-block playback', () => {
+  it('does not show ending until all blocks are played', async () => {
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url === '/api/v2/sessions' && method === 'POST') return jsonResponse(SESSION_BODY, 201)
+      if (url.endsWith('/turns') && method === 'POST') {
+        return sseResponse([
+          'event: segment_started\ndata: {"segment_id":"seg-e","expected_revision":0}',
+          'event: block\ndata: {"segment_id":"seg-e","index":0,"kind":"narration","text":"故事终结。"}',
+          'event: block\ndata: {"segment_id":"seg-e","index":1,"kind":"narration","text":"黎明到来。"}',
+          `event: segment_ready\ndata: ${JSON.stringify({
+            segment_id: 'seg-e',
+            revision: 5,
+            terminal: 'ending',
+            ending: { ending_id: 'end-dawn', title: '黎明', tone: '希望', terminal_state_summary: '新的一天开始了。' },
+          })}`,
+        ], 20)
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+
+    // Ending metadata arrived with segment_ready, but blocks are still queued.
+    await screen.findByText(/故事终结/, {}, { timeout: 3000 })
+    expect(screen.queryByText('END')).not.toBeInTheDocument()
+    expect(screen.queryByText('黎明')).not.toBeInTheDocument()
+
+    const log = screen.getByRole('button', { name: '对话框（点击继续）' })
+    await clickThrough(log) // block 1 → block 2
+    await screen.findByText(/黎明到来/, {}, { timeout: 3000 })
+    expect(screen.queryByText('END')).not.toBeInTheDocument()
+
+    await clickThrough(log) // block 2 — queue drains, ending screen shows
+    expect(await screen.findByText('END', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByText('黎明')).toBeInTheDocument()
+  })
+})
+
+// ── Spec 12.4 Test 5: Connection failure before segment_ready leaves old revision ──
+
+describe('spec 12.4: connection failure before segment_ready', () => {
+  it('shows retry and preserves old revision when the stream fails before segment_ready', async () => {
+    fetchMock.mockReset()
+    let lastTurnRevision: number | null = null
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url === '/api/v2/sessions' && method === 'POST') return jsonResponse(SESSION_BODY, 201)
+      if (url.endsWith('/turns') && method === 'POST') {
+        const body = JSON.parse((init?.body as string) ?? '{}')
+        lastTurnRevision = body.expected_revision
+        throw new TypeError('Failed to fetch')
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+
+    expect(await screen.findByText('网络错误，请重试', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /询问/ })).not.toBeInTheDocument()
+
+    // The failed turn used the old revision (0), not an incremented one.
+    expect(lastTurnRevision).toBe(0)
+  })
+
+  it('discards provisional blocks on an error event before segment_ready', async () => {
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url === '/api/v2/sessions' && method === 'POST') return jsonResponse(SESSION_BODY, 201)
+      if (url.endsWith('/turns') && method === 'POST') {
+        return sseResponse([
+          'event: segment_started\ndata: {"segment_id":"seg-f","expected_revision":0}',
+          'event: block\ndata: {"segment_id":"seg-f","index":0,"kind":"narration","text":"Provisional text that should be discarded."}',
+          'event: error\ndata: {"code":"generation_failed"}',
+        ])
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+
+    expect(await screen.findByText('生成失败，请重试', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByText(/Provisional text/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /询问/ })).not.toBeInTheDocument()
+  })
+})
+
+// ── Spec 12.4 Test 6: Replay after refresh does not issue duplicate turn ──
+// A stored-session projection with committed segment_blocks/segment_choices
+// must replay entirely from the projection — zero POST /turns calls.
+
+describe('spec 12.4: replay after refresh does not duplicate turn', () => {
+  it('replays committed blocks from the projection without calling /turns', async () => {
+    const storedSession = {
+      ...SESSION_BODY,
+      revision: 1,
+      scene_count: 1,
+      segment_blocks: [
+        { kind: 'narration', text: '已提交的旁白。' },
+        { kind: 'dialogue', character_id: 'alice', text: '已提交的台词。' },
+      ],
+      segment_revision: 1,
+      segment_choices: [],
+      segment_ending: null,
+      choices: [
+        { id: 'ch1', action_id: 'ask', label: '询问', intent: 'ask' },
+      ],
+    }
+
+    let turnsCallCount = 0
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url.match(/\/sessions\/[^/]+$/) && method === 'GET') {
+        return jsonResponse(storedSession)
+      }
+      if (url.endsWith('/turns') && method === 'POST') {
+        turnsCallCount++
+        return sseResponse([...SEGMENT_BLOCKS, SEGMENT_READY_DECISION])
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    saveSessionId('s1')
+    render(<App />)
+
+    // Replay shows committed block text from the projection…
+    expect(await screen.findByText(/已提交的旁白/, {}, { timeout: 3000 })).toBeInTheDocument()
+
+    // …and never issues a duplicate turn.
+    await waitFor(() => {
+      expect(turnsCallCount).toBe(0)
+    }, { timeout: 2000 })
+
+    // Draining the replayed blocks surfaces the stored choices — still no /turns.
+    const log = screen.getByRole('button', { name: '对话框（点击继续）' })
+    await clickThrough(log) // block 1
+    await screen.findByText(/已提交的台词/, {}, { timeout: 3000 })
+    await clickThrough(log) // block 2 — queue drains, choices surface
+    expect(await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 })).toBeInTheDocument()
+    expect(turnsCallCount).toBe(0)
+  })
+})
+
+// ── Spec 12.4 Test 7: No client request between internal scenes ──
+// A single turn with 2 blocks + segment_ready(decision) must result in
+// exactly one POST /turns call total after the queue drains.
+
+describe('spec 12.4: no client request between internal scenes', () => {
+  it('does not issue additional requests while playing a multi-block segment', async () => {
+    let turnsCallCount = 0
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url === '/api/v2/sessions' && method === 'POST') return jsonResponse(SESSION_BODY, 201)
+      if (url.endsWith('/turns') && method === 'POST') {
+        turnsCallCount++
+        return sseResponse([
+          'event: segment_started\ndata: {"segment_id":"seg-m","expected_revision":0}',
+          'event: block\ndata: {"segment_id":"seg-m","index":0,"kind":"narration","text":"场景一。"}',
+          'event: block\ndata: {"segment_id":"seg-m","index":1,"kind":"dialogue","character_id":"alice","text":"台词一。"}',
+          `event: segment_ready\ndata: ${JSON.stringify({
+            segment_id: 'seg-m',
+            revision: 1,
+            terminal: 'decision',
+            choices: [CHOICES[0]],
+          })}`,
+        ], 20)
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+
+    // Play the whole segment (2 blocks) without any intermediate requests.
+    await screen.findByText(/场景一/, {}, { timeout: 3000 })
+    const log = screen.getByRole('button', { name: '对话框（点击继续）' })
+    await clickThrough(log) // block 1
+    await screen.findByText(/台词一/, {}, { timeout: 3000 })
+    await clickThrough(log) // block 2 — queue drains, choices surface
+
+    expect(await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 })).toBeInTheDocument()
+
+    // One turn covered both internal scenes — no extra requests.
+    expect(turnsCallCount).toBe(1)
   })
 })
