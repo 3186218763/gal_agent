@@ -10,7 +10,7 @@ from openai import AsyncOpenAI
 
 from src.story.runtime.contracts import ModelContractError
 from src.story.runtime.stream_parser import BlockStreamParser
-from src.story.script_pack.models import CompiledScriptPack
+from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
 from src.story.state import SessionState
 
 STREAMING_WRITER_INSTRUCTIONS = """\
@@ -36,8 +36,13 @@ Rules:
 def _build_scene_prompt(pack: CompiledScriptPack, state: SessionState) -> str:
     """Build the user-input JSON for the streaming model call."""
     source = pack.source
+    locations = (
+        source.world_setting.locations
+        if isinstance(source, ScriptPackSourceV2)
+        else source.world.locations
+    )
     location_name = next(
-        (loc.name for loc in source.world.locations if loc.id == state.world.location_id),
+        (loc.name for loc in locations if loc.id == state.world.location_id),
         state.world.location_id,
     )
     characters = []
@@ -64,7 +69,11 @@ def _build_scene_prompt(pack: CompiledScriptPack, state: SessionState) -> str:
         "scene_number": state.world.scene_count + 1,
         "phase": state.world.phase.value,
         "location": {"id": state.world.location_id, "name": location_name},
-        "premise": source.world.premise,
+        "premise": (
+            source.world_setting.premise
+            if isinstance(source, ScriptPackSourceV2)
+            else source.world.premise
+        ),
         "prose_style": source.experience.prose_style,
         "tone": source.experience.tone,
         "forbidden_content": source.experience.forbidden_content,

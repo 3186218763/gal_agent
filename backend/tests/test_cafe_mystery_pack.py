@@ -11,8 +11,11 @@ def test_cafe_mystery_pack_compiles_without_fixed_plot():
 
     assert compiled.source.identity.id == "cafe_mystery"
     assert len(compiled.source.characters) == 3
-    assert len([ending for ending in compiled.source.endings if ending.type != "fallback"]) >= 3
-    assert any(ending.type == "fallback" for ending in compiled.source.endings)
+    assert compiled.completion_requirement_ids == frozenset({
+        "core_truth_understood", "trust_built", "irreversible_choice",
+    })
+    assert compiled.source.schema_version == "2.0"
+    assert compiled.ending_ids == frozenset()  # v2.0 has no endings
     assert len(compiled.source.facts.latent_questions) >= 2
     assert "plot" not in dumped
     assert "beats" not in dumped

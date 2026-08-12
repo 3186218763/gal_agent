@@ -16,7 +16,12 @@ from src.story.conditions import (
     ConditionSyntaxError,
     compile_condition,
 )
-from src.story.script_pack.models import CompiledScriptPack, ScriptPackSource
+from src.story.script_pack.models import (
+    CompiledScriptPack,
+    ScriptPackSource,
+    ScriptPackSourceV1,
+    ScriptPackSourceV2,
+)
 
 STANDARD_ACTION_IDS = frozenset(
     {
@@ -41,6 +46,10 @@ _INCLUDE_KEYS = frozenset(
         "interaction_rules",
         "endings",
         "assets",
+        "world_setting",
+        "story_history",
+        "opening_state",
+        "completion_requirements",
     }
 )
 
@@ -124,7 +133,7 @@ def _duplicate_ids(label: str, values: Iterable[str]) -> list[str]:
     ]
 
 
-def _condition_entries(source: ScriptPackSource) -> Iterable[tuple[str, str]]:
+def _v1_condition_entries(source: ScriptPackSourceV1) -> Iterable[tuple[str, str]]:
     for fact in source.facts.derived:
         yield f"fact.{fact.id}.derived", fact.condition
     for question in source.facts.latent_questions:
@@ -171,12 +180,12 @@ def _condition_reference_errors(
     return errors
 
 
-def _compile_programs(
-    source: ScriptPackSource,
+def _compile_programs_from(
+    entries: Iterable[tuple[str, str]],
 ) -> tuple[dict[str, ConditionProgram], list[str]]:
     programs: dict[str, ConditionProgram] = {}
     errors: list[str] = []
-    for key, expression in _condition_entries(source):
+    for key, expression in entries:
         try:
             programs[key] = compile_condition(expression)
         except ConditionSyntaxError as exc:
@@ -184,31 +193,22 @@ def _compile_programs(
     return programs, errors
 
 
-def _reference_errors(
-    source: ScriptPackSource,
+def _shared_reference_errors(
+    source: ScriptPackSourceV1 | ScriptPackSourceV2,
     character_ids: set[str],
     fixed_ids: set[str],
     fact_ids: set[str],
     goal_ids: set[str],
     action_ids: set[str],
 ) -> list[str]:
-    errors: list[str] = []
-    location_ids = {item.id for item in source.world.locations}
-    fixed_known_by = {item.id: set(item.known_by) for item in source.facts.fixed}
+    """Version-independent structural reference validations.
 
-    if source.world.initial_situation.location not in location_ids:
-        errors.append(
-            "initial_situation references unknown location "
-            f"{source.world.initial_situation.location}"
-        )
-    for character_id in source.world.initial_situation.present_characters:
-        if character_id not in character_ids:
-            errors.append(f"initial_situation references unknown character {character_id}")
-    for fact_id in source.world.initial_situation.known_facts:
-        if fact_id not in fact_ids:
-            errors.append(f"initial_situation references unknown fact {fact_id}")
-        elif fact_id not in fixed_ids:
-            errors.append(f"opening known fact must be fixed: {fact_id}")
+    These checks (known_by, knowledge, secrets, capabilities, goal owner,
+    goal conflicts, latent candidate duplicates) are equally meaningful for
+    v1.0 and v2.0 packs and must run in both code paths.
+    """
+    errors: list[str] = []
+    fixed_known_by = {item.id: set(item.known_by) for item in source.facts.fixed}
 
     for fact in source.facts.fixed:
         for character_id in fact.known_by:
@@ -258,8 +258,41 @@ def _reference_errors(
     return errors
 
 
+def _reference_errors(
+    source: ScriptPackSourceV1,
+    character_ids: set[str],
+    fixed_ids: set[str],
+    fact_ids: set[str],
+    goal_ids: set[str],
+    action_ids: set[str],
+) -> list[str]:
+    errors: list[str] = []
+    location_ids = {item.id for item in source.world.locations}
+
+    if source.world.initial_situation.location not in location_ids:
+        errors.append(
+            "initial_situation references unknown location "
+            f"{source.world.initial_situation.location}"
+        )
+    for character_id in source.world.initial_situation.present_characters:
+        if character_id not in character_ids:
+            errors.append(f"initial_situation references unknown character {character_id}")
+    for fact_id in source.world.initial_situation.known_facts:
+        if fact_id not in fact_ids:
+            errors.append(f"initial_situation references unknown fact {fact_id}")
+        elif fact_id not in fixed_ids:
+            errors.append(f"opening known fact must be fixed: {fact_id}")
+
+    errors.extend(
+        _shared_reference_errors(
+            source, character_ids, fixed_ids, fact_ids, goal_ids, action_ids
+        )
+    )
+    return errors
+
+
 def _has_guaranteed_fallback(
-    source: ScriptPackSource,
+    source: ScriptPackSourceV1,
     programs: Mapping[str, ConditionProgram],
 ) -> bool:
     context = {"session": {"scene_count": source.experience.max_scenes}}
@@ -284,11 +317,106 @@ def _has_guaranteed_fallback(
     return False
 
 
-def compile_source(raw: Mapping[str, Any] | ScriptPackSource) -> CompiledScriptPack:
-    try:
-        source = raw if isinstance(raw, ScriptPackSource) else ScriptPackSource.model_validate(raw)
-    except ValidationError as exc:
-        raise PackCompileError(str(exc)) from exc
+# ---------------------------------------------------------------------------
+# v2.0 helpers
+# ---------------------------------------------------------------------------
+
+
+def _v2_reference_errors(
+    source: ScriptPackSourceV2,
+    character_ids: set[str],
+    fixed_ids: set[str],
+    fact_ids: set[str],
+    goal_ids: set[str],
+) -> list[str]:
+    """Validate references specific to v2.0 packs."""
+    errors: list[str] = []
+    location_ids = {item.id for item in source.world_setting.locations}
+
+    # opening_state.location must be a known location
+    if source.opening_state.location not in location_ids:
+        errors.append(
+            f"opening_state references unknown location {source.opening_state.location}"
+        )
+
+    # opening_state.present_characters must be known characters
+    for character_id in source.opening_state.present_characters:
+        if character_id not in character_ids:
+            errors.append(f"opening_state references unknown character {character_id}")
+
+    # opening_state.known_facts must be fixed facts
+    for fact_id in source.opening_state.known_facts:
+        if fact_id not in fact_ids:
+            errors.append(f"opening_state references unknown fact {fact_id}")
+        elif fact_id not in fixed_ids:
+            errors.append(f"opening known fact must be fixed: {fact_id}")
+
+    # completion_requirement evidence hint references
+    for req in source.completion_requirements:
+        for fact_id in req.evidence_hints.fact_ids:
+            if fact_id not in fact_ids:
+                errors.append(
+                    f"completion_requirement {req.id} evidence_hints references unknown fact {fact_id}"
+                )
+        for goal_id in req.evidence_hints.goal_ids:
+            if goal_id not in goal_ids:
+                errors.append(
+                    f"completion_requirement {req.id} evidence_hints references unknown goal {goal_id}"
+                )
+
+    return errors
+
+
+def _v2_condition_entries(source: ScriptPackSourceV2) -> Iterable[tuple[str, str]]:
+    """Yield condition key/expression pairs for v2.0 packs (no ending conditions)."""
+    for fact in source.facts.derived:
+        yield f"fact.{fact.id}.derived", fact.condition
+    for question in source.facts.latent_questions:
+        for candidate in question.candidates:
+            for index, expression in enumerate(candidate.requirements):
+                yield (
+                    f"fact.{question.id}.candidate.{candidate.value}.requirement.{index}",
+                    expression,
+                )
+    for goal in source.goals:
+        yield f"goal.{goal.id}.success", goal.success_condition
+        yield f"goal.{goal.id}.failure", goal.failure_condition
+    for action in source.interaction_rules.extensions:
+        for index, expression in enumerate(action.preconditions):
+            yield f"action.{action.id}.precondition.{index}", expression
+
+
+def _pack_locations(source: ScriptPackSourceV1 | ScriptPackSourceV2):
+    if isinstance(source, ScriptPackSourceV2):
+        return source.world_setting.locations
+    return source.world.locations
+
+
+def _pack_factions(source: ScriptPackSourceV1 | ScriptPackSourceV2):
+    if isinstance(source, ScriptPackSourceV2):
+        return source.world_setting.factions
+    return source.world.factions
+
+
+def compile_source(
+    raw: Mapping[str, Any] | ScriptPackSource,
+) -> CompiledScriptPack:
+    if isinstance(raw, ScriptPackSource):
+        source = raw
+    else:
+        version = raw.get("schema_version", "1.0")
+        if version not in ("1.0", "2.0"):
+            raise PackCompileError(
+                f"Unknown schema_version: {version!r} (supported: '1.0', '2.0')"
+            )
+        try:
+            source = (
+                ScriptPackSourceV1.model_validate(raw)
+                if version == "1.0"
+                else ScriptPackSourceV2.model_validate(raw)
+            )
+        except ValidationError as exc:
+            raise PackCompileError(str(exc)) from exc
 
     character_ids = {item.id for item in source.characters}
     fixed_ids = {item.id for item in source.facts.fixed}
@@ -296,12 +424,6 @@ def compile_source(raw: Mapping[str, Any] | ScriptPackSource) -> CompiledScriptP
     derived_ids = {item.id for item in source.facts.derived}
     fact_ids = fixed_ids | latent_ids | derived_ids
     goal_ids = {item.id for item in source.goals}
-    ending_ids = {item.id for item in source.endings}
-    fact_id_values = [
-        *(item.id for item in source.facts.fixed),
-        *(item.id for item in source.facts.latent_questions),
-        *(item.id for item in source.facts.derived),
-    ]
     extension_id_values = [item.id for item in source.interaction_rules.extensions]
     extension_ids = set(extension_id_values)
     action_ids = (
@@ -310,11 +432,15 @@ def compile_source(raw: Mapping[str, Any] | ScriptPackSource) -> CompiledScriptP
 
     errors: list[str] = []
     errors.extend(_duplicate_ids("character", (item.id for item in source.characters)))
+    fact_id_values = [
+        *(item.id for item in source.facts.fixed),
+        *(item.id for item in source.facts.latent_questions),
+        *(item.id for item in source.facts.derived),
+    ]
     errors.extend(_duplicate_ids("fact", fact_id_values))
     errors.extend(_duplicate_ids("goal", (item.id for item in source.goals)))
-    errors.extend(_duplicate_ids("ending", (item.id for item in source.endings)))
-    errors.extend(_duplicate_ids("location", (item.id for item in source.world.locations)))
-    errors.extend(_duplicate_ids("faction", (item.id for item in source.world.factions)))
+    errors.extend(_duplicate_ids("location", (item.id for item in _pack_locations(source))))
+    errors.extend(_duplicate_ids("faction", (item.id for item in _pack_factions(source))))
     errors.extend(_duplicate_ids("action", extension_id_values))
     if source.protagonist.id in character_ids:
         errors.append(f"protagonist id collides with character id: {source.protagonist.id}")
@@ -330,28 +456,55 @@ def compile_source(raw: Mapping[str, Any] | ScriptPackSource) -> CompiledScriptP
     )
     errors.extend(f"unknown disabled action: {item}" for item in sorted(unknown_disabled))
 
-    normal_endings = [item for item in source.endings if item.type != "fallback"]
-    fallback_endings = [item for item in source.endings if item.type == "fallback"]
-    if len(normal_endings) < 3:
-        errors.append("script pack requires at least 3 normal endings")
-    if not fallback_endings:
-        errors.append("script pack requires at least 1 fallback ending")
+    # --- Schema-version-specific validation ---
+    is_v2 = isinstance(source, ScriptPackSourceV2)
 
-    errors.extend(
-        _reference_errors(
-            source,
-            character_ids,
-            fixed_ids,
-            fact_ids,
-            goal_ids,
-            action_ids,
+    if is_v2:
+        errors.extend(
+            _duplicate_ids(
+                "completion_requirement",
+                (req.id for req in source.completion_requirements),
+            )
         )
-    )
+        errors.extend(
+            _v2_reference_errors(source, character_ids, fixed_ids, fact_ids, goal_ids)
+        )
+        errors.extend(
+            _shared_reference_errors(
+                source, character_ids, fixed_ids, fact_ids, goal_ids, action_ids
+            )
+        )
+        programs, condition_errors = _compile_programs_from(_v2_condition_entries(source))
+        ending_ids: set[str] = set()
+        completion_requirement_ids = {req.id for req in source.completion_requirements}
+    else:
+        # v1.0 path
+        errors.extend(_duplicate_ids("ending", (item.id for item in source.endings)))
+        normal_endings = [item for item in source.endings if item.type != "fallback"]
+        fallback_endings = [item for item in source.endings if item.type == "fallback"]
+        if len(normal_endings) < 3:
+            errors.append("script pack requires at least 3 normal endings")
+        if not fallback_endings:
+            errors.append("script pack requires at least 1 fallback ending")
 
-    programs, condition_errors = _compile_programs(source)
+        errors.extend(
+            _reference_errors(
+                source,
+                character_ids,
+                fixed_ids,
+                fact_ids,
+                goal_ids,
+                action_ids,
+            )
+        )
+        programs, condition_errors = _compile_programs_from(_v1_condition_entries(source))
+        ending_ids = {item.id for item in source.endings}
+        completion_requirement_ids: set[str] = set()
+
     errors.extend(condition_errors)
     errors.extend(_condition_reference_errors(programs, character_ids, fact_ids, goal_ids))
-    if not condition_errors and not _has_guaranteed_fallback(source, programs):
+
+    if not is_v2 and not condition_errors and not _has_guaranteed_fallback(source, programs):
         errors.append(
             "script pack requires a guaranteed fallback that is true at "
             "max_scenes and depends only on session.scene_count"
@@ -375,6 +528,7 @@ def compile_source(raw: Mapping[str, Any] | ScriptPackSource) -> CompiledScriptP
         fact_ids=frozenset(fact_ids),
         goal_ids=frozenset(goal_ids),
         ending_ids=frozenset(ending_ids),
+        completion_requirement_ids=frozenset(completion_requirement_ids),
         action_ids=frozenset(action_ids),
     )
 

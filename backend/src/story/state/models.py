@@ -6,7 +6,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.story.script_pack.models import CompiledScriptPack
+from src.story.script_pack.models import (
+    CompiledScriptPack,
+    ScriptPackSourceV1,
+    ScriptPackSourceV2,
+)
 
 
 def utc_now() -> datetime:
@@ -188,7 +192,16 @@ def initial_session_state(
     session_seed: int,
 ) -> SessionState:
     source = pack.source
-    initial_known = set(source.world.initial_situation.known_facts)
+
+    # Read opening state from v1.0 (world.initial_situation) or v2.0 (opening_state)
+    if isinstance(source, ScriptPackSourceV2):
+        opening = source.opening_state
+        initial_known = set(opening.known_facts)
+    else:
+        assert isinstance(source, ScriptPackSourceV1)
+        opening_situation = source.world.initial_situation
+        initial_known = set(opening_situation.known_facts)
+        opening = opening_situation  # v1.0 InitialSituationSource has compatible fields
 
     facts: dict[str, FactRecord] = {}
     for fact in source.facts.fixed:
@@ -224,16 +237,23 @@ def initial_session_state(
             beliefs={key: BeliefRecord(value=value) for key, value in character.beliefs.items()},
         )
 
+    # Starting pressure: v2.0 has opening_state.starting_pressure; v1.0 defaults to 0.1
+    if isinstance(source, ScriptPackSourceV2):
+        starting_pressure = source.opening_state.starting_pressure
+    else:
+        starting_pressure = 0.1
+
     world = WorldSnapshot(
-        location_id=source.world.initial_situation.location,
-        time_label=source.world.initial_situation.time_label,
-        present_character_ids=source.world.initial_situation.present_characters,
+        location_id=opening.location,
+        time_label=opening.time_label,
+        present_character_ids=opening.present_characters,
         relationships={
             character.id: dict(character.initial_relationship) for character in source.characters
         },
         goals={goal.id: GoalRuntime(goal_id=goal.id) for goal in source.goals},
         max_scenes=source.experience.max_scenes,
         reserved_resolution_scenes=source.experience.reserved_resolution_scenes,
+        pressure=starting_pressure,
     )
 
     return SessionState(

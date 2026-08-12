@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 from src.story.runtime.context import build_condition_context
 from src.story.runtime.contracts import ActionResolution, SceneDraft, ScenePlan
-from src.story.script_pack.models import CompiledScriptPack
+from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
 from src.story.state import FactTruthStatus, FactVisibility, SessionState
 
 
@@ -52,7 +52,14 @@ def _validate_fact_commits(pack, state, commits) -> list[str]:
 
 def validate_scene_plan(pack: CompiledScriptPack, state: SessionState, plan: ScenePlan) -> ScenePlan:
     errors: list[str] = []
-    location_ids = {item.id for item in pack.source.world.locations}
+    location_ids = {
+        item.id
+        for item in (
+            pack.source.world_setting.locations
+            if isinstance(pack.source, ScriptPackSourceV2)
+            else pack.source.world.locations
+        )
+    }
     if plan.location_id not in location_ids:
         errors.append(f"unknown location: {plan.location_id}")
     errors.extend(

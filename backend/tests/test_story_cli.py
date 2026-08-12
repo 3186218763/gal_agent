@@ -11,8 +11,7 @@ def test_validate_command_prints_compiled_summary(capsys):
     output = json.loads(capsys.readouterr().out)
     assert output["pack_id"] == "cafe_mystery"
     assert len(output["pack_hash"]) == 64
-    assert output["normal_endings"] >= 3
-    assert output["fallback_endings"] >= 1
+    assert output["completion_requirements"] >= 2
 
 
 def test_init_and_inspect_session(tmp_path: Path, capsys):

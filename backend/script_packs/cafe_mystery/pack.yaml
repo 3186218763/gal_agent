@@ -1,4 +1,4 @@
-schema_version: "1.0"
+schema_version: "2.0"
 
 identity:
   id: cafe_mystery
@@ -35,7 +35,7 @@ protagonist:
       - "凭空掌握尚未发现的秘密"
       - "无理由羞辱陌生人"
 
-world:
+world_setting:
   premise: >
     玩家在街角咖啡馆遇到寻找遗失笔记本的艾丽丝。笔记本记录了一个神秘组织的
     符号和活动线索。谨慎的鲍勃很快介入，咖啡馆店长美奈似乎也知道一些事情。
@@ -57,11 +57,36 @@ world:
     - id: veiled_circle
       name: "隐环"
       description: "活动目的不明、成员身份隐秘的组织。"
-  initial_situation:
-    location: cafe
-    present_characters: [alice]
-    known_facts: [cafe_is_open]
-    time_label: "周六下午"
+  forbidden_content:
+    - "露骨色情内容"
+    - "无铺垫的极端暴力"
+  fact_rules:
+    - "隐环的存在只能通过证据链确认，不能通过角色直觉直接断言。"
+    - "笔记本持有者身份只能通过 latent_question 提交机制确定。"
+
+story_history:
+  summary: >
+    艾丽丝是一名调查隐环组织的大学生。她将自己的调查笔记记录在一本笔记本中。
+    某天她带着笔记本来到街角咖啡馆时，笔记本失踪了。鲍勃是曾经因隐环遭受损失的研究生，
+    他隐约注意到咖啡馆中发生了不寻常的事情。美奈是咖啡馆店长，对附近的常客了如指掌。
+  events:
+    - summary: "艾丽丝开始调查隐环组织并记录发现。"
+      participants: [alice]
+    - summary: "鲍勃过去曾因隐环遭受损失，对此保持警惕。"
+      participants: [bob]
+      remembered_differently_by:
+        alice: "她认为鲍勃只是过度谨慎。"
+    - summary: "艾丽丝带笔记本到咖啡馆，随后笔记本失踪。"
+      participants: [alice, mina]
+    - summary: "鲍勃注意到咖啡馆中有不寻常的动静。"
+      participants: [bob]
+
+opening_state:
+  location: cafe
+  present_characters: [alice]
+  known_facts: [cafe_is_open]
+  time_label: "周六下午"
+  starting_pressure: 0.15
 
 characters:
   - id: alice
@@ -206,89 +231,24 @@ goals:
     success_condition: "facts.notebook_holder.visibility == 'revealed'"
     failure_condition: "session.scene_count >= 57 and facts.notebook_holder.visibility != 'revealed'"
 
+completion_requirements:
+  - id: core_truth_understood
+    description: "玩家必须理解导致笔记本失踪的核心原因，并知道笔记本持有者的真实身份。"
+    evidence_hints:
+      fact_ids: [notebook_holder, core_truth_known]
+      goal_ids: [protagonist_learn_truth]
+  - id: trust_built
+    description: "玩家必须至少与一名主要角色建立可信赖的关系，使其愿意在结局时与玩家合作。"
+    evidence_hints:
+      fact_ids: [alice_trusts_player, bob_trusts_player]
+      goal_ids: [alice_find_ally, bob_limit_exposure]
+  - id: irreversible_choice
+    description: "玩家必须在继续调查或保护相关人物之间作出不可逆的选择。"
+    evidence_hints: {}
+
 interaction_rules:
   enabled_standard: [ask, observe, support, challenge, withhold, disclose, follow, leave]
   disabled: []
   extensions: []
-
-endings:
-  - id: alice_alliance
-    title: "共同追寻"
-    type: hopeful
-    priority: 100
-    eligibility:
-      all:
-        - "goals.alice_find_ally.completed"
-        - "relationships.alice.trust >= 70"
-        - "facts.notebook_holder.truth_status == 'committed'"
-      any: []
-      none: []
-    required_outcomes:
-      - "玩家与艾丽丝决定继续合作。"
-      - "本局已经出现的笔记本证据得到解释。"
-    forbidden_outcomes: ["无依据地将艾丽丝写成隐环首领。"]
-    closing_tone: "温暖，但保留对隐环的未知风险"
-
-  - id: bob_alliance
-    title: "谨慎的同盟"
-    type: hopeful
-    priority: 90
-    eligibility:
-      all:
-        - "goals.bob_limit_exposure.completed"
-        - "relationships.bob.trust >= 65"
-      any: []
-      none: []
-    required_outcomes:
-      - "鲍勃承认玩家有资格继续调查。"
-      - "说明艾丽丝对这一选择的反应。"
-    forbidden_outcomes: ["鲍勃突然放弃对证据的重视。"]
-    closing_tone: "克制、可靠"
-
-  - id: independent_truth
-    title: "自己的答案"
-    type: neutral
-    priority: 80
-    eligibility:
-      all:
-        - "goals.protagonist_learn_truth.completed"
-        - "facts.notebook_holder.visibility == 'revealed'"
-      any: []
-      none:
-        - "relationships.alice.trust >= 70"
-        - "relationships.bob.trust >= 65"
-    required_outcomes:
-      - "玩家独立判断笔记本真相。"
-      - "回应艾丽丝、鲍勃和美奈的立场。"
-    forbidden_outcomes: ["把未提交的潜在事实当成真相。"]
-    closing_tone: "清醒、略带遗憾"
-
-  - id: trust_broken
-    title: "无法挽回的距离"
-    type: tragic
-    priority: 70
-    eligibility:
-      all:
-        - "relationships.alice.trust <= 10"
-        - "relationships.bob.trust <= 10"
-      any: []
-      none: []
-    required_outcomes: ["说明哪些玩家选择导致双方都失去信任。"]
-    forbidden_outcomes: ["无铺垫地让所有关系恢复。"]
-    closing_tone: "冷静、苦涩"
-
-  - id: closing_time
-    title: "未竟的傍晚"
-    type: fallback
-    priority: 1
-    eligibility:
-      all: ["session.scene_count >= 57"]
-      any: []
-      none: []
-    required_outcomes:
-      - "关闭当前冲突，不新增核心谜团。"
-      - "明确故事暂时停在什么状态。"
-    forbidden_outcomes: ["凭空宣布一个未提交的幕后真相。"]
-    closing_tone: "安静、留有余韵"
 
 assets: {}

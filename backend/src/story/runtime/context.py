@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.story.script_pack.models import CompiledScriptPack, EndingSource
+from src.story.script_pack.models import (
+    CompiledScriptPack,
+    EndingSource,
+    ScriptPackSourceV2,
+)
 from src.story.state import FactTruthStatus, FactVisibility, SessionState
 
 from .contracts import ScenePlan
@@ -117,6 +121,7 @@ def build_planner_context(pack: CompiledScriptPack, state: SessionState) -> dict
                 },
             }
         )
+    world = source.world_setting if isinstance(source, ScriptPackSourceV2) else source.world
     return {
         "pack": {
             "id": source.identity.id,
@@ -124,8 +129,8 @@ def build_planner_context(pack: CompiledScriptPack, state: SessionState) -> dict
             "viewpoint": source.experience.viewpoint,
             "prose_style": source.experience.prose_style,
             "tone": source.experience.tone,
-            "premise": source.world.premise,
-            "immutable_rules": source.world.immutable_rules,
+            "premise": world.premise,
+            "immutable_rules": world.immutable_rules,
             "forbidden_content": source.experience.forbidden_content,
         },
         "state": build_condition_context(state),
