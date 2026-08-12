@@ -62,16 +62,19 @@ const SESSION_BODY = {
 let currentSceneBlocks: string[]
 let currentChoices: PresentedChoice[] | null
 let currentDoneRevision: number
+let currentEnding: { ending_id: string; title: string; tone: string; terminal_state_summary: string } | null
 
 const fetchMock = vi.fn()
 
 beforeEach(() => {
   currentSceneBlocks = [
-    'event: block\ndata: {"kind":"narration","text":"第一幕：咖啡馆。"}',
-    'event: block\ndata: {"kind":"dialogue","character_id":"alice","text":"你好。"}',
+    'event: segment_started\ndata: {"segment_id":"seg-1","expected_revision":0}',
+    'event: block\ndata: {"segment_id":"seg-1","index":0,"kind":"narration","text":"第一幕：咖啡馆。"}',
+    'event: block\ndata: {"segment_id":"seg-1","index":1,"kind":"dialogue","character_id":"alice","text":"你好。"}',
   ]
   currentChoices = null
   currentDoneRevision = 1
+  currentEnding = null
   fetchMock.mockReset()
   fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
@@ -84,12 +87,15 @@ beforeEach(() => {
     if (url.match(/\/sessions\/[^/]+$/) && method === 'GET') {
       return jsonResponse({ ...SESSION_BODY, revision: 1, scene_count: 1 })
     }
-    if (url.endsWith('/advance') && method === 'POST') {
+    if (url.endsWith('/turns') && method === 'POST') {
       const events = [...currentSceneBlocks]
-      if (currentChoices) {
-        events.push(`event: choices\ndata: ${JSON.stringify(currentChoices)}`)
-      }
-      events.push(`event: done\ndata: ${JSON.stringify({ session_id: 's1', revision: currentDoneRevision })}`)
+      events.push(`event: segment_ready\ndata: ${JSON.stringify({
+        segment_id: 'seg-1',
+        revision: currentDoneRevision,
+        terminal: currentEnding ? 'ending' : 'decision',
+        choices: currentChoices,
+        ending: currentEnding,
+      })}`)
       return sseResponse(events)
     }
     if (url.includes('/choices/') && method === 'POST') {
@@ -112,6 +118,12 @@ afterEach(() => {
   clearSessionId()
 })
 
+/** Click through the current block (skip typewriter, then advance). */
+async function clickThrough(log: HTMLElement): Promise<void> {
+  fireEvent.click(log) // skip typewriter
+  fireEvent.click(log) // advance to next block
+}
+
 describe('streaming playback', () => {
   it('shows start screen and starts game on click', async () => {
     render(<App />)
@@ -129,18 +141,25 @@ describe('streaming playback', () => {
 
     // Click playback to advance past block 1 (skip typewriter + advance)
     const log = screen.getByRole('button', { name: '对话框（点击继续）' })
-    fireEvent.click(log) // skip typewriter
-    fireEvent.click(log) // advance to next block
+    await clickThrough(log)
 
     expect(await screen.findByText('你好。', {}, { timeout: 3000 })).toBeInTheDocument()
   })
 
-  it('shows choice buttons after stream delivers choices', async () => {
+  it('shows choice buttons after stream delivers choices and blocks drain', async () => {
     currentChoices = [
       { id: 'ch1', action_id: 'ask', label: '询问', intent: 'ask' },
     ]
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+
+    // Segment blocks must drain before choices are shown
+    const log = await screen.findByRole('button', { name: '对话框（点击继续）' }, { timeout: 3000 })
+    await screen.findByText(/第一幕/, {}, { timeout: 3000 })
+    await clickThrough(log) // block 1
+    await screen.findByText('你好。', {}, { timeout: 3000 })
+    await clickThrough(log) // block 2 — queue drains, choices surface
+
     expect(await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 })).toBeInTheDocument()
   })
 
@@ -151,17 +170,27 @@ describe('streaming playback', () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
 
-    // Wait for choices and click
+    // Wait for choices (drain the opening segment first) and click
+    const log = await screen.findByRole('button', { name: '对话框（点击继续）' }, { timeout: 3000 })
+    await screen.findByText(/第一幕/, {}, { timeout: 3000 })
+    await clickThrough(log) // block 1
+    await screen.findByText('你好。', {}, { timeout: 3000 })
+    await clickThrough(log) // block 2 — queue drains, choices surface
     const choiceBtn = await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 })
     fireEvent.click(choiceBtn)
 
     // After choice, a new stream starts and eventually delivers choices again
+    const log2 = await screen.findByRole('button', { name: '对话框（点击继续）' }, { timeout: 3000 })
+    await screen.findByText(/第一幕/, {}, { timeout: 3000 })
+    await clickThrough(log2) // block 1
+    await screen.findByText('你好。', {}, { timeout: 3000 })
+    await clickThrough(log2) // block 2 — queue drains, choices surface
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /A 询问/ })).toBeInTheDocument()
     }, { timeout: 5000 })
   })
 
-  it('shows ending screen when done event has ending_id', async () => {
+  it('shows ending screen when segment_ready has an ending', async () => {
     fetchMock.mockReset()
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -170,10 +199,11 @@ describe('streaming playback', () => {
       if (url === '/api/v2/sessions' && method === 'POST') {
         return jsonResponse(SESSION_BODY, 201)
       }
-      if (url.endsWith('/advance') && method === 'POST') {
+      if (url.endsWith('/turns') && method === 'POST') {
         return sseResponse([
-          'event: block\ndata: {"kind":"narration","text":"故事结束。"}',
-          'event: done\ndata: {"session_id":"s1","revision":5,"ending_id":"truth","ending_title":"真相"}',
+          'event: segment_started\ndata: {"segment_id":"seg-1","expected_revision":0}',
+          'event: block\ndata: {"segment_id":"seg-1","index":0,"kind":"narration","text":"故事结束。"}',
+          'event: segment_ready\ndata: {"segment_id":"seg-1","revision":5,"terminal":"ending","ending":{"ending_id":"truth","title":"真相","tone":"bittersweet","terminal_state_summary":"They parted ways."}}',
         ])
       }
       return jsonResponse({ detail: { code: 'not_found' } }, 404)
@@ -182,6 +212,9 @@ describe('streaming playback', () => {
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '开始新游戏' }))
+    const log = await screen.findByRole('button', { name: '对话框（点击继续）' }, { timeout: 3000 })
+    await screen.findByText(/故事结束/, {}, { timeout: 3000 })
+    await clickThrough(log) // drain the final block — ending screen shows
     expect(await screen.findByText('真相', {}, { timeout: 3000 })).toBeInTheDocument()
     expect(screen.getByText('END')).toBeInTheDocument()
   })
