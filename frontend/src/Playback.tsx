@@ -3,16 +3,15 @@ import type { CSSProperties } from 'react'
 import './Playback.css'
 import type { NarrativeBlock, PackProjection, PresentedChoice } from './api'
 import { newCommandId } from './api'
-import { streamAdvance } from './stream'
+import { streamTurn } from './stream'
+import { SegmentPlayer, type EndingMeta, type SegmentPlayerState } from './segmentPlayer'
 
 const PLACEHOLDER_COLORS = ['#d96c5f', '#5f9bd9', '#d9b45f', '#7fbf7f', '#b08fd9', '#5fd0c4']
-const TYPEWRITER_MS = 33 // ~30 chars/sec
+const TYPEWRITER_MS = 33
 
 function placeholderColor(characterId: string): string {
   let hash = 0
-  for (const ch of characterId) {
-    hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
-  }
+  for (const ch of characterId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
   return PLACEHOLDER_COLORS[hash % PLACEHOLDER_COLORS.length]
 }
 
@@ -21,12 +20,18 @@ function characterName(pack: PackProjection, characterId: string | null | undefi
   return pack.characters.find((c) => c.character_id === characterId)?.name ?? characterId
 }
 
-interface PlaybackProps {
+export interface PlaybackProps {
   pack: PackProjection
   sessionId: string
   expectedRevision: number
+  choiceId: string | null
+  /** Pre-loaded blocks for replay (no network turn). If provided, no stream is started. */
+  replayBlocks?: NarrativeBlock[]
+  replayRevision?: number
+  replayChoices?: PresentedChoice[]
+  replayEnding?: EndingMeta | null
   onChoices: (choices: PresentedChoice[], revision: number) => void
-  onEnding: (endingId: string, endingTitle: string, blocks: NarrativeBlock[], revision: number) => void
+  onEnding: (ending: EndingMeta, blocks: NarrativeBlock[], revision: number) => void
   onError: (message: string) => void
 }
 
@@ -34,6 +39,11 @@ export default function Playback({
   pack,
   sessionId,
   expectedRevision,
+  choiceId,
+  replayBlocks,
+  replayRevision,
+  replayChoices,
+  replayEnding,
   onChoices,
   onEnding,
   onError,
@@ -43,13 +53,14 @@ export default function Playback({
   const [typedText, setTypedText] = useState('')
   const [typing, setTyping] = useState(false)
   const [waiting, setWaiting] = useState(false)
+  const [isBuffering, setIsBuffering] = useState(!replayBlocks)
 
-  const queueRef = useRef<NarrativeBlock[]>([])
+  const playerRef = useRef<SegmentPlayer>(new SegmentPlayer())
   const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isMountedRef = useRef(true)
   const logRef = useRef<HTMLDivElement>(null)
+  const drainedNotifiedRef = useRef(false)
 
-  // Refs to read current state inside async stream callback
   const currentBlockRef = useRef<NarrativeBlock | null>(null)
   const archiveRef = useRef<NarrativeBlock[]>([])
   useEffect(() => { currentBlockRef.current = currentBlock }, [currentBlock])
@@ -74,59 +85,113 @@ export default function Playback({
   }, [])
 
   const dequeueNext = useCallback(() => {
-    const next = queueRef.current.shift()
+    const player = playerRef.current
+    const next = player.dequeueBlock()
     if (next && isMountedRef.current) {
       setCurrentBlock(next)
       setTypedText('')
       setTyping(true)
       startTypewriter(next.text)
     } else if (!next && isMountedRef.current) {
+      // Queue is empty — check if we should notify drain
       setWaiting(true)
+      // Narrow a local instead of player.state: TS keeps property narrowing
+      // across the onDrained() call, which would make the post-drain checks
+      // appear impossible.
+      const stateBeforeDrain = player.state
+      if (!drainedNotifiedRef.current && stateBeforeDrain === 'playing') {
+        drainedNotifiedRef.current = true
+        player.onDrained()
+        const rev = player.committedRevision ?? expectedRevision
+        const stateAfterDrain: SegmentPlayerState = player.state
+        if (stateAfterDrain === 'waiting_choice' && player.choices) {
+          onChoices(player.choices, rev)
+        } else if (stateAfterDrain === 'playing_ending' && player.ending) {
+          onEnding(player.ending, [...archiveRef.current], rev)
+        }
+      }
     }
-  }, [startTypewriter])
+  }, [startTypewriter, onChoices, onEnding, expectedRevision])
 
-  // Start streaming on mount
+  // Start streaming or replay on mount
   useEffect(() => {
     isMountedRef.current = true
+    drainedNotifiedRef.current = false
     let cancelled = false
+    const player = playerRef.current
 
     async function startStream() {
       setWaiting(true)
+      setIsBuffering(true)
+      player.start()
       const key = newCommandId()
-      let blockCount = 0
-      let receivedChoices: PresentedChoice[] = []
 
       try {
-        for await (const evt of streamAdvance(sessionId, expectedRevision, key)) {
+        for await (const evt of streamTurn(sessionId, choiceId, expectedRevision, key)) {
           if (cancelled) return
-          if (evt.event === 'block') {
-            blockCount++
-            queueRef.current.push(evt.data)
+
+          if (evt.event === 'segment_started') {
+            player.onSegmentStarted(evt.data.segment_id, evt.data.expected_revision)
+          } else if (evt.event === 'block') {
+            player.onBlock(evt.data)
+          } else if (evt.event === 'segment_ready') {
+            player.onSegmentReady(evt.data)
+            // Blocks are now unlocked in SegmentPlayer; start dequeuing
+            setIsBuffering(false)
             setWaiting(false)
             // Auto-start first block
-            if (blockCount === 1 && !currentBlockRef.current) {
+            const playable = player.playableBlocks
+            if (playable.length > 0 && !currentBlockRef.current) {
               dequeueNext()
+            } else if (playable.length === 0) {
+              // Empty segment — handle immediately
+              const rev = player.committedRevision ?? expectedRevision
+              if (player.state === 'waiting_choice' && player.choices) {
+                onChoices(player.choices, rev)
+              } else if (player.state === 'playing_ending' && player.ending) {
+                onEnding(player.ending, [], rev)
+              }
             }
-          } else if (evt.event === 'choices') {
-            receivedChoices = evt.data
-          } else if (evt.event === 'done') {
-            const done = evt.data
-            if (done.ending_id) {
-              onEnding(done.ending_id, done.ending_title ?? '', [...archiveRef.current], done.revision)
-              return
-            }
-            onChoices(receivedChoices, done.revision)
+          } else if (evt.event === 'heartbeat') {
+            // Keep-alive, no state change
+          } else if (evt.event === 'retry_after') {
+            // Command lease still active — show retry message, keep old revision
+            onError(`重试中: ${evt.data.message || '请稍后重试'}`)
+            return
           } else if (evt.event === 'error') {
             onError(errorMessageFor(evt.data.code))
             return
           }
         }
+        // Transport EOF — do NOT change visual state.
+        // If player is still buffering, this is a disconnect before segment_ready.
+        if (player.state === 'buffering_segment' || player.state === 'generating_after_choice') {
+          if (!cancelled) onError('连接中断，请重试')
+        }
       } catch {
-        if (!cancelled) onError('网络错误，请重试')
+        if (!cancelled) {
+          // Network error — if segment not ready, old revision is intact
+          onError('网络错误，请重试')
+        }
       }
     }
 
-    void startStream()
+    function startReplay() {
+      setIsBuffering(false)
+      const blocks = replayBlocks ?? []
+      // Pass choices/ending through loadFromProjection so onDrained() can access them
+      player.loadFromProjection(blocks, replayRevision ?? expectedRevision, replayChoices, replayEnding)
+      setWaiting(blocks.length === 0)
+      if (blocks.length > 0) {
+        dequeueNext()
+      }
+    }
+
+    if (replayBlocks !== undefined) {
+      startReplay()
+    } else {
+      void startStream()
+    }
 
     return () => {
       cancelled = true
@@ -134,11 +199,10 @@ export default function Playback({
       if (typingTimerRef.current) clearInterval(typingTimerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, expectedRevision])
+  }, [sessionId, expectedRevision, choiceId])
 
   const handleClick = useCallback(() => {
     if (typing) {
-      // Skip animation
       if (typingTimerRef.current) {
         clearInterval(typingTimerRef.current)
         typingTimerRef.current = null
@@ -147,15 +211,16 @@ export default function Playback({
       setTyping(false)
       return
     }
-    // Advance to next block
     if (currentBlock) {
-      setArchive((prev) => [...prev, currentBlock])
+      // Update ref synchronously so the drain callback sees the final block.
+      const nextArchive = [...archiveRef.current, currentBlock]
+      archiveRef.current = nextArchive
+      setArchive(nextArchive)
     }
     setCurrentBlock(null)
     dequeueNext()
   }, [typing, currentBlock, dequeueNext])
 
-  // Keyboard: Enter
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Enter') {
@@ -167,7 +232,6 @@ export default function Playback({
     return () => window.removeEventListener('keydown', handler)
   }, [handleClick])
 
-  // Auto-scroll to bottom
   useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight
@@ -176,6 +240,11 @@ export default function Playback({
 
   return (
     <>
+      {isBuffering && (
+        <div className="buffering-overlay" role="status">
+          <p className="busy-hint">正在生成…</p>
+        </div>
+      )}
       <div
         className="playback-log"
         ref={logRef}
@@ -194,9 +263,8 @@ export default function Playback({
             typing={typing}
           />
         )}
-        {waiting && <p className="waiting-hint">···</p>}
+        {waiting && !isBuffering && <p className="waiting-hint">···</p>}
       </div>
-
       <div className="advance-hint" onClick={handleClick}>
         {typing ? '点击跳过' : waiting ? '' : '▼ 点击继续 / Enter'}
       </div>
@@ -209,10 +277,13 @@ function errorMessageFor(code: string): string {
     case 'generation_unavailable':
       return '生成失败，请重试'
     case 'revision_conflict':
+      return '状态已改变，正在同步'
     case 'decision_required':
       return '状态已改变，正在同步'
     case 'session_ended':
       return '会话已结束'
+    case 'generation_failed':
+      return '生成失败，请重试'
     default:
       return '请求失败，请重试'
   }
