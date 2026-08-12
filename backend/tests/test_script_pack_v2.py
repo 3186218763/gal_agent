@@ -521,3 +521,95 @@ class TestCafeMysteryV2:
         assert "cafe_is_open" in compiled.fact_ids
         assert "notebook_holder" in compiled.fact_ids
         assert "alice_find_ally" in compiled.goal_ids
+
+
+# ---------------------------------------------------------------------------
+# Task 8: E2E integration verification
+# ---------------------------------------------------------------------------
+
+
+class TestV1V2Coexistence:
+    def test_both_v1_and_v2_packs_compile(self):
+        from tests.story_factories import minimal_pack_v2_dict, minimal_script_pack_dict
+
+        v1 = compile_source(minimal_script_pack_dict())
+        v2 = compile_source(minimal_pack_v2_dict())
+        assert v1.source.schema_version == "1.0"
+        assert v2.source.schema_version == "2.0"
+
+    def test_v1_has_ending_ids_v2_has_completion_requirement_ids(self):
+        from tests.story_factories import minimal_pack_v2_dict, minimal_script_pack_dict
+
+        v1 = compile_source(minimal_script_pack_dict())
+        v2 = compile_source(minimal_pack_v2_dict())
+        assert len(v1.ending_ids) >= 4
+        assert v1.completion_requirement_ids == frozenset()
+        assert len(v2.completion_requirement_ids) >= 1
+        assert v2.ending_ids == frozenset()
+
+    def test_v2_source_has_no_world_attribute(self):
+        from tests.story_factories import minimal_pack_v2_dict
+
+        v2 = compile_source(minimal_pack_v2_dict())
+        assert not hasattr(v2.source, "world")
+        assert hasattr(v2.source, "world_setting")
+
+    def test_v1_source_has_no_completion_requirements(self):
+        from tests.story_factories import minimal_script_pack_dict
+
+        v1 = compile_source(minimal_script_pack_dict())
+        assert not hasattr(v1.source, "completion_requirements")
+        assert hasattr(v1.source, "world")
+
+
+class TestCrossPlanTypeExports:
+    """Verify that all types required by Plans 2-4 are importable."""
+
+    def test_completion_requirement_source_importable(self):
+        from src.story.script_pack.models import CompletionRequirementSource
+
+        req = CompletionRequirementSource(id="test_req", description="test")
+        assert req.id == "test_req"
+
+    def test_evidence_hints_source_importable(self):
+        from src.story.script_pack.models import EvidenceHintsSource
+
+        hints = EvidenceHintsSource()
+        assert hints.fact_ids == ()
+
+    def test_world_setting_source_importable(self):
+        from src.story.script_pack.models import WorldSettingSource
+
+        ws = WorldSettingSource(premise="test", locations=[{"id": "loc", "name": "L"}])
+        assert ws.premise == "test"
+
+    def test_story_history_source_importable(self):
+        from src.story.script_pack.models import StoryHistorySource
+
+        hist = StoryHistorySource(summary="test")
+        assert hist.events == ()
+
+    def test_history_event_source_importable(self):
+        from src.story.script_pack.models import HistoryEventSource
+
+        evt = HistoryEventSource(summary="test")
+        assert evt.participants == ()
+
+    def test_opening_state_source_importable(self):
+        from src.story.script_pack.models import OpeningStateSource
+
+        os_ = OpeningStateSource(location="cafe")
+        assert os_.time_label == "opening"
+
+    def test_compiled_script_pack_has_completion_requirement_ids(self):
+        from tests.story_factories import minimal_pack_v2_dict
+
+        compiled = compile_source(minimal_pack_v2_dict())
+        assert isinstance(compiled.completion_requirement_ids, frozenset)
+
+    def test_compiled_script_pack_source_is_v2_instance(self):
+        from src.story.script_pack.models import ScriptPackSourceV2
+        from tests.story_factories import minimal_pack_v2_dict
+
+        compiled = compile_source(minimal_pack_v2_dict())
+        assert isinstance(compiled.source, ScriptPackSourceV2)
