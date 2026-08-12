@@ -6,7 +6,10 @@ from src.story.state.events import (
     ActionResolved,
     BeliefChanged,
     CharacterLearnedFact,
+    CompletionEvaluated,
+    DecisionPresented,
     EndingEntered,
+    EndingGenerated,
     EventEnvelope,
     FactCommitted,
     FactEvidenced,
@@ -23,6 +26,8 @@ from src.story.state.events import (
     ThreadOpened,
 )
 from src.story.state.models import (
+    CompletionState,
+    EndingRuntime,
     FactTruthStatus,
     FactVisibility,
     GoalStatus,
@@ -311,6 +316,49 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         next_state = next_state.model_copy(
             update={"status": SessionStatus.RESOLVING, "world": world, "ending": event.ending}
         )
+
+    elif isinstance(event, DecisionPresented):
+        _require(next_state.pending_decision is None, "a decision is already pending")
+        choice_ids = [item.id for item in event.choices]
+        _require(len(choice_ids) == len(set(choice_ids)), "choice ids must be unique")
+        _require(2 <= len(event.choices) <= 4, "decision requires 2-4 choices")
+        scene_id = (
+            next_state.pending_scene.scene_id
+            if next_state.pending_scene is not None
+            else ""
+        )
+        pending_decision = PendingDecisionReference(
+            decision_id=event.decision_id,
+            scene_id=scene_id,
+            revision=envelope.sequence,
+            choices=event.choices,
+        )
+        next_state = next_state.model_copy(
+            update={"pending_scene": None, "pending_decision": pending_decision}
+        )
+
+    elif isinstance(event, EndingGenerated):
+        _require(next_state.ending is None, "ending already entered")
+        ending = EndingRuntime(
+            ending_id=event.ending_id,
+            entered_at_revision=envelope.sequence,
+            title=event.title,
+            blocks=event.blocks,
+            tone=event.tone,
+            terminal_state_summary=event.terminal_state_summary,
+        )
+        world = next_state.world.model_copy(update={"phase": StoryPhase.RESOLUTION})
+        next_state = next_state.model_copy(
+            update={"status": SessionStatus.RESOLVING, "world": world, "ending": ending}
+        )
+
+    elif isinstance(event, CompletionEvaluated):
+        _require(next_state.ending is not None, "completion requires an ending")
+        completion = CompletionState(
+            cleared=event.cleared,
+            assessments=event.assessments,
+        )
+        next_state = next_state.model_copy(update={"completion": completion})
 
     elif isinstance(event, SessionEnded):
         _require(next_state.ending is not None, "cannot end without ending state")
