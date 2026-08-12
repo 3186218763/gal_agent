@@ -109,9 +109,10 @@ export class SegmentPlayer {
     this._provisional = []
     this._drainIndex = 0
     this._committedRevision = data.revision
+    this._state = 'playing'
 
-    if (data.terminal === 'decision' && data.choices) {
-      this._choices = data.choices
+    if (data.terminal === 'decision') {
+      this._choices = data.choices ?? []
     } else if (data.terminal === 'ending' && data.ending) {
       this._ending = data.ending
     }
@@ -119,8 +120,6 @@ export class SegmentPlayer {
     // If there are no blocks (edge case), immediately check drain
     if (this._unlocked.length === 0) {
       this.onDrained()
-    } else {
-      this._state = 'playing'
     }
   }
 
@@ -146,6 +145,7 @@ export class SegmentPlayer {
 
   /** Called when the playback component finishes its local queue. */
   onDrained(): void {
+    if (!this.isDrained()) return
     if (this._state !== 'playing') return
     if (this._choices) {
       this._state = 'waiting_choice'
