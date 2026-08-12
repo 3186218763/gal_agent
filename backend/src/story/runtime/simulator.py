@@ -227,7 +227,7 @@ def segment_events(
     for i, (scene_plan, scene_draft) in enumerate(
         zip(plan.scenes, draft.scene_drafts)
     ):
-        if i > 0:
+        if i > 0 and plan.terminal != "ending":
             events.append(
                 SceneAcknowledged(scene_id=plan.scenes[i - 1].scene_id)
             )
