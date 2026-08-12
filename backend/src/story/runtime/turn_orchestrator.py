@@ -35,6 +35,7 @@ from src.story.runtime.segment_contracts import (
     SegmentWriterPort,
 )
 from src.story.runtime.simulator import simulate_resolution, simulate_segment
+from src.story.runtime.unified_segment import UnifiedSegmentPort
 from src.story.runtime.validator import (
     ProposalRejected,
     validate_action_resolution,
@@ -87,6 +88,7 @@ class TurnOrchestrator:
         guard: GuardPort,
         completion_judge: CompletionJudge,
         planner: PlannerPort | None = None,
+        unified_agent: UnifiedSegmentPort | None = None,
     ) -> None:
         self.store = store
         self.director = director
@@ -94,6 +96,7 @@ class TurnOrchestrator:
         self.guard = guard
         self.completion_judge = completion_judge
         self.planner = planner
+        self.unified_agent = unified_agent
 
     async def execute_turn(
         self,
@@ -225,27 +228,95 @@ class TurnOrchestrator:
             pacing = compute_pacing_envelope(state, pack)
 
             # --------------------------------------------------------------
-            # Step 4: Director proposes segment plan.
+            # Step 4+5: Generate segment plan + draft.
+            #
+            # Two paths:
+            #   • Unified (preferred): one LLM call produces both plan and draft.
+            #   • Legacy: Director plans → Writer renders (two LLM calls).
+            #
+            # If the LLM fails entirely, a deterministic fallback is used so
+            # the player never hits a dead-end error.
             # --------------------------------------------------------------
             yield ("heartbeat", {})
 
             try:
-                plan = await self.director.plan_segment(pack, state, pacing)
-            except Exception as exc:
-                raise RuntimeGenerationUnavailable(
-                    "director failed to produce a segment plan"
-                ) from exc
+                if self.unified_agent is not None:
+                    # ── Unified path: single LLM call ──
+                    try:
+                        result = await self.unified_agent.generate(
+                            pack, state, pacing
+                        )
+                    except Exception as exc:
+                        raise RuntimeGenerationUnavailable(
+                            "unified segment agent failed to generate"
+                        ) from exc
 
-            try:
-                plan = validate_segment_plan(pack, state, plan, pacing)
-            except (ModelContractError, ProposalRejected) as exc:
-                detail = getattr(exc, "errors", None) or str(exc)
-                raise RuntimeGenerationUnavailable(
-                    f"director produced an invalid segment plan: {detail}"
-                ) from exc
+                    plan = result.segment_plan
+                    draft = result.segment_draft
 
-            # Now that the director has produced a plan, we know the
-            # segment_id and can emit the segment_started event.
+                    try:
+                        plan = validate_segment_plan(pack, state, plan, pacing)
+                    except (ModelContractError, ProposalRejected) as exc:
+                        detail = getattr(exc, "errors", None) or str(exc)
+                        raise RuntimeGenerationUnavailable(
+                            f"unified agent produced an invalid segment plan: {detail}"
+                        ) from exc
+
+                    try:
+                        draft = validate_segment_draft(plan, draft)
+                    except (ModelContractError, ProposalRejected) as exc:
+                        detail = getattr(exc, "errors", None) or str(exc)
+                        raise RuntimeGenerationUnavailable(
+                            f"unified agent produced an invalid segment draft: {detail}"
+                        ) from exc
+                else:
+                    # ── Legacy path: Director → Writer ──
+                    try:
+                        plan = await self.director.plan_segment(pack, state, pacing)
+                    except Exception as exc:
+                        raise RuntimeGenerationUnavailable(
+                            "director failed to produce a segment plan"
+                        ) from exc
+
+                    try:
+                        plan = validate_segment_plan(pack, state, plan, pacing)
+                    except (ModelContractError, ProposalRejected) as exc:
+                        detail = getattr(exc, "errors", None) or str(exc)
+                        raise RuntimeGenerationUnavailable(
+                            f"director produced an invalid segment plan: {detail}"
+                        ) from exc
+
+                    yield (
+                        "segment_started",
+                        {
+                            "segment_id": plan.segment_id,
+                            "expected_revision": expected_revision,
+                        },
+                    )
+
+                    yield ("heartbeat", {})
+
+                    try:
+                        draft = await self.writer.write_segment(pack, state, plan)
+                    except Exception as exc:
+                        raise RuntimeGenerationUnavailable(
+                            "writer failed to produce a segment draft"
+                        ) from exc
+
+                    try:
+                        draft = validate_segment_draft(plan, draft)
+                    except (ModelContractError, ProposalRejected) as exc:
+                        raise RuntimeGenerationUnavailable(
+                            "writer produced an invalid segment draft"
+                        ) from exc
+            except RuntimeGenerationUnavailable:
+                # ── Deterministic fallback ──
+                from src.story.runtime.fallback import generate_fallback_segment
+
+                plan, draft = generate_fallback_segment(pack, state)
+
+            # Emit segment_started with the final segment_id (may differ from
+            # the legacy path's early emission if fallback was used).
             yield (
                 "segment_started",
                 {
@@ -253,25 +324,6 @@ class TurnOrchestrator:
                     "expected_revision": expected_revision,
                 },
             )
-
-            # --------------------------------------------------------------
-            # Step 5: Writer produces draft.
-            # --------------------------------------------------------------
-            yield ("heartbeat", {})
-
-            try:
-                draft = await self.writer.write_segment(pack, state, plan)
-            except Exception as exc:
-                raise RuntimeGenerationUnavailable(
-                    "writer failed to produce a segment draft"
-                ) from exc
-
-            try:
-                draft = validate_segment_draft(plan, draft)
-            except (ModelContractError, ProposalRejected) as exc:
-                raise RuntimeGenerationUnavailable(
-                    "writer produced an invalid segment draft"
-                ) from exc
 
             # --------------------------------------------------------------
             # Step 6: Guard checks the segment.

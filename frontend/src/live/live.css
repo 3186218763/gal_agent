@@ -1,0 +1,24 @@
+/* ═══════════════════════════════════════════════
+   LiveApp 附加样式 (继承 demo.css)
+   ═══════════════════════════════════════════════ */
+
+.live-loading-text {
+  position: absolute;
+  bottom: 48%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #64748b;
+  font-size: 14px;
+  letter-spacing: 0.15em;
+  z-index: 10;
+}
+
+.live-scene-info {
+  font-size: 11px;
+  color: #475569;
+  letter-spacing: 0.1em;
+  background: rgba(8, 10, 16, 0.7);
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}

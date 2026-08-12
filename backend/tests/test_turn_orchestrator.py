@@ -8,7 +8,7 @@ import pytest
 from src.story.runtime.completion_judge import CompletionJudge
 from src.story.runtime.contracts import (
     NarrativeBlock,
-    RuntimeGenerationUnavailable,
+    RuntimeRevisionConflict,
     SceneDraft,
     ScenePlan,
     SegmentDraft,
@@ -182,7 +182,10 @@ def test_idempotent_replay_returns_same_segment(tmp_path: Path):
     assert ready1["segment_id"] == ready2["segment_id"]
 
 
-def test_failed_generation_releases_command(tmp_path: Path):
+def test_failed_generation_uses_deterministic_fallback(tmp_path: Path):
+    """When the Director fails, the deterministic fallback produces a valid
+    segment so the player never hits a dead-end error screen."""
+
     class FailingDirector(FakeDirector):
         async def plan_segment(self, pack, state, pacing):
             raise RuntimeError("model failed")
@@ -200,8 +203,43 @@ def test_failed_generation_releases_command(tmp_path: Path):
         planner=FakePlanner(),
     )
     gen = orch.execute_turn(pack, "s1", 0, "cmd-fail", None)
+    events = _collect_events(gen)
 
-    with pytest.raises(RuntimeGenerationUnavailable):
+    # Fallback should produce a valid segment with blocks and choices.
+    types = [e[0] for e in events]
+    assert "segment_started" in types
+    assert "block" in types
+    assert "segment_ready" in types
+
+    ready = next(data for t, data in events if t == "segment_ready")
+    assert ready["terminal"] == "decision"
+    assert len(ready["choices"]) >= 2
+
+    # Revision should advance — the fallback segment is committed normally.
+    loaded = store.load_session("s1")
+    assert loaded.revision > 0
+
+
+def test_revision_conflict_releases_command(tmp_path: Path):
+    """When a non-generation error (e.g. revision conflict) occurs, the
+    command lease must be released so the session is not locked."""
+
+    pack = compile_source(budget_test_pack_dict())
+    store = StoryEventStore(tmp_path / "conflict_test.db")
+    state = initial_session_state(pack, "s1", session_seed=1)
+    store.create_session(state)
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=FakePlanner(),
+    )
+    # Pass a wrong expected_revision to trigger RuntimeRevisionConflict.
+    gen = orch.execute_turn(pack, "s1", 99, "cmd-conflict", None)
+
+    with pytest.raises(RuntimeRevisionConflict):
         _collect_events(gen)
 
     # Verify session revision is unchanged (command was released).

@@ -100,6 +100,9 @@ def default_dependencies() -> AppDependencies:
     director = SdkDirector(bundle.model)
     segment_writer = SdkSegmentWriter(bundle.model)
     guard = Guard()
+    from src.story.runtime.unified_segment import SdkUnifiedSegmentAgent
+
+    unified_agent = SdkUnifiedSegmentAgent(bundle.model)
     orchestrator = TurnOrchestrator(
         store,
         director,
@@ -107,6 +110,7 @@ def default_dependencies() -> AppDependencies:
         guard,
         CompletionJudge(),
         planner=SdkPlanner(bundle.model),
+        unified_agent=unified_agent,
     )
     return AppDependencies(
         store=store,
@@ -239,6 +243,9 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
             except (OpenAIError, RuntimeGenerationUnavailable) as exc:
                 logger.warning("advance stream failed: %s", exc)
                 yield _sse_error("generation_unavailable")
+            except Exception:
+                logger.exception("advance stream unexpected error")
+                yield _sse_error("internal_error")
 
         return StreamingResponse(
             event_stream(),
@@ -303,6 +310,9 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
             except (OpenAIError, RuntimeGenerationUnavailable) as exc:
                 logger.warning("turn stream failed: %s", exc)
                 yield _sse_error("generation_unavailable")
+            except Exception:
+                logger.exception("turn stream unexpected error")
+                yield _sse_error("internal_error")
 
         return StreamingResponse(
             event_stream(),
