@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Protocol
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from src.story.runtime.contracts import (
     EndingDraft,
@@ -56,23 +56,6 @@ class SegmentPlan(RuntimeModel):
     thread_ops: tuple[ThreadOperation, ...] = ()
     new_facts: tuple[FactCommitPlan, ...] = ()
     phase_after: StoryPhase | None = None
-
-    @model_validator(mode="after")
-    def _validate_terminal_consistency(self) -> SegmentPlan:
-        last = self.scenes[-1]
-        if self.terminal == "ending":
-            if last.terminal != "ending":
-                raise ValueError("last scene must have terminal='ending'")
-            if self.ending_proposal is None:
-                raise ValueError("ending_proposal required when terminal='ending'")
-        elif self.terminal == "decision":
-            if last.terminal != "decision":
-                raise ValueError("last scene must have terminal='decision'")
-        else:
-            for s in self.scenes:
-                if s.terminal != "continue":
-                    raise ValueError("non-terminal scenes must be continue")
-        return self
 
 
 class SegmentDraft(RuntimeModel):

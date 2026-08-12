@@ -6,6 +6,11 @@ from collections.abc import Iterable
 
 from src.story.runtime.context import build_condition_context
 from src.story.runtime.contracts import ActionResolution, SceneDraft, ScenePlan
+from src.story.runtime.segment_contracts import (
+    PacingEnvelope,
+    SegmentDraft,
+    SegmentPlan,
+)
 from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
 from src.story.state import FactTruthStatus, FactVisibility, SessionState
 
@@ -199,6 +204,125 @@ def validate_scene_draft(plan: ScenePlan, draft: SceneDraft) -> SceneDraft:
         errors.append("decision draft requires 2-4 choices")
     if plan.terminal == "continue" and draft.choices:
         errors.append("continue draft cannot contain choices")
+    if errors:
+        raise ProposalRejected(errors)
+    return draft
+
+
+def validate_segment_plan(
+    pack: CompiledScriptPack,
+    state: SessionState,
+    plan: SegmentPlan,
+    pacing: PacingEnvelope,
+) -> SegmentPlan:
+    errors: list[str] = []
+
+    # Terminal-ending requires an ending proposal.
+    if plan.terminal == "ending" and plan.ending_proposal is None:
+        errors.append("ending terminal requires ending_proposal")
+
+    # Ending before min_scenes is rejected (unless must_end).
+    if plan.terminal == "ending" and not pacing.can_end and not pacing.must_end:
+        errors.append(
+            f"ending proposed before min_scenes ({pacing.min_scenes}); "
+            f"current scene_count is {pacing.scene_count}"
+        )
+
+    # must_end forces an ending terminal.
+    if pacing.must_end and plan.terminal != "ending":
+        errors.append("must_end is True; segment terminal must be 'ending'")
+
+    # All but last scene must have terminal="continue".
+    for i, scene in enumerate(plan.scenes[:-1]):
+        if scene.terminal != "continue":
+            errors.append(
+                f"non-terminal scene at index {i} must have terminal='continue'"
+            )
+
+    # Scene count must not exceed remaining budget.
+    if len(plan.scenes) > pacing.remaining_budget:
+        errors.append(
+            f"segment has {len(plan.scenes)} scenes but only "
+            f"{pacing.remaining_budget} remaining in budget"
+        )
+
+    # Validate each scene plan individually.
+    for scene in plan.scenes:
+        try:
+            validate_scene_plan(pack, state, scene)
+        except ProposalRejected as exc:
+            errors.extend(f"scene {scene.scene_id}: {e}" for e in exc.errors)
+
+    # Thread operations: no new threads in convergence window.
+    if pacing.in_convergence or pacing.max_new_threads == 0:
+        new_thread_count = sum(1 for op in plan.thread_ops if op.kind == "open")
+        if new_thread_count > 0:
+            errors.append(
+                f"cannot open {new_thread_count} new thread(s) in convergence window"
+            )
+    else:
+        new_thread_count = sum(1 for op in plan.thread_ops if op.kind == "open")
+        if new_thread_count > pacing.max_new_threads:
+            errors.append(
+                f"segment opens {new_thread_count} threads but budget is "
+                f"{pacing.max_new_threads}"
+            )
+
+    # Validate thread operation referential integrity.
+    existing_thread_ids = set(state.threads.keys())
+    for op in plan.thread_ops:
+        if op.kind == "open" and op.thread_id in existing_thread_ids:
+            errors.append(f"thread already exists: {op.thread_id}")
+        if op.kind in ("advance", "close") and op.thread_id not in existing_thread_ids:
+            errors.append(f"unknown thread for {op.kind}: {op.thread_id}")
+
+    if errors:
+        raise ProposalRejected(errors)
+    return plan
+
+
+def validate_segment_draft(
+    plan: SegmentPlan,
+    draft: SegmentDraft,
+) -> SegmentDraft:
+    errors: list[str] = []
+
+    if draft.segment_id != plan.segment_id:
+        errors.append(
+            f"segment_id mismatch: expected {plan.segment_id}, got {draft.segment_id}"
+        )
+
+    if len(draft.scene_drafts) != len(plan.scenes):
+        errors.append(
+            f"scene count mismatch: plan has {len(plan.scenes)} scenes, "
+            f"draft has {len(draft.scene_drafts)}"
+        )
+        if errors:
+            raise ProposalRejected(errors)
+
+    # Validate each scene draft against its plan.
+    for scene_plan, scene_draft in zip(plan.scenes, draft.scene_drafts):
+        try:
+            validate_scene_draft(scene_plan, scene_draft)
+        except ProposalRejected as exc:
+            errors.extend(f"scene {scene_plan.scene_id}: {e}" for e in exc.errors)
+
+    # For ending terminal, draft must have ending.
+    if plan.terminal == "ending" and draft.ending is None:
+        errors.append("ending terminal requires draft.ending")
+
+    # For ending terminal, draft.ending title must match proposal title.
+    if (
+        plan.terminal == "ending"
+        and plan.ending_proposal is not None
+        and draft.ending is not None
+        and draft.ending.title != plan.ending_proposal.title
+    ):
+        errors.append(
+            f"ending title mismatch: proposal has '{plan.ending_proposal.title}', "
+            f"draft has '{draft.ending.title}'"
+        )
+
     if errors:
         raise ProposalRejected(errors)
     return draft

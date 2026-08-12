@@ -149,34 +149,37 @@ def test_segment_plan_requires_min_one_scene():
         SegmentPlan(segment_id="seg_01", scenes=(), terminal="decision")
 
 
-def test_segment_plan_ending_requires_proposal():
-    with pytest.raises(ValidationError, match="ending_proposal required"):
-        SegmentPlan(
-            segment_id="seg_03",
-            scenes=(_make_ending_scene_plan(),),
-            terminal="ending",
-        )
+def test_segment_plan_ending_without_proposal_allowed():
+    """Model allows construction; validate_segment_plan enforces ending_proposal."""
+    plan = SegmentPlan(
+        segment_id="seg_03",
+        scenes=(_make_ending_scene_plan(),),
+        terminal="ending",
+    )
+    assert plan.ending_proposal is None
 
 
-def test_segment_plan_ending_requires_ending_last_scene():
-    with pytest.raises(ValidationError, match="last scene must have terminal='ending'"):
-        SegmentPlan(
-            segment_id="seg_04",
-            scenes=(_make_scene_plan(),),
-            terminal="ending",
-            ending_proposal=EndingProposal(
-                title="Finale", tone="epic", terminal_state_summary="The end.",
-            ),
-        )
+def test_segment_plan_ending_with_continue_last_scene_allowed():
+    """Model allows construction; validate_segment_plan enforces terminal consistency."""
+    plan = SegmentPlan(
+        segment_id="seg_04",
+        scenes=(_make_scene_plan(),),
+        terminal="ending",
+        ending_proposal=EndingProposal(
+            title="Finale", tone="epic", terminal_state_summary="The end.",
+        ),
+    )
+    assert plan.scenes[-1].terminal == "continue"
 
 
-def test_segment_plan_decision_requires_decision_last_scene():
-    with pytest.raises(ValidationError, match="last scene must have terminal='decision'"):
-        SegmentPlan(
-            segment_id="seg_05",
-            scenes=(_make_scene_plan(),),
-            terminal="decision",
-        )
+def test_segment_plan_decision_with_continue_last_scene_allowed():
+    """Model allows construction; validate_segment_plan enforces terminal consistency."""
+    plan = SegmentPlan(
+        segment_id="seg_05",
+        scenes=(_make_scene_plan(),),
+        terminal="decision",
+    )
+    assert plan.scenes[-1].terminal == "continue"
 
 
 def test_segment_draft():
