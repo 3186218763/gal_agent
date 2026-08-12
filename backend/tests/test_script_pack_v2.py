@@ -335,3 +335,40 @@ class TestCompileV2:
         """v2.0 must compile even though it has no fallback endings at all."""
         compiled = compile_source(_minimal_v2_raw())
         assert compiled.source.schema_version == "2.0"
+
+
+# ---------------------------------------------------------------------------
+# Task 4: initial_session_state() v2.0 support
+# ---------------------------------------------------------------------------
+
+from src.story.state import FactVisibility, initial_session_state
+
+
+class TestInitialStateV2:
+    def test_v2_initial_state_uses_opening_state(self):
+        compiled = compile_source(_minimal_v2_raw())
+        state = initial_session_state(compiled, "session_v2_01", session_seed=42)
+
+        assert state.world.location_id == "cafe"
+        assert state.world.present_character_ids == ("alice",)
+        assert state.world.scene_count == 0
+        assert state.world.max_scenes == 20
+        # starting_pressure from opening_state
+        assert state.world.pressure == 0.1
+        # known_facts from opening_state are revealed
+        assert state.facts["cafe_is_open"].visibility == FactVisibility.REVEALED
+
+    def test_v2_initial_state_uses_starting_pressure(self):
+        raw = _minimal_v2_raw()
+        raw["opening_state"]["starting_pressure"] = 0.4
+        compiled = compile_source(raw)
+        state = initial_session_state(compiled, "session_v2_02", session_seed=7)
+        assert state.world.pressure == 0.4
+
+    def test_v1_initial_state_unchanged(self):
+        from tests.story_factories import minimal_script_pack_dict
+
+        compiled = compile_source(minimal_script_pack_dict())
+        state = initial_session_state(compiled, "session_v1_01", session_seed=1)
+        assert state.world.location_id == "cafe"
+        assert state.world.pressure == 0.1  # default from v1.0
