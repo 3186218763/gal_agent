@@ -238,7 +238,12 @@ class PackMismatch(RuntimeError):
 # Agent SDK output wrappers (Plan 3)
 # ---------------------------------------------------------------------------
 
-from src.story.runtime.segment_contracts import SegmentDraft, SegmentPlan
+from src.story.runtime.segment_contracts import (
+    EndingProposal,  # noqa: F401
+    PacingEnvelope,  # noqa: F401
+    SegmentDraft,
+    SegmentPlan,
+)
 
 
 class DirectorOutput(RuntimeModel):
