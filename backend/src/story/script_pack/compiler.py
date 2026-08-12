@@ -46,6 +46,10 @@ _INCLUDE_KEYS = frozenset(
         "interaction_rules",
         "endings",
         "assets",
+        "world_setting",
+        "story_history",
+        "opening_state",
+        "completion_requirements",
     }
 )
 
@@ -189,31 +193,22 @@ def _compile_programs(
     return programs, errors
 
 
-def _reference_errors(
-    source: ScriptPackSourceV1,
+def _shared_reference_errors(
+    source: ScriptPackSourceV1 | ScriptPackSourceV2,
     character_ids: set[str],
     fixed_ids: set[str],
     fact_ids: set[str],
     goal_ids: set[str],
     action_ids: set[str],
 ) -> list[str]:
-    errors: list[str] = []
-    location_ids = {item.id for item in source.world.locations}
-    fixed_known_by = {item.id: set(item.known_by) for item in source.facts.fixed}
+    """Version-independent structural reference validations.
 
-    if source.world.initial_situation.location not in location_ids:
-        errors.append(
-            "initial_situation references unknown location "
-            f"{source.world.initial_situation.location}"
-        )
-    for character_id in source.world.initial_situation.present_characters:
-        if character_id not in character_ids:
-            errors.append(f"initial_situation references unknown character {character_id}")
-    for fact_id in source.world.initial_situation.known_facts:
-        if fact_id not in fact_ids:
-            errors.append(f"initial_situation references unknown fact {fact_id}")
-        elif fact_id not in fixed_ids:
-            errors.append(f"opening known fact must be fixed: {fact_id}")
+    These checks (known_by, knowledge, secrets, capabilities, goal owner,
+    goal conflicts, latent candidate duplicates) are equally meaningful for
+    v1.0 and v2.0 packs and must run in both code paths.
+    """
+    errors: list[str] = []
+    fixed_known_by = {item.id: set(item.known_by) for item in source.facts.fixed}
 
     for fact in source.facts.fixed:
         for character_id in fact.known_by:
@@ -260,6 +255,39 @@ def _reference_errors(
                 (candidate.value for candidate in question.candidates),
             )
         )
+    return errors
+
+
+def _reference_errors(
+    source: ScriptPackSourceV1,
+    character_ids: set[str],
+    fixed_ids: set[str],
+    fact_ids: set[str],
+    goal_ids: set[str],
+    action_ids: set[str],
+) -> list[str]:
+    errors: list[str] = []
+    location_ids = {item.id for item in source.world.locations}
+
+    if source.world.initial_situation.location not in location_ids:
+        errors.append(
+            "initial_situation references unknown location "
+            f"{source.world.initial_situation.location}"
+        )
+    for character_id in source.world.initial_situation.present_characters:
+        if character_id not in character_ids:
+            errors.append(f"initial_situation references unknown character {character_id}")
+    for fact_id in source.world.initial_situation.known_facts:
+        if fact_id not in fact_ids:
+            errors.append(f"initial_situation references unknown fact {fact_id}")
+        elif fact_id not in fixed_ids:
+            errors.append(f"opening known fact must be fixed: {fact_id}")
+
+    errors.extend(
+        _shared_reference_errors(
+            source, character_ids, fixed_ids, fact_ids, goal_ids, action_ids
+        )
+    )
     return errors
 
 
@@ -384,7 +412,7 @@ def _compile_programs_v2(
 
 
 def compile_source(
-    raw: Mapping[str, Any] | ScriptPackSourceV1 | ScriptPackSourceV2,
+    raw: Mapping[str, Any] | ScriptPackSource,
 ) -> CompiledScriptPack:
     if isinstance(raw, ScriptPackSource):
         source = raw
@@ -448,6 +476,11 @@ def compile_source(
         )
         errors.extend(
             _v2_reference_errors(source, character_ids, fixed_ids, fact_ids, goal_ids)
+        )
+        errors.extend(
+            _shared_reference_errors(
+                source, character_ids, fixed_ids, fact_ids, goal_ids, action_ids
+            )
         )
         programs, condition_errors = _compile_programs_v2(source)
         ending_ids: set[str] = set()

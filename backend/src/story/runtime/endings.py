@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from src.story.runtime.context import build_condition_context
-from src.story.script_pack.models import CompiledScriptPack, EndingSource
+from src.story.script_pack.models import (
+    CompiledScriptPack,
+    EndingSource,
+    ScriptPackSourceV2,
+)
 from src.story.state import SessionState, StoryPhase
 
 PHASES = (
@@ -31,6 +35,10 @@ def _group(
 
 
 def select_ending(pack: CompiledScriptPack, state: SessionState) -> EndingSource | None:
+    if isinstance(pack.source, ScriptPackSourceV2):
+        raise TypeError(
+            "v2.0 packs do not support fixed endings; use the segment engine (Plan 2)"
+        )
     context = build_condition_context(state)
     at_max = state.world.scene_count >= state.world.max_scenes
     for ending in sorted(pack.source.endings, key=lambda item: item.priority, reverse=True):

@@ -7,7 +7,7 @@ goals, threads, seeds, hashes) never appears in a projection.
 
 from __future__ import annotations
 
-from src.story.script_pack.models import CompiledScriptPack
+from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
 from src.story.state import (
     NarrativeBlock,
     PresentedChoice,
@@ -68,7 +68,11 @@ def project_pack(pack: CompiledScriptPack) -> PackProjection:
         ),
         locations=tuple(
             PackLocationProjection(location_id=location.id, name=location.name)
-            for location in pack.source.world.locations
+            for location in (
+                pack.source.world_setting.locations
+                if isinstance(pack.source, ScriptPackSourceV2)
+                else pack.source.world.locations
+            )
         ),
     )
 
