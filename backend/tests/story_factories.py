@@ -174,3 +174,163 @@ def minimal_script_pack_dict() -> dict[str, Any]:
         ],
         "assets": {},
     }
+
+
+def minimal_pack_v2_dict() -> dict[str, Any]:
+    """Return a minimal valid v2.0 script pack dict for testing.
+
+    This pack has completion_requirements instead of endings,
+    world_setting/story_history/opening_state instead of world.
+    """
+    return {
+        "schema_version": "2.0",
+        "identity": {
+            "id": "test_pack_v2",
+            "title": "Test Pack V2",
+            "language": "en",
+            "genres": ["mystery"],
+            "expected_minutes": 60,
+        },
+        "experience": {
+            "viewpoint": "first_person",
+            "prose_style": "concise",
+            "tone": "quiet mystery",
+            "choice_density": "key_moments",
+            "min_scenes": 8,
+            "max_scenes": 20,
+        },
+        "protagonist": {
+            "id": "protagonist",
+            "name": "Ren",
+            "personality": {
+                "traits": ["observant"],
+                "values": ["honesty"],
+                "flaws": ["hesitant"],
+            },
+            "background": "A new student.",
+            "capabilities": ["ask", "observe"],
+            "boundaries": {"cannot": ["use violence"]},
+        },
+        "world_setting": {
+            "premise": "A notebook disappeared from the cafe.",
+            "immutable_rules": ["Death is irreversible."],
+            "locations": [
+                {"id": "cafe", "name": "Cafe", "tags": ["public"]},
+                {"id": "back_alley", "name": "Back Alley", "tags": ["quiet"]},
+            ],
+            "factions": [],
+            "forbidden_content": ["explicit violence"],
+            "fact_rules": ["No supernatural powers."],
+        },
+        "story_history": {
+            "summary": "Alice lost her notebook containing sensitive information.",
+            "events": [
+                {
+                    "summary": "Alice brought her notebook to the cafe.",
+                    "participants": ("alice",),
+                },
+                {
+                    "summary": "The notebook went missing.",
+                    "participants": ("alice", "bob"),
+                    "remembered_differently_by": {
+                        "alice": "She left it on the table.",
+                    },
+                },
+            ],
+        },
+        "opening_state": {
+            "location": "cafe",
+            "present_characters": ["alice"],
+            "known_facts": ["cafe_is_open"],
+            "time_label": "Saturday afternoon",
+            "starting_pressure": 0.15,
+        },
+        "characters": [
+            {
+                "id": "alice",
+                "name": "Alice",
+                "public_profile": "An outgoing student.",
+                "personality": {
+                    "traits": ["outgoing"],
+                    "values": ["friendship"],
+                    "fears": ["abandonment"],
+                    "flaws": ["impulsive"],
+                },
+                "voice": {
+                    "style": "direct",
+                    "forbidden": ["formal speeches"],
+                },
+                "drives": ["find an ally"],
+                "knowledge": ["cafe_is_open"],
+                "secrets": ["who_took_notebook"],
+                "capabilities": ["ask", "support"],
+                "initial_relationship": {"trust": 35, "affection": 5},
+            }
+        ],
+        "facts": {
+            "fixed": [
+                {
+                    "id": "cafe_is_open",
+                    "statement": "The cafe is open.",
+                    "known_by": ["alice"],
+                    "visibility": "revealed",
+                }
+            ],
+            "latent_questions": [
+                {
+                    "id": "who_took_notebook",
+                    "question": "Who took the notebook?",
+                    "selection": "lazy_commit",
+                    "candidates": [
+                        {"value": "alice", "weight": 1.0, "requirements": []},
+                        {"value": "stranger", "weight": 1.0, "requirements": []},
+                    ],
+                    "commit_when": [
+                        "first_irreversible_evidence",
+                        "explicit_revelation",
+                    ],
+                    "evidence_required": 1,
+                }
+            ],
+            "derived": [
+                {
+                    "id": "alice_trusts_player",
+                    "condition": "relationships.alice.trust >= 70",
+                }
+            ],
+        },
+        "goals": [
+            {
+                "id": "alice_find_ally",
+                "owner": "alice",
+                "desire": "Find an ally.",
+                "urgency": 0.7,
+                "conflicts_with": [],
+                "success_condition": "relationships.alice.trust >= 70",
+                "failure_condition": "relationships.alice.trust <= 10",
+            }
+        ],
+        "completion_requirements": [
+            {
+                "id": "understand_truth",
+                "description": "Player must understand who took the notebook.",
+                "evidence_hints": {
+                    "fact_ids": ["who_took_notebook"],
+                    "goal_ids": ["alice_find_ally"],
+                },
+            },
+            {
+                "id": "build_trust",
+                "description": "Player must earn Alice's trust.",
+                "evidence_hints": {
+                    "fact_ids": ["alice_trusts_player"],
+                },
+            },
+        ],
+        "interaction_rules": {
+            "enabled_standard": ["ask", "observe", "support", "challenge"],
+            "disabled": [],
+            "extensions": [],
+        },
+        "assets": {},
+    }

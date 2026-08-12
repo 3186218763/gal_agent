@@ -372,3 +372,53 @@ class TestInitialStateV2:
         state = initial_session_state(compiled, "session_v1_01", session_seed=1)
         assert state.world.location_id == "cafe"
         assert state.world.pressure == 0.1  # default from v1.0
+
+
+# ---------------------------------------------------------------------------
+# Task 5: minimal_pack_v2_dict() factory
+# ---------------------------------------------------------------------------
+
+
+class TestPackV2Factory:
+    def test_factory_produces_compilable_v2_pack(self):
+        from tests.story_factories import minimal_pack_v2_dict
+
+        raw = minimal_pack_v2_dict()
+        compiled = compile_source(raw)
+        assert compiled.source.schema_version == "2.0"
+        assert len(compiled.completion_requirement_ids) >= 1
+        assert compiled.ending_ids == frozenset()
+
+    def test_factory_has_two_completion_requirements(self):
+        from tests.story_factories import minimal_pack_v2_dict
+
+        raw = minimal_pack_v2_dict()
+        assert len(raw["completion_requirements"]) == 2
+
+    def test_factory_has_story_history(self):
+        from tests.story_factories import minimal_pack_v2_dict
+
+        raw = minimal_pack_v2_dict()
+        assert raw["story_history"]["summary"]
+        assert len(raw["story_history"]["events"]) >= 1
+
+    def test_factory_has_world_setting_with_forbidden_content(self):
+        from tests.story_factories import minimal_pack_v2_dict
+
+        raw = minimal_pack_v2_dict()
+        assert raw["world_setting"]["forbidden_content"]
+        assert raw["world_setting"]["fact_rules"]
+
+    def test_factory_evidence_hints_reference_valid_ids(self):
+        from tests.story_factories import minimal_pack_v2_dict
+
+        raw = minimal_pack_v2_dict()
+        compiled = compile_source(raw)
+        # Evidence hints should reference actual fact/goal IDs without errors
+        req = compiled.source.completion_requirements[0]
+        if req.evidence_hints.fact_ids:
+            for fid in req.evidence_hints.fact_ids:
+                assert fid in compiled.fact_ids
+        if req.evidence_hints.goal_ids:
+            for gid in req.evidence_hints.goal_ids:
+                assert gid in compiled.goal_ids
