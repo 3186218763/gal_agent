@@ -36,7 +36,7 @@ def _get_forbidden_content(source):
     """Return forbidden content from v1.0 or v2.0 pack."""
     if hasattr(source, "world_setting"):
         return source.world_setting.forbidden_content
-    return ()  # v1.0 has no forbidden_content
+    return source.experience.forbidden_content
 
 
 def _fact_summary_views(
