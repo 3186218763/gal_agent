@@ -166,17 +166,19 @@ class Guard:
                         detail="ending terminal requires ending draft blocks",
                     )
                 )
-            elif plan.ending_proposal is not None:
-                if draft.ending.title != plan.ending_proposal.title:
-                    violations.append(
-                        GuardViolation(
-                            kind="unauthorized_fact",
-                            detail=(
-                                f"ending title mismatch: plan='{plan.ending_proposal.title}', "
-                                f"draft='{draft.ending.title}'"
-                            ),
-                        )
+            elif (
+                plan.ending_proposal is not None
+                and draft.ending.title != plan.ending_proposal.title
+            ):
+                violations.append(
+                    GuardViolation(
+                        kind="unauthorized_fact",
+                        detail=(
+                            f"ending title mismatch: plan='{plan.ending_proposal.title}', "
+                            f"draft='{draft.ending.title}'"
+                        ),
                     )
+                )
 
         # 6. Continue scenes in draft should not have choices
         for i, scene_draft in enumerate(draft.scene_drafts):
@@ -188,7 +190,34 @@ class Guard:
                     )
                 )
 
-        # 7. Fact visibility check: characters can only reference facts with visibility != 'hidden'
+        # 6b. Non-decision plans must not carry any draft choices
+        if plan.terminal != "decision":
+            for scene_draft in draft.scene_drafts:
+                if scene_draft.choices:
+                    violations.append(
+                        GuardViolation(
+                            kind="unauthorized_fact",
+                            detail=(
+                                f"plan terminal '{plan.terminal}' does not allow choices "
+                                f"but scene {scene_draft.scene_id} has {len(scene_draft.choices)}"
+                            ),
+                        )
+                    )
+            if draft.choices:
+                violations.append(
+                    GuardViolation(
+                        kind="unauthorized_fact",
+                        detail=(
+                            f"plan terminal '{plan.terminal}' does not allow choices "
+                            f"but draft has {len(draft.choices)}"
+                        ),
+                    )
+                )
+
+        # 7. Fact visibility check: a dialogue may only reference a hidden fact
+        #    if the speaker already knows it. Only flag when the dialogue text
+        #    actually mentions the fact — otherwise any scene with a hidden
+        #    related fact would reject every speaker who hasn't learned it.
         global_block_index = 0
         for scene_draft in draft.scene_drafts:
             plan_scene = plan_scenes.get(scene_draft.scene_id)
@@ -197,7 +226,10 @@ class Guard:
                 continue
             for block in scene_draft.blocks:
                 if block.kind == "dialogue" and block.character_id is not None:
+                    text_lower = block.text.lower()
                     for fact_id in plan_scene.related_fact_ids:
+                        if fact_id not in text_lower:
+                            continue
                         fact_runtime = state.facts.get(fact_id)
                         if fact_runtime and fact_runtime.visibility.value == "hidden":
                             # Only characters who already know the fact can reference it
