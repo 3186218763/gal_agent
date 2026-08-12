@@ -17,10 +17,10 @@ from src.story.runtime.contracts import (
     SegmentDraft,
     SegmentPlan,
 )
-from src.story.runtime.segment_contracts import GuardResult
 from src.story.runtime.director import SdkDirector
 from src.story.runtime.guard import Guard
 from src.story.runtime.model import build_model_bundle
+from src.story.runtime.segment_contracts import GuardResult
 from src.story.runtime.segment_writer import SdkSegmentWriter
 from src.story.script_pack import compile_script_pack
 from src.story.state import StoryPhase, initial_session_state

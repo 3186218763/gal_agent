@@ -2477,6 +2477,7 @@ cd backend && python -m pytest tests/ -x --ignore=tests/live -q 2>&1 | tail -20
 git add -A && git commit -m "refactor: reshape StreamingSceneGenerator into plan-consuming adapter
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
+```
 
 **IMPORTANT:** The `generate_scene()` method now raises `RuntimeError`. The `RuntimeService.advance_streamed()` method at `service.py:310` calls it. Add a compatibility step:
 

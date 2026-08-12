@@ -35,6 +35,9 @@ Rules:
 - Use only IDs, locations, characters, goals, facts, and action IDs from the input.
 - Never choose a latent fact value outside its listed candidates.
 - Do not invent new character IDs, location IDs, or action IDs.
+- present_character_ids must contain ONLY character IDs from the provided "characters"
+  list. The protagonist is the player character, not part of that list — never put
+  "protagonist" in present_character_ids.
 - Write all summaries in the script pack language.
 - Return only the requested structured contract."""
 
