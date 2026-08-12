@@ -6,38 +6,24 @@ import pytest
 
 from src.story.runtime.contracts import (
     ActionResolution,
-    ChoicePlan,
     DecisionRequired,
-    EndingDraft,
     ModelContractError,
     RuntimeGenerationUnavailable,
     RuntimeRevisionConflict,
-    SceneDraft,
-    ScenePlan,
-    WrittenChoice,
 )
 from src.story.runtime.service import RuntimeService
 from src.story.runtime.simulator import simulate_scene
 from src.story.script_pack import compile_source
-from src.story.state import NarrativeBlock, SessionStatus, initial_session_state
+from src.story.state import SessionStatus, initial_session_state
 from src.story.storage import StoryEventStore
+from tests.fakes import (
+    FakePlanner,
+    FakeWriter,
+    valid_continue_plan,
+    valid_decision_plan,
+    valid_scene_draft,
+)
 from tests.story_factories import minimal_script_pack_dict
-
-
-class FakePlanner:
-    async def plan_scene(self, pack, state):
-        return valid_decision_plan()
-
-    async def resolve_action(self, pack, state, choice):
-        return ActionResolution(action_id=choice.action_id, outcome="success")
-
-
-class FakeWriter:
-    async def write_scene(self, pack, state, plan):
-        return valid_scene_draft(plan)
-
-    async def write_ending(self, pack, state, ending):
-        return valid_ending_draft(ending)
 
 
 class ContractFailingPlanner:
@@ -60,50 +46,6 @@ class CountingPlanner:
     async def resolve_action(self, pack, state, choice):
         self.resolution_calls += 1
         return ActionResolution(action_id=choice.action_id, outcome="success")
-
-
-def valid_decision_plan() -> ScenePlan:
-    return ScenePlan(
-        scene_id="scene_01",
-        summary="Alice waits for the protagonist to choose.",
-        location_id="cafe",
-        present_character_ids=("alice",),
-        terminal="decision",
-        decision_id="decision_01",
-        choices=(
-            ChoicePlan(option_id="ask", action_id="ask", intent="ask directly"),
-            ChoicePlan(option_id="observe", action_id="observe", intent="watch carefully"),
-        ),
-    )
-
-
-def valid_continue_plan() -> ScenePlan:
-    return ScenePlan(
-        scene_id="scene_continue_01",
-        summary="Alice shows the protagonist around the cafe.",
-        location_id="cafe",
-        present_character_ids=("alice",),
-        terminal="continue",
-    )
-
-
-def valid_scene_draft(plan: ScenePlan) -> SceneDraft:
-    return SceneDraft(
-        scene_id=plan.scene_id,
-        blocks=(NarrativeBlock(kind="narration", text="The cafe hums quietly."),),
-        choices=tuple(
-            WrittenChoice(option_id=item.option_id, label=item.intent[:80])
-            for item in plan.choices
-        ),
-    )
-
-
-def valid_ending_draft(ending) -> EndingDraft:
-    return EndingDraft(
-        ending_id=ending.id,
-        title=ending.title,
-        blocks=(NarrativeBlock(kind="narration", text=f"Ending: {ending.title}"),),
-    )
 
 
 def service_fixture(tmp_path: Path, planner=None, writer=None):

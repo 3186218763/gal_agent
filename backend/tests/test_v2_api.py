@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,83 +12,20 @@ from openai import OpenAIError
 
 from src.story.api import AppDependencies, ScriptPackRegistry, create_app
 from src.story.runtime.config import ConfigurationError
-from src.story.runtime.contracts import (
-    ActionResolution,
-    ChoicePlan,
-    EndingDraft,
-    ModelContractError,
-    SceneDraft,
-    ScenePlan,
-    StreamingGeneratorPort,
-    WrittenChoice,
-)
+from src.story.runtime.contracts import ModelContractError, StreamingGeneratorPort
 from src.story.runtime.service import RuntimeService
-from src.story.state import NarrativeBlock, initial_session_state
+from src.story.state import initial_session_state
 from src.story.storage import StoryEventStore
+from tests.fakes import (
+    FakePlanner,
+    FakeStreamingGenerator,
+    FakeWriter,
+)
 from tests.story_factories import minimal_script_pack_dict
 
 # ---------------------------------------------------------------------------
-# Fakes
+# Test-specific fakes (not shared)
 # ---------------------------------------------------------------------------
-
-
-class FakePlanner:
-    async def plan_scene(self, pack, state):
-        return valid_decision_plan()
-
-    async def resolve_action(self, pack, state, choice):
-        return ActionResolution(action_id=choice.action_id, outcome="success")
-
-
-class FakeWriter:
-    async def write_scene(self, pack, state, plan):
-        return valid_scene_draft(plan)
-
-    async def write_ending(self, pack, state, ending):
-        return EndingDraft(
-            ending_id=ending.id,
-            title=ending.title,
-            blocks=(NarrativeBlock(kind="narration", text=f"Ending: {ending.title}"),),
-        )
-
-
-class FakeStreamingGenerator:
-    """Fake StreamingGeneratorPort that yields canned blocks + choices."""
-
-    def __init__(
-        self,
-        blocks: list[dict[str, Any]] | None = None,
-        complete: dict[str, Any] | None = None,
-    ) -> None:
-        self._blocks = blocks if blocks is not None else [
-            {"kind": "narration", "text": "The cafe hums quietly."},
-        ]
-        self._complete = complete or {
-            "scene_id": "scene_01",
-            "terminal": "decision",
-            "decision_id": "decision_01",
-            "choices": [
-                {
-                    "option_id": "ask",
-                    "action_id": "ask",
-                    "label": "ask directly",
-                    "intent": "ask directly",
-                },
-                {
-                    "option_id": "observe",
-                    "action_id": "observe",
-                    "label": "watch carefully",
-                    "intent": "watch carefully",
-                },
-            ],
-        }
-
-    async def generate_scene(
-        self, pack, state
-    ) -> AsyncGenerator[tuple[str, dict[str, Any]], None]:
-        for blk in self._blocks:
-            yield ("block", blk)
-        yield ("complete", self._complete)
 
 
 class ProviderFailingGenerator:
@@ -102,32 +38,6 @@ class ContractFailingGenerator:
     async def generate_scene(self, pack, state):
         raise ModelContractError("planner contract failed")
         yield  # type: ignore[unreachable]
-
-
-def valid_decision_plan() -> ScenePlan:
-    return ScenePlan(
-        scene_id="scene_01",
-        summary="Alice waits for the protagonist to choose.",
-        location_id="cafe",
-        present_character_ids=("alice",),
-        terminal="decision",
-        decision_id="decision_01",
-        choices=(
-            ChoicePlan(option_id="ask", action_id="ask", intent="ask directly"),
-            ChoicePlan(option_id="observe", action_id="observe", intent="watch carefully"),
-        ),
-    )
-
-
-def valid_scene_draft(plan: ScenePlan) -> SceneDraft:
-    return SceneDraft(
-        scene_id=plan.scene_id,
-        blocks=(NarrativeBlock(kind="narration", text="The cafe hums quietly."),),
-        choices=tuple(
-            WrittenChoice(option_id=item.option_id, label=item.intent[:80])
-            for item in plan.choices
-        ),
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -422,3 +422,41 @@ class TestPackV2Factory:
         if req.evidence_hints.goal_ids:
             for gid in req.evidence_hints.goal_ids:
                 assert gid in compiled.goal_ids
+
+
+# ---------------------------------------------------------------------------
+# Task 6: fakes module smoke tests
+# ---------------------------------------------------------------------------
+
+
+class TestFakesModule:
+    @pytest.mark.asyncio
+    async def test_fake_planner_returns_decision_plan(self):
+        from tests.fakes import FakePlanner
+
+        planner = FakePlanner()
+        plan = await planner.plan_scene(None, None)
+        assert plan.terminal == "decision"
+        assert len(plan.choices) == 2
+
+    @pytest.mark.asyncio
+    async def test_fake_writer_returns_scene_draft(self):
+        from tests.fakes import FakeWriter, valid_decision_plan
+
+        writer = FakeWriter()
+        plan = valid_decision_plan()
+        draft = await writer.write_scene(None, None, plan)
+        assert draft.scene_id == plan.scene_id
+        assert len(draft.blocks) >= 1
+
+    @pytest.mark.asyncio
+    async def test_fake_streaming_generator_yields_blocks_then_complete(self):
+        from tests.fakes import FakeStreamingGenerator
+
+        gen = FakeStreamingGenerator()
+        results = []
+        async for kind, data in gen.generate_scene(None, None):
+            results.append((kind, data))
+        # Last should be "complete", all before should be "block"
+        assert results[-1][0] == "complete"
+        assert all(r[0] == "block" for r in results[:-1])
