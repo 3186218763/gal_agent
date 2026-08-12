@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Protocol
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from src.story.runtime.contracts import (
     EndingDraft,
@@ -50,12 +50,27 @@ class ThreadOperation(RuntimeModel):
 
 class SegmentPlan(RuntimeModel):
     segment_id: str
-    scenes: tuple[ScenePlan, ...] = Field(min_length=1)
+    scenes: tuple[ScenePlan, ...]
     terminal: Literal["decision", "ending"]
     ending_proposal: EndingProposal | None = None
     thread_ops: tuple[ThreadOperation, ...] = ()
     new_facts: tuple[FactCommitPlan, ...] = ()
     phase_after: StoryPhase | None = None
+
+    @model_validator(mode="after")
+    def validate_segment(self) -> SegmentPlan:
+        if len(self.scenes) < 1:
+            raise ValueError("segment must have at least 1 scene")
+        for i, scene in enumerate(self.scenes[:-1]):
+            if scene.terminal != "continue":
+                raise ValueError(
+                    f"non-last scene at index {i} must have terminal='continue'"
+                )
+        if self.terminal == "ending" and self.ending_proposal is None:
+            raise ValueError(
+                "ending_proposal is required when terminal is 'ending'"
+            )
+        return self
 
 
 class SegmentDraft(RuntimeModel):

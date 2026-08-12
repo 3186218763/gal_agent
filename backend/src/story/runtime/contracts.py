@@ -54,8 +54,11 @@ class ScenePlan(RuntimeModel):
         if self.terminal == "decision":
             if self.decision_id is None or not 2 <= len(self.choices) <= 4:
                 raise ValueError("decision scenes require decision_id and 2-4 choices")
+        elif self.terminal == "ending":
+            if self.decision_id is not None or self.choices:
+                raise ValueError("ending scenes cannot contain choices or decision_id")
         elif self.decision_id is not None or self.choices:
-            raise ValueError("non-decision scenes cannot contain a decision")
+            raise ValueError("continue scenes cannot contain a decision")
         return self
 
 
@@ -229,3 +232,22 @@ class RuntimeSessionEnded(RuntimeError):
 
 class PackMismatch(RuntimeError):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Agent SDK output wrappers (Plan 3)
+# ---------------------------------------------------------------------------
+
+from src.story.runtime.segment_contracts import SegmentDraft, SegmentPlan
+
+
+class DirectorOutput(RuntimeModel):
+    """Agent SDK output wrapper for Segment Director."""
+
+    segment_plan: SegmentPlan
+
+
+class SegmentWriterOutput(RuntimeModel):
+    """Agent SDK output wrapper for Segment Writer."""
+
+    segment_draft: SegmentDraft

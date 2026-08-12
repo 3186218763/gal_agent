@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from src.story.runtime.contracts import (
     ChoicePlan,
@@ -133,16 +134,13 @@ def test_ending_before_min_scenes_rejected():
 
 
 def test_ending_without_proposal_rejected():
-    pack = _make_pack()
-    state = _make_state()
-    pacing = _make_pacing(can_end=True)
-    plan = SegmentPlan(
-        segment_id="seg_02",
-        scenes=(_make_continue_scene(),),
-        terminal="ending",
-    )
-    with pytest.raises(ProposalRejected, match="ending_proposal"):
-        validate_segment_plan(pack, state, plan, pacing)
+    """Model-level validator now enforces ending_proposal at construction time."""
+    with pytest.raises(ValidationError, match="ending_proposal"):
+        SegmentPlan(
+            segment_id="seg_02",
+            scenes=(_make_continue_scene(),),
+            terminal="ending",
+        )
 
 
 def test_must_end_forces_ending():
