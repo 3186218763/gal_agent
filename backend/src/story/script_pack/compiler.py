@@ -133,7 +133,7 @@ def _duplicate_ids(label: str, values: Iterable[str]) -> list[str]:
     ]
 
 
-def _condition_entries(source: ScriptPackSourceV1) -> Iterable[tuple[str, str]]:
+def _v1_condition_entries(source: ScriptPackSourceV1) -> Iterable[tuple[str, str]]:
     for fact in source.facts.derived:
         yield f"fact.{fact.id}.derived", fact.condition
     for question in source.facts.latent_questions:
@@ -180,12 +180,12 @@ def _condition_reference_errors(
     return errors
 
 
-def _compile_programs(
-    source: ScriptPackSourceV1,
+def _compile_programs_from(
+    entries: Iterable[tuple[str, str]],
 ) -> tuple[dict[str, ConditionProgram], list[str]]:
     programs: dict[str, ConditionProgram] = {}
     errors: list[str] = []
-    for key, expression in _condition_entries(source):
+    for key, expression in entries:
         try:
             programs[key] = compile_condition(expression)
         except ConditionSyntaxError as exc:
@@ -398,29 +398,21 @@ def _pack_factions(source: ScriptPackSourceV1 | ScriptPackSourceV2):
     return source.world.factions
 
 
-def _compile_programs_v2(
-    source: ScriptPackSourceV2,
-) -> tuple[dict[str, ConditionProgram], list[str]]:
-    programs: dict[str, ConditionProgram] = {}
-    errors: list[str] = []
-    for key, expression in _v2_condition_entries(source):
-        try:
-            programs[key] = compile_condition(expression)
-        except ConditionSyntaxError as exc:
-            errors.append(f"{key}: {exc}")
-    return programs, errors
-
-
 def compile_source(
     raw: Mapping[str, Any] | ScriptPackSource,
 ) -> CompiledScriptPack:
     if isinstance(raw, ScriptPackSource):
         source = raw
     else:
+        version = raw.get("schema_version", "1.0")
+        if version not in ("1.0", "2.0"):
+            raise PackCompileError(
+                f"Unknown schema_version: {version!r} (supported: '1.0', '2.0')"
+            )
         try:
             source = (
                 ScriptPackSourceV1.model_validate(raw)
-                if raw.get("schema_version", "1.0") == "1.0"
+                if version == "1.0"
                 else ScriptPackSourceV2.model_validate(raw)
             )
         except ValidationError as exc:
@@ -482,7 +474,7 @@ def compile_source(
                 source, character_ids, fixed_ids, fact_ids, goal_ids, action_ids
             )
         )
-        programs, condition_errors = _compile_programs_v2(source)
+        programs, condition_errors = _compile_programs_from(_v2_condition_entries(source))
         ending_ids: set[str] = set()
         completion_requirement_ids = {req.id for req in source.completion_requirements}
     else:
@@ -505,7 +497,7 @@ def compile_source(
                 action_ids,
             )
         )
-        programs, condition_errors = _compile_programs(source)
+        programs, condition_errors = _compile_programs_from(_v1_condition_entries(source))
         ending_ids = {item.id for item in source.endings}
         completion_requirement_ids: set[str] = set()
 

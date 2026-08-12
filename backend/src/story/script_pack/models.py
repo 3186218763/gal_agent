@@ -32,6 +32,7 @@ class ExperienceSource(StrictModel):
     min_scenes: int = Field(ge=4, le=200)
     max_scenes: int = Field(ge=8, le=240)
     reserved_resolution_scenes: int = Field(default=3, ge=1, le=8)
+    # Forbidden content for v1.0 packs; v2.0 reads from WorldSettingSource instead.
     forbidden_content: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -229,6 +230,7 @@ class WorldSettingSource(StrictModel):
     immutable_rules: tuple[str, ...] = ()
     locations: tuple[LocationSource, ...] = Field(min_length=1)
     factions: tuple[FactionSource, ...] = ()
+    # Authoritative forbidden_content source for v2.0 packs (read by _get_forbidden_content).
     forbidden_content: tuple[str, ...] = ()
     fact_rules: tuple[str, ...] = ()
 
