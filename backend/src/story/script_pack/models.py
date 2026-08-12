@@ -253,7 +253,35 @@ class OpeningStateSource(StrictModel):
 
 
 class ScriptPackSource(StrictModel):
-    schema_version: Literal["1.0"]
+    """Discriminated union of v1.0 and v2.0 pack sources via schema_version.
+
+    ``model_validate`` inspects ``schema_version`` and dispatches to
+    :class:`ScriptPackSourceV1` or :class:`ScriptPackSourceV2`.  Because both
+    subclasses inherit from this class, ``isinstance(x, ScriptPackSource)``
+    works directly for either variant.
+    """
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _dispatch_by_version(cls, data, handler):
+        # When validating a concrete subclass directly, defer to normal
+        # field validation so the wrap validator does not recurse.
+        if cls is not ScriptPackSource:
+            return handler(data)
+        if isinstance(data, (ScriptPackSourceV1, ScriptPackSourceV2)):
+            return data
+        if isinstance(data, dict):
+            version = data.get("schema_version")
+            if version == "1.0":
+                return ScriptPackSourceV1.model_validate(data)
+            if version == "2.0":
+                return ScriptPackSourceV2.model_validate(data)
+            raise ValueError(f"Unknown schema_version: {version}")
+        raise ValueError(f"Cannot validate {type(data)} as ScriptPackSource")
+
+
+class ScriptPackSourceV1(ScriptPackSource):
+    schema_version: Literal["1.0"] = "1.0"
     identity: IdentitySource
     experience: ExperienceSource
     protagonist: ProtagonistSource
@@ -266,6 +294,22 @@ class ScriptPackSource(StrictModel):
     assets: dict[str, Any] = Field(default_factory=dict)
 
 
+class ScriptPackSourceV2(ScriptPackSource):
+    schema_version: Literal["2.0"] = "2.0"
+    identity: IdentitySource
+    experience: ExperienceSource
+    protagonist: ProtagonistSource
+    world_setting: WorldSettingSource
+    story_history: StoryHistorySource
+    opening_state: OpeningStateSource
+    characters: tuple[CharacterSource, ...] = Field(min_length=1)
+    facts: FactsSource
+    goals: tuple[GoalSource, ...] = Field(min_length=1)
+    completion_requirements: tuple[CompletionRequirementSource, ...] = Field(min_length=1)
+    interaction_rules: InteractionRulesSource
+    assets: dict[str, Any] = Field(default_factory=dict)
+
+
 class CompiledScriptPack(StrictModel):
     source: ScriptPackSource
     pack_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -275,3 +319,4 @@ class CompiledScriptPack(StrictModel):
     goal_ids: frozenset[str]
     ending_ids: frozenset[str]
     action_ids: frozenset[str]
+    completion_requirement_ids: frozenset[str] = frozenset()
