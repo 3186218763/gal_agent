@@ -149,10 +149,24 @@ class PendingDecisionReference(FrozenModel):
 class EndingRuntime(FrozenModel):
     ending_id: str
     entered_at_revision: int = Field(ge=1)
-    required_payoffs: tuple[str, ...]
-    final_scene_budget: int = Field(ge=1)
+    required_payoffs: tuple[str, ...] = ()
+    final_scene_budget: int = Field(default=1, ge=1)
     title: str = Field(min_length=1, max_length=120)
     blocks: tuple[NarrativeBlock, ...] = Field(min_length=1)
+    tone: str | None = None
+    terminal_state_summary: str | None = None
+
+
+class CompletionAssessmentRecord(FrozenModel):
+    requirement_id: str
+    satisfied: bool
+    cited_event_ids: tuple[str, ...] = ()
+    rationale: str = ""
+
+
+class CompletionState(FrozenModel):
+    cleared: bool
+    assessments: tuple[CompletionAssessmentRecord, ...]
 
 
 class WorldSnapshot(FrozenModel):
@@ -184,6 +198,7 @@ class SessionState(FrozenModel):
     pending_scene: PendingSceneReference | None = None
     pending_decision: PendingDecisionReference | None = None
     ending: EndingRuntime | None = None
+    completion: CompletionState | None = None
 
 
 def initial_session_state(
