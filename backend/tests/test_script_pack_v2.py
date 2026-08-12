@@ -265,3 +265,73 @@ class TestScriptPackSourceV2:
 
         source = ScriptPackSource.model_validate(minimal_script_pack_dict())
         assert source.schema_version == "1.0"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Compiler v2.0 branch
+# ---------------------------------------------------------------------------
+
+from src.story.script_pack.compiler import PackCompileError, compile_source
+
+
+class TestCompileV2:
+    def test_v2_compiles_and_sets_completion_requirement_ids(self):
+        compiled = compile_source(_minimal_v2_raw())
+        assert compiled.completion_requirement_ids == frozenset({"understand_truth"})
+        assert compiled.ending_ids == frozenset()
+
+    def test_v2_hash_is_stable(self):
+        first = compile_source(_minimal_v2_raw())
+        second = compile_source(_minimal_v2_raw())
+        assert first.pack_hash == second.pack_hash
+
+    def test_v2_rejects_duplicate_completion_requirement_ids(self):
+        raw = _minimal_v2_raw()
+        raw["completion_requirements"].append(dict(raw["completion_requirements"][0]))
+        with pytest.raises(PackCompileError, match="duplicate completion_requirement id"):
+            compile_source(raw)
+
+    def test_v2_rejects_unknown_fact_in_evidence_hints(self):
+        raw = _minimal_v2_raw()
+        raw["completion_requirements"][0]["evidence_hints"] = {
+            "fact_ids": ["nonexistent_fact"],
+        }
+        with pytest.raises(PackCompileError, match="nonexistent_fact"):
+            compile_source(raw)
+
+    def test_v2_rejects_unknown_goal_in_evidence_hints(self):
+        raw = _minimal_v2_raw()
+        raw["completion_requirements"][0]["evidence_hints"] = {
+            "goal_ids": ["nonexistent_goal"],
+        }
+        with pytest.raises(PackCompileError, match="nonexistent_goal"):
+            compile_source(raw)
+
+    def test_v2_validates_opening_state_location(self):
+        raw = _minimal_v2_raw()
+        raw["opening_state"]["location"] = "nonexistent_location"
+        with pytest.raises(PackCompileError, match="nonexistent_location"):
+            compile_source(raw)
+
+    def test_v2_validates_opening_state_known_facts_are_fixed(self):
+        raw = _minimal_v2_raw()
+        raw["opening_state"]["known_facts"] = ["who_took_notebook"]
+        raw["facts"]["latent_questions"] = [
+            {
+                "id": "who_took_notebook",
+                "question": "Who took it?",
+                "candidates": [
+                    {"value": "alice", "weight": 1.0},
+                    {"value": "bob", "weight": 1.0},
+                ],
+                "commit_when": ["explicit_revelation"],
+                "evidence_required": 1,
+            }
+        ]
+        with pytest.raises(PackCompileError, match="opening known fact must be fixed"):
+            compile_source(raw)
+
+    def test_v2_skips_fallback_check(self):
+        """v2.0 must compile even though it has no fallback endings at all."""
+        compiled = compile_source(_minimal_v2_raw())
+        assert compiled.source.schema_version == "2.0"
