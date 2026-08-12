@@ -11,6 +11,7 @@ from src.story.state import (
     FactTruthStatus,
     FactVisibility,
     NarrativeBlock,
+    PendingDecisionReference,
     PhaseAdvanced,
     PlayerActionSelected,
     PresentedChoice,
@@ -18,11 +19,20 @@ from src.story.state import (
     SceneAcknowledged,
     SceneCommitted,
     SessionEnded,
+    SessionState,
+    SessionStatus,
     StoryPhase,
+    WorldSnapshot,
     apply_event,
     apply_events,
     initial_session_state,
 )
+from src.story.state.events import (
+    CompletionEvaluated,
+    DecisionPresented,
+    EndingGenerated,
+)
+from src.story.state.models import CompletionAssessmentRecord
 from src.story.state.reducer import StateTransitionError
 from tests.story_factories import minimal_script_pack_dict
 
@@ -367,3 +377,192 @@ def test_ended_session_rejects_new_events():
                 RelationshipChanged(character_id="alice", axis="trust", delta=1),
             ),
         )
+
+
+def test_decision_presented_event_serialization():
+    event = DecisionPresented(
+        decision_id="dec_01",
+        choices=(
+            PresentedChoice(id="opt_a", action_id="ask", label="Ask", intent="Ask directly"),
+            PresentedChoice(id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"),
+        ),
+    )
+    assert event.type == "decision_presented"
+    assert len(event.choices) == 2
+
+
+def test_ending_generated_event_serialization():
+    event = EndingGenerated(
+        ending_id="ending_sess_001",
+        title="The Long Goodbye",
+        tone="bittersweet",
+        terminal_state_summary="Alice left the city.",
+        blocks=(NarrativeBlock(kind="narration", text="They parted."),),
+    )
+    assert event.type == "ending_generated"
+    assert event.tone == "bittersweet"
+
+
+def test_completion_evaluated_event_serialization():
+    event = CompletionEvaluated(
+        cleared=True,
+        assessments=(
+            CompletionAssessmentRecord(
+                requirement_id="req_a",
+                satisfied=True,
+                rationale="Fact committed",
+            ),
+        ),
+    )
+    assert event.type == "completion_evaluated"
+    assert event.cleared is True
+
+
+def test_scene_committed_default_terminal_is_continue():
+    event = SceneCommitted(
+        scene_id="scene_01",
+        location_id="cafe",
+        present_character_ids=("alice",),
+        blocks=(NarrativeBlock(kind="narration", text="A quiet day."),),
+    )
+    assert event.terminal == "continue"
+    assert event.decision_id is None
+    assert event.choices == ()
+
+
+# ---------------------------------------------------------------------------
+# Reducer tests for new segment-engine event types
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_state(revision=0, **overrides):
+    world = WorldSnapshot(
+        location_id="cafe",
+        time_label="opening",
+        present_character_ids=("alice",),
+        max_scenes=20,
+        reserved_resolution_scenes=3,
+    )
+    base = SessionState(
+        session_id="s1",
+        pack_id="test_pack",
+        pack_hash="abcd" * 16,
+        revision=revision,
+        session_seed=1,
+        world=world,
+        facts={},
+        characters={},
+    )
+    return base.model_copy(update=overrides)
+
+
+def test_decision_presented_sets_pending_decision():
+    state = _make_minimal_state(revision=4)
+    event = DecisionPresented(
+        decision_id="dec_01",
+        choices=(
+            PresentedChoice(id="opt_a", action_id="ask", label="Ask", intent="Ask directly"),
+            PresentedChoice(id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"),
+        ),
+    )
+    envelope = EventEnvelope(session_id="s1", sequence=5, event=event)
+    result = apply_event(state, envelope)
+    assert result.pending_decision is not None
+    assert result.pending_decision.decision_id == "dec_01"
+    assert len(result.pending_decision.choices) == 2
+
+
+def test_decision_presented_rejects_duplicate():
+    state = _make_minimal_state(
+        revision=4,
+        pending_decision=PendingDecisionReference(
+            decision_id="old",
+            scene_id="scene_0",
+            revision=4,
+            choices=(
+                PresentedChoice(id="x", action_id="ask", label="X", intent="x"),
+                PresentedChoice(id="y", action_id="ask", label="Y", intent="y"),
+            ),
+        ),
+    )
+    event = DecisionPresented(
+        decision_id="dec_01",
+        choices=(
+            PresentedChoice(id="opt_a", action_id="ask", label="Ask", intent="Ask directly"),
+            PresentedChoice(id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"),
+        ),
+    )
+    envelope = EventEnvelope(session_id="s1", sequence=5, event=event)
+    with pytest.raises(StateTransitionError, match="already pending"):
+        apply_event(state, envelope)
+
+
+def test_ending_generated_sets_ending_and_resolving():
+    state = _make_minimal_state(revision=9)
+    event = EndingGenerated(
+        ending_id="ending_s1_10",
+        title="The Long Goodbye",
+        tone="bittersweet",
+        terminal_state_summary="Alice left the city.",
+        blocks=(NarrativeBlock(kind="narration", text="They parted."),),
+    )
+    envelope = EventEnvelope(session_id="s1", sequence=10, event=event)
+    result = apply_event(state, envelope)
+    assert result.status == SessionStatus.RESOLVING
+    assert result.ending is not None
+    assert result.ending.ending_id == "ending_s1_10"
+    assert result.ending.tone == "bittersweet"
+    assert result.world.phase == StoryPhase.RESOLUTION
+
+
+def test_ending_generated_rejects_if_ending_exists():
+    existing_ending = EndingRuntime(
+        ending_id="old",
+        entered_at_revision=5,
+        title="Old",
+        blocks=(NarrativeBlock(kind="narration", text="."),),
+    )
+    state = _make_minimal_state(revision=9, ending=existing_ending)
+    event = EndingGenerated(
+        ending_id="new",
+        title="New",
+        tone="sad",
+        terminal_state_summary="Bye",
+        blocks=(NarrativeBlock(kind="narration", text="."),),
+    )
+    envelope = EventEnvelope(session_id="s1", sequence=10, event=event)
+    with pytest.raises(StateTransitionError, match="ending already"):
+        apply_event(state, envelope)
+
+
+def test_completion_evaluated_sets_completion():
+    ending = EndingRuntime(
+        ending_id="e1",
+        entered_at_revision=10,
+        title="End",
+        blocks=(NarrativeBlock(kind="narration", text="."),),
+    )
+    state = _make_minimal_state(revision=10, ending=ending)
+    event = CompletionEvaluated(
+        cleared=True,
+        assessments=(
+            CompletionAssessmentRecord(
+                requirement_id="req_a",
+                satisfied=True,
+                rationale="ok",
+            ),
+        ),
+    )
+    envelope = EventEnvelope(session_id="s1", sequence=11, event=event)
+    result = apply_event(state, envelope)
+    assert result.completion is not None
+    assert result.completion.cleared is True
+    assert len(result.completion.assessments) == 1
+
+
+def test_completion_evaluated_rejects_without_ending():
+    state = _make_minimal_state(revision=10)
+    event = CompletionEvaluated(cleared=False, assessments=())
+    envelope = EventEnvelope(session_id="s1", sequence=11, event=event)
+    with pytest.raises(StateTransitionError, match="ending"):
+        apply_event(state, envelope)

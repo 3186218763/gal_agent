@@ -34,7 +34,13 @@ from src.story.runtime.contracts import (
 )
 from src.story.runtime.model import build_model_bundle
 from src.story.runtime.planner import SdkPlanner
+from src.story.runtime.segment_contracts import (
+    DirectorPort,
+    GuardPort,
+    SegmentWriterPort,
+)
 from src.story.runtime.service import RuntimeService
+from src.story.runtime.turn_orchestrator import TurnOrchestrator
 from src.story.runtime.writer import SdkWriter
 from src.story.script_pack import PackCompileError, compile_script_pack
 from src.story.script_pack.models import CompiledScriptPack
@@ -67,7 +73,11 @@ class ScriptPackRegistry:
 class AppDependencies:
     store: StoryEventStore
     registry: ScriptPackRegistry
-    runtime: RuntimeService
+    runtime: RuntimeService | None = None
+    orchestrator: TurnOrchestrator | None = None
+    director: DirectorPort | None = None
+    segment_writer: SegmentWriterPort | None = None
+    guard: GuardPort | None = None
 
 
 def default_dependencies() -> AppDependencies:
@@ -98,6 +108,12 @@ class RevisionRequest(BaseModel):
 
 class ChoiceRequest(RevisionRequest):
     pass
+
+
+class TurnRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=120)
+    choice_id: str | None = None
 
 
 def _sse_error(code: str) -> str:
@@ -172,6 +188,11 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
         response_class=StreamingResponse,
     )
     async def advance(session_id: str, command: RevisionRequest):
+        if deps.runtime is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "runtime_not_configured"},
+            )
         state = deps.store.load_session(session_id)
         pack = deps.registry.get(state.pack_id)
 
@@ -211,6 +232,11 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
         choice_id: str,
         command: ChoiceRequest,
     ) -> ActionResult:
+        if deps.runtime is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "runtime_not_configured"},
+            )
         state = deps.store.load_session(session_id)
         pack = deps.registry.get(state.pack_id)
         return await deps.runtime.select_choice(
@@ -219,6 +245,46 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
             choice_id,
             command.expected_revision,
             command.idempotency_key,
+        )
+
+    @app.post(
+        "/api/v2/sessions/{session_id}/turns",
+        response_class=StreamingResponse,
+    )
+    async def execute_turn(session_id: str, command: TurnRequest):
+        if deps.orchestrator is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "turn_orchestrator_not_configured"},
+            )
+        pack = deps.registry.get(deps.store.load_session(session_id).pack_id)
+
+        async def event_stream():
+            try:
+                async for event_type, data in deps.orchestrator.execute_turn(
+                    pack,
+                    session_id,
+                    command.expected_revision,
+                    command.idempotency_key,
+                    command.choice_id,
+                ):
+                    yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            except (RuntimeRevisionConflict, RevisionConflict):
+                yield _sse_error("revision_conflict")
+            except DecisionRequired:
+                yield _sse_error("decision_required")
+            except RuntimeSessionEnded:
+                yield _sse_error("session_ended")
+            except PackMismatch:
+                yield _sse_error("pack_mismatch")
+            except (OpenAIError, RuntimeGenerationUnavailable) as exc:
+                logger.warning("turn stream failed: %s", exc)
+                yield _sse_error("generation_unavailable")
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     return app
@@ -231,6 +297,7 @@ __all__ = [
     "PackNotFound",
     "RevisionRequest",
     "ScriptPackRegistry",
+    "TurnRequest",
     "create_app",
     "default_dependencies",
 ]

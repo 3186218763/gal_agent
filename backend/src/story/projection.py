@@ -16,6 +16,20 @@ from src.story.state import (
 from src.story.state.models import FrozenModel
 
 
+class EndingProjection(FrozenModel):
+    ending_id: str
+    title: str
+    tone: str
+    terminal_state_summary: str
+
+
+class CompletionSummary(FrozenModel):
+    requirement_id: str
+    description: str
+    satisfied: bool
+    rationale: str
+
+
 class PackCharacterProjection(FrozenModel):
     character_id: str
     name: str
@@ -51,6 +65,14 @@ class SessionProjection(FrozenModel):
     location_id: str
     time_label: str
     present_character_ids: tuple[str, ...]
+    # Segment-engine fields (populated from DecisionPresented /
+    # EndingGenerated / CompletionEvaluated events).
+    segment_blocks: tuple[NarrativeBlock, ...] = ()
+    segment_revision: int | None = None
+    segment_choices: tuple[PresentedChoice, ...] = ()
+    segment_ending: EndingProjection | None = None
+    cleared: bool | None = None
+    completion_summaries: tuple[CompletionSummary, ...] = ()
 
 
 def project_pack(pack: CompiledScriptPack) -> PackProjection:
@@ -77,7 +99,10 @@ def project_pack(pack: CompiledScriptPack) -> PackProjection:
     )
 
 
-def project_session(state: SessionState) -> SessionProjection:
+def project_session(
+    state: SessionState,
+    pack: CompiledScriptPack | None = None,
+) -> SessionProjection:
     if state.pending_scene is not None:
         scene_id = state.pending_scene.scene_id
         blocks = state.pending_scene.blocks
@@ -87,6 +112,60 @@ def project_session(state: SessionState) -> SessionProjection:
     else:
         scene_id = None
         blocks = ()
+
+    # --- segment-engine projections -------------------------------------
+    segment_blocks = blocks
+
+    segment_revision = (
+        state.pending_decision.revision
+        if state.pending_decision is not None
+        else None
+    )
+    segment_choices = (
+        state.pending_decision.choices
+        if state.pending_decision is not None
+        else ()
+    )
+
+    # Only dynamically-generated endings (EndingGenerated) carry tone and
+    # terminal_state_summary; plain EndingEntered does not.
+    segment_ending: EndingProjection | None = None
+    if (
+        state.ending is not None
+        and state.ending.tone is not None
+        and state.ending.terminal_state_summary is not None
+    ):
+        segment_ending = EndingProjection(
+            ending_id=state.ending.ending_id,
+            title=state.ending.title,
+            tone=state.ending.tone,
+            terminal_state_summary=state.ending.terminal_state_summary,
+        )
+
+    cleared = state.completion.cleared if state.completion is not None else None
+
+    # Build a lookup for requirement descriptions when the pack is available.
+    req_descriptions: dict[str, str] = {}
+    if pack is not None and state.completion is not None:
+        req_descriptions = {
+            req.id: req.description
+            for req in getattr(pack.source, "completion_requirements", ())
+        }
+
+    completion_summaries: tuple[CompletionSummary, ...] = ()
+    if state.completion is not None:
+        completion_summaries = tuple(
+            CompletionSummary(
+                requirement_id=assessment.requirement_id,
+                description=req_descriptions.get(
+                    assessment.requirement_id, assessment.rationale
+                ),
+                satisfied=assessment.satisfied,
+                rationale=assessment.rationale,
+            )
+            for assessment in state.completion.assessments
+        )
+
     return SessionProjection(
         session_id=state.session_id,
         pack_id=state.pack_id,
@@ -109,10 +188,18 @@ def project_session(state: SessionState) -> SessionProjection:
         location_id=state.world.location_id,
         time_label=state.world.time_label,
         present_character_ids=state.world.present_character_ids,
+        segment_blocks=segment_blocks,
+        segment_revision=segment_revision,
+        segment_choices=segment_choices,
+        segment_ending=segment_ending,
+        cleared=cleared,
+        completion_summaries=completion_summaries,
     )
 
 
 __all__ = [
+    "CompletionSummary",
+    "EndingProjection",
     "PackCharacterProjection",
     "PackLocationProjection",
     "PackProjection",

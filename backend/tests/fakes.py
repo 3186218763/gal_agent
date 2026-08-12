@@ -6,6 +6,7 @@ and test_story_cli_live.py.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -16,6 +17,14 @@ from src.story.runtime.contracts import (
     SceneDraft,
     ScenePlan,
     WrittenChoice,
+)
+from src.story.runtime.segment_contracts import (
+    EndingProposal,
+    GuardResult,
+    GuardViolation,
+    PacingEnvelope,
+    SegmentDraft,
+    SegmentPlan,
 )
 from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import NarrativeBlock, SessionState
@@ -134,3 +143,220 @@ def valid_ending_draft(ending) -> EndingDraft:
         title=ending.title,
         blocks=(NarrativeBlock(kind="narration", text=f"Ending: {ending.title}"),),
     )
+
+
+# ---------------------------------------------------------------------------
+# Segment-engine fakes (Plan 2)
+# ---------------------------------------------------------------------------
+
+
+def budget_test_pack_dict() -> dict[str, Any]:
+    """Minimal v1.0 pack dict with adjusted scene budgets for testing.
+
+    Uses the existing v1 schema but with min/max scene budget suitable for
+    multi-scene segment testing. For real v2.0 packs with completion_requirements,
+    import ``minimal_pack_v2_dict()`` from Plan 1's ``story_factories.py``.
+
+    For backward compatibility with v1.0 packs, use:
+        getattr(pack.source, "completion_requirements", ())
+    """
+    from tests.story_factories import minimal_script_pack_dict
+
+    raw = minimal_script_pack_dict()
+    raw["experience"]["min_scenes"] = 4
+    raw["experience"]["max_scenes"] = 12
+    raw["experience"]["reserved_resolution_scenes"] = 2
+    # Adjust fallback ending threshold to match reduced max_scenes.
+    for ending in raw["endings"]:
+        if ending["type"] == "fallback":
+            ending["eligibility"]["all"] = ["session.scene_count >= 11"]
+    return raw
+
+
+class FakeDirector:
+    """Returns a canned SegmentPlan. Produces decision segments until
+    pacing.must_end, then produces an ending segment."""
+
+    def __init__(self) -> None:
+        self._call_count = 0
+
+    async def plan_segment(
+        self,
+        pack: Any,
+        state: Any,
+        pacing: PacingEnvelope,
+    ) -> SegmentPlan:
+        self._call_count += 1
+        segment_id = f"seg_{state.session_id}_{self._call_count}"
+
+        if pacing.must_end:
+            return SegmentPlan(
+                segment_id=segment_id,
+                scenes=(
+                    ScenePlan(
+                        scene_id=f"scene_{segment_id}_ending",
+                        summary="The final scene",
+                        location_id=state.world.location_id,
+                        present_character_ids=state.world.present_character_ids,
+                        terminal="ending",
+                    ),
+                ),
+                terminal="ending",
+                ending_proposal=EndingProposal(
+                    title="An Ending",
+                    tone="reflective",
+                    terminal_state_summary="The story concludes.",
+                ),
+            )
+
+        return SegmentPlan(
+            segment_id=segment_id,
+            scenes=(
+                ScenePlan(
+                    scene_id=f"scene_{segment_id}",
+                    summary="A scene unfolds",
+                    location_id=state.world.location_id,
+                    present_character_ids=state.world.present_character_ids,
+                    terminal="decision",
+                    decision_id=f"dec_{segment_id}",
+                    choices=(
+                        ChoicePlan(option_id=f"opt_{segment_id}_a", action_id="ask", intent="Ask directly"),
+                        ChoicePlan(option_id=f"opt_{segment_id}_b", action_id="observe", intent="Watch carefully"),
+                    ),
+                ),
+            ),
+            terminal="decision",
+        )
+
+
+class FakeSegmentWriter:
+    """Returns canned scene drafts and endings matching a SegmentPlan."""
+
+    async def write_segment(
+        self,
+        pack: Any,
+        state: Any,
+        plan: SegmentPlan,
+    ) -> SegmentDraft:
+        scene_drafts = tuple(
+            SceneDraft(
+                scene_id=scene.scene_id,
+                blocks=(
+                    NarrativeBlock(
+                        kind="narration",
+                        text=f"The story continues in {scene.scene_id}.",
+                    ),
+                ),
+            )
+            for scene in plan.scenes
+        )
+
+        choices: tuple[WrittenChoice, ...] = ()
+        if plan.terminal == "decision":
+            last_scene = plan.scenes[-1]
+            choices = tuple(
+                WrittenChoice(option_id=c.option_id, label=c.intent[:80])
+                for c in last_scene.choices
+            )
+
+        ending = None
+        if plan.terminal == "ending" and plan.ending_proposal is not None:
+            ending_id = f"ending_{state.session_id}_{uuid.uuid4().hex[:8]}"
+            ending = EndingDraft(
+                ending_id=ending_id,
+                title=plan.ending_proposal.title,
+                blocks=(
+                    NarrativeBlock(
+                        kind="narration",
+                        text=f"{plan.ending_proposal.title}. {plan.ending_proposal.terminal_state_summary}",
+                    ),
+                ),
+                tone=plan.ending_proposal.tone,
+                terminal_state_summary=plan.ending_proposal.terminal_state_summary,
+            )
+
+        return SegmentDraft(
+            segment_id=plan.segment_id,
+            scene_drafts=scene_drafts,
+            choices=choices,
+            ending=ending,
+        )
+
+
+class FakeGuard:
+    """Always-pass guard for testing."""
+
+    def check_segment(
+        self,
+        pack: Any,
+        state: Any,
+        plan: SegmentPlan,
+        draft: SegmentDraft,
+    ) -> GuardResult:
+        return GuardResult(passed=True)
+
+
+class DeterministicGuard:
+    """Production guard with deterministic checks (per cross-plan resolution section 11)."""
+
+    def check_segment(
+        self,
+        pack: Any,
+        state: Any,
+        plan: SegmentPlan,
+        draft: SegmentDraft,
+    ) -> GuardResult:
+        violations: list[GuardViolation] = []
+
+        # Check segment/scene ID consistency between plan and draft
+        plan_scene_ids = {s.scene_id for s in plan.scenes}
+        draft_scene_ids = {s.scene_id for s in draft.scene_drafts}
+        if plan_scene_ids != draft_scene_ids:
+            violations.append(GuardViolation(
+                kind="contradiction",
+                detail=f"Scene ID mismatch: plan has {plan_scene_ids}, draft has {draft_scene_ids}",
+            ))
+
+        # Check all speakers in drafts exist in plan's present_character_ids
+        all_present_ids: set[str] = set()
+        for scene in plan.scenes:
+            all_present_ids.update(scene.present_character_ids)
+        for i, scene_draft in enumerate(draft.scene_drafts):
+            for j, block in enumerate(scene_draft.blocks):
+                if block.character_id and block.character_id not in all_present_ids:
+                    violations.append(GuardViolation(
+                        kind="wrong_speaker",
+                        block_index=i,
+                        character_id=block.character_id,
+                        detail=f"Character {block.character_id} not present in scene",
+                    ))
+
+        # Check all choice IDs in draft match plan's choice IDs
+        if plan.terminal == "decision" and plan.scenes:
+            last_scene = plan.scenes[-1]
+            plan_choice_ids = {c.option_id for c in last_scene.choices}
+            draft_choice_ids = {c.option_id for c in draft.choices}
+            if plan_choice_ids != draft_choice_ids:
+                violations.append(GuardViolation(
+                    kind="contradiction",
+                    detail=f"Choice ID mismatch: plan {plan_choice_ids}, draft {draft_choice_ids}",
+                ))
+
+        # Check narration blocks have no character_id
+        for i, scene_draft in enumerate(draft.scene_drafts):
+            for j, block in enumerate(scene_draft.blocks):
+                if block.kind == "narration" and block.character_id:
+                    violations.append(GuardViolation(
+                        kind="wrong_speaker",
+                        block_index=i,
+                        detail="Narration block has character_id",
+                    ))
+
+        # Check scene count does not exceed max_scenes
+        if len(plan.scenes) > state.world.max_scenes:
+            violations.append(GuardViolation(
+                kind="contradiction",
+                detail=f"Scene count {len(plan.scenes)} exceeds max_scenes {state.world.max_scenes}",
+            ))
+
+        return GuardResult(passed=len(violations) == 0, violations=tuple(violations))

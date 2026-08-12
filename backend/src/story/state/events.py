@@ -8,6 +8,7 @@ from pydantic import Field
 
 from src.story.state.models import (
     BeliefRecord,
+    CompletionAssessmentRecord,
     EndingRuntime,
     FrozenModel,
     GoalStatus,
@@ -23,7 +24,7 @@ from src.story.state.models import (
 class SceneCommitted(FrozenModel):
     type: Literal["scene_committed"] = "scene_committed"
     scene_id: str
-    terminal: Literal["continue", "decision", "ending"]
+    terminal: Literal["continue", "decision", "ending"] = "continue"
     location_id: str
     present_character_ids: tuple[str, ...]
     blocks: tuple[NarrativeBlock, ...] = Field(min_length=1)
@@ -127,6 +128,27 @@ class SessionEnded(FrozenModel):
     ending_id: str
 
 
+class DecisionPresented(FrozenModel):
+    type: Literal["decision_presented"] = "decision_presented"
+    decision_id: str
+    choices: tuple[PresentedChoice, ...] = Field(min_length=2, max_length=4)
+
+
+class EndingGenerated(FrozenModel):
+    type: Literal["ending_generated"] = "ending_generated"
+    ending_id: str
+    title: str = Field(min_length=1, max_length=120)
+    tone: str = Field(min_length=1)
+    terminal_state_summary: str = Field(min_length=1)
+    blocks: tuple[NarrativeBlock, ...] = Field(min_length=1)
+
+
+class CompletionEvaluated(FrozenModel):
+    type: Literal["completion_evaluated"] = "completion_evaluated"
+    cleared: bool
+    assessments: tuple[CompletionAssessmentRecord, ...]
+
+
 StoryEvent = Annotated[
     SceneCommitted
     | SceneAcknowledged
@@ -144,6 +166,9 @@ StoryEvent = Annotated[
     | ThreadClosed
     | PhaseAdvanced
     | EndingEntered
+    | EndingGenerated
+    | DecisionPresented
+    | CompletionEvaluated
     | SessionEnded,
     Field(discriminator="type"),
 ]

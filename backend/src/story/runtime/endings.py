@@ -54,9 +54,14 @@ def select_ending(pack: CompiledScriptPack, state: SessionState) -> EndingSource
     return None
 
 
-def next_phase(state: SessionState) -> StoryPhase | None:
+def next_phase(
+    state: SessionState,
+    *,
+    projected_count: int | None = None,
+) -> StoryPhase | None:
     usable = max(1, state.world.max_scenes - state.world.reserved_resolution_scenes)
-    ratio = min(1.0, (state.world.scene_count + 1) / usable)
+    count = projected_count if projected_count is not None else state.world.scene_count + 1
+    ratio = min(1.0, count / usable)
     if ratio >= 0.70:
         target = StoryPhase.CRISIS
     elif ratio >= 0.45:
