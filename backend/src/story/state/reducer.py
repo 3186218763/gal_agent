@@ -6,8 +6,10 @@ from src.story.state.events import (
     ActionResolved,
     ArcPressureAdvanced,
     BeliefChanged,
+    CharacterDramaticStateChanged,
     CharacterLearnedFact,
     CompletionEvaluated,
+    ConsequenceBroken,
     ConsequenceRealized,
     ConsequenceScheduled,
     CostIncurred,
@@ -287,6 +289,21 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         characters[event.character_id] = character.model_copy(update={"beliefs": beliefs})
         next_state = next_state.model_copy(update={"characters": characters})
 
+    elif isinstance(event, CharacterDramaticStateChanged):
+        _require(event.character_id in next_state.characters, "unknown character")
+        characters = dict(next_state.characters)
+        character = characters[event.character_id]
+        characters[event.character_id] = character.model_copy(
+            update={
+                "current_desire": event.current_desire,
+                "current_fear": event.current_fear,
+                "emotional_condition": event.emotional_condition,
+                "judgment_of_protagonist": event.judgment_of_protagonist,
+                "boundary_being_tested": event.boundary_being_tested,
+            }
+        )
+        next_state = next_state.model_copy(update={"characters": characters})
+
     elif isinstance(event, RelationshipChanged):
         _require(
             (event.source_choice_event_id is None) == (event.relationship_event_id is None),
@@ -312,6 +329,10 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         next_state = next_state.model_copy(update={"drama": drama})
 
     elif isinstance(event, StanceExpressed):
+        _require(
+            event.key == f"{event.axis}:{event.value}",
+            "stance key must be the canonical axis:value key",
+        )
         stances = dict(next_state.drama.stances)
         current = stances.get(event.key)
         if current is None:
@@ -384,6 +405,12 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
 
     elif isinstance(event, RelationshipTurningPointReached):
         _require(event.character_id in next_state.characters, "unknown character")
+        character = next_state.characters[event.character_id]
+        _require(
+            len(event.relationship_event_ids) == len(set(event.relationship_event_ids))
+            and set(event.relationship_event_ids).issubset(character.relationship_event_ids),
+            "turning point relationship event evidence must be unique and belong to the character",
+        )
         _require(
             event.turning_point_id not in next_state.drama.reached_turning_point_ids,
             "relationship turning point already reached",
@@ -391,7 +418,6 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         reached = frozenset((*next_state.drama.reached_turning_point_ids, event.turning_point_id))
         drama = next_state.drama.model_copy(update={"reached_turning_point_ids": reached})
         characters = dict(next_state.characters)
-        character = characters[event.character_id]
         characters[event.character_id] = character.model_copy(
             update={
                 "turning_point_ids": frozenset(
@@ -519,6 +545,10 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
             event.due_after_decision <= event.hard_deadline_decision,
             "consequence due decision cannot exceed hard deadline",
         )
+        _require(
+            next_state.drama.decision_count < event.due_after_decision,
+            "consequence due decision must be in the future",
+        )
         consequences = dict(next_state.drama.scheduled_consequences)
         consequences[event.consequence_id] = ScheduledConsequenceRuntime(
             consequence_id=event.consequence_id,
@@ -537,9 +567,23 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         )
         consequences = dict(next_state.drama.scheduled_consequences)
         current = consequences[event.consequence_id]
-        _require(current.status == "scheduled", "consequence is already realized")
+        _require(current.status == "scheduled", "consequence is already resolved")
         consequences[event.consequence_id] = current.model_copy(
             update={"status": "realized", "realization_event_id": envelope.event_id}
+        )
+        drama = next_state.drama.model_copy(update={"scheduled_consequences": consequences})
+        next_state = next_state.model_copy(update={"drama": drama})
+
+    elif isinstance(event, ConsequenceBroken):
+        _require(
+            event.consequence_id in next_state.drama.scheduled_consequences,
+            "unknown consequence",
+        )
+        consequences = dict(next_state.drama.scheduled_consequences)
+        current = consequences[event.consequence_id]
+        _require(current.status == "scheduled", "consequence is already resolved")
+        consequences[event.consequence_id] = current.model_copy(
+            update={"status": "broken", "broken_event_id": envelope.event_id}
         )
         drama = next_state.drama.model_copy(update={"scheduled_consequences": consequences})
         next_state = next_state.model_copy(update={"drama": drama})

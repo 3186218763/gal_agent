@@ -239,6 +239,7 @@ class ScheduledConsequenceRuntime(FrozenModel):
     hard_deadline_decision: int = Field(ge=1)
     status: Literal["scheduled", "realized", "broken"] = "scheduled"
     realization_event_id: str | None = None
+    broken_event_id: str | None = None
 
 
 class DramaticState(FrozenModel):

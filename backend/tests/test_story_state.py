@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from src.story.state import (
     DramaticArcPhase,
     FactTruthStatus,
     FactVisibility,
+    SessionState,
     StoryPhase,
     initial_session_state,
 )
@@ -77,6 +79,33 @@ def test_v2_initial_state_contains_empty_dramatic_authority():
     assert state.drama.reached_turning_point_ids == frozenset()
     assert state.drama.cost_event_ids == ()
     assert state.drama.decision_count == 0
+
+
+def test_session_state_loads_legacy_json_without_dramatic_fields():
+    state = initial_session_state(
+        compile_source(minimal_pack_v2_dict()),
+        "session_01",
+        session_seed=7,
+    )
+    payload = state.model_dump(mode="json")
+    payload.pop("drama")
+    for character in payload["characters"].values():
+        for field in (
+            "current_desire",
+            "current_fear",
+            "emotional_condition",
+            "judgment_of_protagonist",
+            "boundary_being_tested",
+            "relationship_event_ids",
+            "unresolved_obligation_ids",
+            "turning_point_ids",
+        ):
+            character.pop(field)
+
+    restored = SessionState.model_validate_json(json.dumps(payload))
+
+    assert restored.drama.arc_phase == DramaticArcPhase.APPROACH
+    assert restored.characters["alice"].relationship_event_ids == ()
 
 
 # ---------------------------------------------------------------------------

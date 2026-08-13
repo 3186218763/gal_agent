@@ -88,6 +88,17 @@ class BeliefChanged(FrozenModel):
     belief: BeliefRecord
 
 
+class CharacterDramaticStateChanged(FrozenModel):
+    type: Literal["character_dramatic_state_changed"] = "character_dramatic_state_changed"
+    character_id: str
+    source_event_id: str
+    current_desire: str | None
+    current_fear: str | None
+    emotional_condition: str | None
+    judgment_of_protagonist: str | None
+    boundary_being_tested: str | None
+
+
 class RelationshipChanged(FrozenModel):
     type: Literal["relationship_changed"] = "relationship_changed"
     character_id: str
@@ -184,6 +195,13 @@ class ConsequenceRealized(FrozenModel):
     effect_event_ids: tuple[str, ...] = Field(min_length=1)
 
 
+class ConsequenceBroken(FrozenModel):
+    type: Literal["consequence_broken"] = "consequence_broken"
+    consequence_id: str
+    reason: str
+    evidence_event_ids: tuple[str, ...] = Field(min_length=1)
+
+
 class CostIncurred(FrozenModel):
     type: Literal["cost_incurred"] = "cost_incurred"
     category: str
@@ -268,6 +286,7 @@ StoryEvent = Annotated[
     | FactRevealed
     | CharacterLearnedFact
     | BeliefChanged
+    | CharacterDramaticStateChanged
     | RelationshipChanged
     | DramaticQuestionSet
     | StanceExpressed
@@ -280,6 +299,7 @@ StoryEvent = Annotated[
     | ObligationResolved
     | ConsequenceScheduled
     | ConsequenceRealized
+    | ConsequenceBroken
     | CostIncurred
     | ArcPressureAdvanced
     | GoalAdvanced
