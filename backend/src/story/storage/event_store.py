@@ -58,8 +58,7 @@ class StoryEventStore:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
-            connection.executescript(
-                """
+            connection.executescript("""
                 CREATE TABLE IF NOT EXISTS story_sessions (
                     session_id TEXT PRIMARY KEY,
                     pack_id TEXT NOT NULL,
@@ -91,8 +90,7 @@ class StoryEventStore:
                     PRIMARY KEY (session_id, command_id),
                     FOREIGN KEY (session_id) REFERENCES story_sessions(session_id) ON DELETE CASCADE
                 );
-                """
-            )
+                """)
 
     def create_session(self, state: SessionState) -> None:
         if state.revision != 0:
@@ -156,6 +154,36 @@ class StoryEventStore:
         event_list = tuple(events)
         if not event_list:
             raise StoryStoreError("append requires at least one event")
+        envelopes = tuple(
+            EventEnvelope(
+                session_id=session_id,
+                sequence=expected_revision + index,
+                event=event,
+            )
+            for index, event in enumerate(event_list, start=1)
+        )
+        return self.append_envelopes(session_id, expected_revision, envelopes)
+
+    def append_envelopes(
+        self,
+        session_id: str,
+        expected_revision: int,
+        envelopes: Iterable[EventEnvelope],
+    ) -> tuple[SessionState, tuple[EventEnvelope, ...]]:
+        envelope_list = tuple(envelopes)
+        if not envelope_list:
+            raise StoryStoreError("append_envelopes requires at least one envelope")
+        if any(envelope.session_id != session_id for envelope in envelope_list):
+            raise StoryStoreError("event envelope session does not match target session")
+        expected_sequences = tuple(
+            range(expected_revision + 1, expected_revision + len(envelope_list) + 1)
+        )
+        if tuple(envelope.sequence for envelope in envelope_list) != expected_sequences:
+            raise StoryStoreError("event envelope sequences must be contiguous")
+        event_ids = tuple(envelope.event_id for envelope in envelope_list)
+        if len(event_ids) != len(set(event_ids)):
+            raise StoryStoreError("event envelope IDs must be unique")
+
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -164,15 +192,17 @@ class StoryEventStore:
                 raise RevisionConflict(
                     f"session {session_id}: expected {expected_revision}, current {state.revision}"
                 )
-            envelopes = tuple(
-                EventEnvelope(
-                    session_id=session_id,
-                    sequence=state.revision + index,
-                    event=event,
+            placeholders = ", ".join("?" for _ in event_ids)
+            existing_event_id = connection.execute(
+                f"SELECT event_id FROM story_events WHERE event_id IN ({placeholders}) LIMIT 1",
+                event_ids,
+            ).fetchone()
+            if existing_event_id is not None:
+                raise StoryStoreError(
+                    f"event envelope batch violates persistence uniqueness: "
+                    f"{existing_event_id['event_id']} already exists"
                 )
-                for index, event in enumerate(event_list, start=1)
-            )
-            updated = apply_events(state, envelopes)
+            updated = apply_events(state, envelope_list)
             connection.executemany(
                 """
                 INSERT INTO story_events (session_id, sequence, event_id, event_json)
@@ -185,7 +215,7 @@ class StoryEventStore:
                         envelope.event_id,
                         envelope.model_dump_json(),
                     )
-                    for envelope in envelopes
+                    for envelope in envelope_list
                 ],
             )
             snapshot_revision = row["snapshot_revision"]
@@ -202,7 +232,10 @@ class StoryEventStore:
                 (updated.revision, snapshot_revision, snapshot_json, session_id),
             )
             connection.commit()
-            return updated, envelopes
+            return updated, envelope_list
+        except sqlite3.IntegrityError as exc:
+            connection.rollback()
+            raise StoryStoreError("event envelope batch violates persistence uniqueness") from exc
         except Exception:
             connection.rollback()
             raise

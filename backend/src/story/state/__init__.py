@@ -1,5 +1,10 @@
 """Event-sourced story session state."""
 
+from .event_batch import (
+    EventReferenceError,
+    ProposedEvent,
+    prepare_event_batch,
+)
 from .events import (
     ActionResolved,
     ArcPressureAdvanced,
@@ -96,6 +101,7 @@ __all__ = [
     "EndingGenerated",
     "EndingRuntime",
     "EventEnvelope",
+    "EventReferenceError",
     "FactCommitted",
     "FactEvidenced",
     "FactRecord",
@@ -119,6 +125,7 @@ __all__ = [
     "PromiseOpened",
     "PromiseRuntime",
     "PromiseStatus",
+    "ProposedEvent",
     "RelationshipChanged",
     "RelationshipEventRecorded",
     "RelationshipTurningPointReached",
@@ -143,4 +150,5 @@ __all__ = [
     "derive_cost_incurred",
     "derive_relationship_turning_points",
     "initial_session_state",
+    "prepare_event_batch",
 ]
