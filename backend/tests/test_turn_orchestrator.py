@@ -24,7 +24,13 @@ from src.story.runtime.validator import (
     validate_segment_plan,
 )
 from src.story.script_pack.compiler import compile_source
-from src.story.state import initial_session_state
+from src.story.state import (
+    ActionResolved,
+    EventEnvelope,
+    FactCommitted,
+    FactRevealed,
+    initial_session_state,
+)
 from src.story.storage import StoryEventStore
 from tests.fakes import (
     FakeDirector,
@@ -292,6 +298,65 @@ def test_ending_turn_has_ending_terminal(tmp_path: Path):
     ready = next(data for t, data in events if t == "segment_ready")
     assert ready["terminal"] == "ending"
     assert "ending" in ready
+
+
+def test_ending_completion_judge_receives_persisted_and_terminal_history(tmp_path: Path):
+    class RecordingJudge(CompletionJudge):
+        def __init__(self):
+            self.event_trace = ()
+
+        def evaluate(self, requirements, final_state, event_trace):
+            self.event_trace = event_trace
+            return super().evaluate(requirements, final_state, event_trace)
+
+    pack = compile_source(budget_test_pack_dict())
+    store = StoryEventStore(tmp_path / "ending_history_test.db")
+    state = initial_session_state(pack, "s1", session_seed=1)
+    state = state.model_copy(
+        update={"world": state.world.model_copy(update={"scene_count": state.world.max_scenes})}
+    )
+    store.create_session(state)
+    early_history = (
+        EventEnvelope(
+            event_id="early-evidence",
+            session_id="s1",
+            sequence=1,
+            event=ActionResolved(action_id="observe", outcome="success"),
+        ),
+        EventEnvelope(
+            event_id="early-commit",
+            session_id="s1",
+            sequence=2,
+            event=FactCommitted(
+                fact_id="who_took_notebook",
+                value="alice",
+                evidence_event_ids=("early-evidence",),
+            ),
+        ),
+        EventEnvelope(
+            event_id="early-reveal",
+            session_id="s1",
+            sequence=3,
+            event=FactRevealed(fact_id="who_took_notebook"),
+        ),
+    )
+    store.append_envelopes("s1", 0, early_history)
+    judge = RecordingJudge()
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=judge,
+    )
+
+    _collect_events(orch.execute_turn(pack, "s1", 3, "cmd-ending", None))
+
+    assert judge.event_trace[:3] == early_history
+    assert len(judge.event_trace) > len(early_history)
+    assert tuple(item.sequence for item in judge.event_trace) == tuple(
+        range(1, len(judge.event_trace) + 1)
+    )
 
 
 # ---------------------------------------------------------------------------

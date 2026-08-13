@@ -419,10 +419,11 @@ class TurnOrchestrator:
                 final_state = apply_events(fresh_state, judge_envelopes)
 
                 reqs = getattr(pack.source, "completion_requirements", ()) or ()
+                persisted_history = self.store.load_events(session_id)
                 completion_result = self.completion_judge.evaluate(
                     reqs,
                     final_state,
-                    judge_envelopes,
+                    persisted_history + judge_envelopes,
                 )
 
             # Build the full event list for atomic commit.
