@@ -169,6 +169,18 @@ def _minimal_v2_raw():
                     "visibility": "revealed",
                 }
             ],
+            "latent_questions": [
+                {
+                    "id": "who_took_notebook",
+                    "question": "Who took the notebook?",
+                    "candidates": [
+                        {"value": "alice", "weight": 1.0},
+                        {"value": "stranger", "weight": 1.0},
+                    ],
+                    "commit_when": ["explicit_revelation"],
+                    "evidence_required": 1,
+                }
+            ],
         },
         "goals": [
             {
@@ -184,7 +196,7 @@ def _minimal_v2_raw():
             {
                 "id": "understand_truth",
                 "description": "Player must understand the core truth.",
-                "fact_revealed": {"fact_id": "cafe_is_open"},
+                "fact_revealed": {"fact_id": "who_took_notebook"},
             }
         ],
         "conflict_axes": [
@@ -229,7 +241,7 @@ class TestScriptPackSourceV2:
         source = ScriptPackSource.model_validate(_minimal_v2_raw())
         assert source.schema_version == "2.0"
         assert source.completion_requirements[0].id == "understand_truth"
-        assert source.completion_requirements[0].fact_revealed.fact_id == "cafe_is_open"
+        assert source.completion_requirements[0].fact_revealed.fact_id == "who_took_notebook"
 
     def test_v2_rejects_endings_field(self):
         raw = _minimal_v2_raw()
@@ -327,7 +339,7 @@ class TestCompileV2:
                 "id": "complete_arc",
                 "description": "Reveal truth and carry a meaningful consequence.",
                 "all": [
-                    {"fact_revealed": {"fact_id": "cafe_is_open"}},
+                    {"fact_revealed": {"fact_id": "who_took_notebook"}},
                     {
                         "any": [
                             {
@@ -350,7 +362,7 @@ class TestCompileV2:
         ]
         compiled = compile_source(raw)
         requirement = compiled.source.completion_requirements[0]
-        assert requirement.all[0].fact_revealed.fact_id == "cafe_is_open"
+        assert requirement.all[0].fact_revealed.fact_id == "who_took_notebook"
         assert requirement.all[1].any[0].relationship_turning_point.turning_point_id == (
             "alice_mutual_trust"
         )
@@ -383,6 +395,106 @@ class TestCompileV2:
             "relationship_turning_point": {"turning_point_id": "missing"},
         }
         with pytest.raises(PackCompileError, match="unknown turning point missing"):
+            compile_source(raw)
+
+    def test_v2_rejects_revealed_fixed_fact_as_completion_evidence(self):
+        raw = _minimal_v2_raw()
+        raw["completion_requirements"][0]["fact_revealed"] = {"fact_id": "cafe_is_open"}
+        with pytest.raises(PackCompileError, match="cannot produce a FactRevealed event"):
+            compile_source(raw)
+
+    def test_v2_rejects_derived_fact_as_completion_evidence(self):
+        raw = _minimal_v2_raw()
+        raw["facts"]["derived"] = [
+            {"id": "derived_truth", "condition": "relationships.alice.trust >= 1"}
+        ]
+        raw["completion_requirements"][0]["fact_revealed"] = {"fact_id": "derived_truth"}
+        with pytest.raises(PackCompileError, match="cannot produce a FactRevealed event"):
+            compile_source(raw)
+
+    def test_v2_accepts_hidden_fixed_fact_as_completion_evidence(self):
+        raw = _minimal_v2_raw()
+        raw["facts"]["fixed"].append(
+            {
+                "id": "hidden_warning",
+                "statement": "A warning was hidden under the table.",
+                "known_by": [],
+                "visibility": "hidden",
+            }
+        )
+        raw["completion_requirements"][0]["fact_revealed"] = {"fact_id": "hidden_warning"}
+        assert compile_source(raw).source.completion_requirements[0].fact_revealed.fact_id == (
+            "hidden_warning"
+        )
+
+    def test_v2_rejects_unsatisfiable_obligation_fulfilled_evidence(self):
+        raw = _minimal_v2_raw()
+        raw["obligation_kinds"] = [
+            {
+                "id": "break_only",
+                "description": "This responsibility can only be broken.",
+                "burden": 1,
+                "allowed_outcomes": ["broken"],
+            }
+        ]
+        raw["completion_requirements"][0] = {
+            "id": "responsibility",
+            "description": "Fulfill a heavy responsibility.",
+            "obligation_fulfilled": {"min_burden": 3},
+        }
+        with pytest.raises(PackCompileError, match="no fulfillable obligation kind"):
+            compile_source(raw)
+
+    def test_v2_rejects_turning_point_unknown_character(self):
+        raw = _minimal_v2_raw()
+        raw["relationship_turning_points"][0]["character_id"] = "missing"
+        with pytest.raises(PackCompileError, match="unknown character missing"):
+            compile_source(raw)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("values", ["trust", "trust"]),
+            ("source_character_ids", ["alice", "alice"]),
+        ],
+    )
+    def test_v2_rejects_duplicate_conflict_axis_members(self, field, value):
+        raw = _minimal_v2_raw()
+        raw["conflict_axes"][0][field] = value
+        with pytest.raises(PackCompileError, match="duplicate"):
+            compile_source(raw)
+
+    def test_v2_rejects_duplicate_turning_point_tags(self):
+        raw = _minimal_v2_raw()
+        raw["relationship_turning_points"][0]["all_of_event_tags"] = [
+            "public_trust",
+            "public_trust",
+        ]
+        with pytest.raises(PackCompileError, match="duplicate"):
+            compile_source(raw)
+
+    def test_v2_rejects_duplicate_obligation_outcomes(self):
+        raw = _minimal_v2_raw()
+        raw["obligation_kinds"][0]["allowed_outcomes"] = ["fulfilled", "fulfilled"]
+        with pytest.raises(PackCompileError, match="duplicate"):
+            compile_source(raw)
+
+    @pytest.mark.parametrize(
+        "leaf",
+        [
+            {"obligation_fulfilled": {"min_burden": 0}},
+            {"cost_incurred": {"min_severity": 4}},
+            {"stance_defended": {"min_challenges": 0, "min_cost_severity": 1}},
+        ],
+    )
+    def test_v2_rejects_invalid_completion_leaf_bounds(self, leaf):
+        raw = _minimal_v2_raw()
+        raw["completion_requirements"][0] = {
+            "id": "bad_bounds",
+            "description": "Invalid bounds.",
+            **leaf,
+        }
+        with pytest.raises(PackCompileError):
             compile_source(raw)
 
     def test_v2_rejects_future_fields_on_conflict_axis(self):

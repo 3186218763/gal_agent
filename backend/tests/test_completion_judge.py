@@ -1,50 +1,26 @@
-from dataclasses import dataclass
-
 from src.story.runtime.completion_judge import CompletionJudge
 from src.story.runtime.segment_contracts import CompletionResult
+from src.story.script_pack.models import CompletionEvidenceSource, CompletionRequirementSource
 from src.story.state import (
+    ActionResolved,
     EventEnvelope,
     FactCommitted,
     FactRecord,
+    FactRevealed,
     FactTruthStatus,
     FactVisibility,
-    GoalAdvanced,
-    GoalRuntime,
-    GoalStatus,
     SessionState,
     WorldSnapshot,
 )
 
 
-@dataclass(frozen=True)
-class _ReqHint:
-    fact_ids: tuple = ()
-    goal_ids: tuple = ()
-
-
-@dataclass(frozen=True)
-class _Requirement:
-    id: str
-    description: str
-    evidence_hints: _ReqHint = _ReqHint()
-
-
-def _make_requirement(req_id="req_a", fact_ids=(), goal_ids=()):
-    return _Requirement(
-        id=req_id,
-        description=f"Requirement {req_id}",
-        evidence_hints=_ReqHint(fact_ids=fact_ids, goal_ids=goal_ids),
-    )
-
-
-def _make_state(facts=None, goals=None):
+def _make_state(facts=None):
     world = WorldSnapshot(
         location_id="cafe",
         time_label="opening",
         present_character_ids=("alice",),
         max_scenes=20,
         reserved_resolution_scenes=3,
-        goals=goals or {},
     )
     return SessionState(
         session_id="s1",
@@ -58,211 +34,111 @@ def _make_state(facts=None, goals=None):
     )
 
 
-def test_judge_satisfied_by_committed_fact():
-    facts = {
-        "core_cause": FactRecord(
-            id="core_cause",
-            truth_status=FactTruthStatus.COMMITTED,
-            value="alice",
-            visibility=FactVisibility.REVEALED,
-            evidence_required=1,
-            evidence_event_ids=("evt-1",),
-        ),
-    }
-    state = _make_state(facts=facts)
-    reqs = (
-        _Requirement(
-            id="core_truth",
-            description="Understand the cause.",
-            evidence_hints=_ReqHint(fact_ids=("core_cause",)),
-        ),
+def _revealed_fact(fact_id: str) -> FactRecord:
+    return FactRecord(
+        id=fact_id,
+        truth_status=FactTruthStatus.COMMITTED,
+        value="alice",
+        visibility=FactVisibility.REVEALED,
+        evidence_required=1,
+        evidence_event_ids=(f"{fact_id}-evidence",),
+        committed_by_event_id=f"{fact_id}-committed",
     )
-    trace = (
+
+
+def _fact_trace(fact_id: str, start_sequence: int) -> tuple[EventEnvelope, ...]:
+    evidence_id = f"{fact_id}-evidence"
+    committed_id = f"{fact_id}-committed"
+    revealed_id = f"{fact_id}-revealed"
+    return (
         EventEnvelope(
+            event_id=evidence_id,
             session_id="s1",
-            sequence=5,
-            event=FactCommitted(fact_id="core_cause", value="alice", evidence_event_ids=("evt-1",)),
+            sequence=start_sequence,
+            event=ActionResolved(action_id="observe", outcome="success"),
+        ),
+        EventEnvelope(
+            event_id=committed_id,
+            session_id="s1",
+            sequence=start_sequence + 1,
+            event=FactCommitted(
+                fact_id=fact_id,
+                value="alice",
+                evidence_event_ids=(evidence_id,),
+            ),
+        ),
+        EventEnvelope(
+            event_id=revealed_id,
+            session_id="s1",
+            sequence=start_sequence + 2,
+            event=FactRevealed(fact_id=fact_id),
         ),
     )
-    judge = CompletionJudge()
-    result = judge.evaluate(reqs, state, trace)
+
+
+def test_judge_accepts_new_recursive_fact_evidence_contract():
+    facts = {
+        "notebook_holder": _revealed_fact("notebook_holder"),
+        "disappearance_cause": _revealed_fact("disappearance_cause"),
+    }
+    requirement = CompletionRequirementSource(
+        id="truth_understood",
+        description="Understand holder and cause.",
+        all=(
+            CompletionEvidenceSource(
+                fact_revealed={"fact_id": "notebook_holder"},
+            ),
+            CompletionEvidenceSource(
+                any=(
+                    CompletionEvidenceSource(
+                        fact_revealed={"fact_id": "disappearance_cause"},
+                    ),
+                    CompletionEvidenceSource(cost_incurred={"min_severity": 1}),
+                )
+            ),
+        ),
+    )
+    trace = _fact_trace("notebook_holder", 1) + _fact_trace("disappearance_cause", 4)
+
+    result = CompletionJudge().evaluate((requirement,), _make_state(facts), trace)
+
     assert result.cleared is True
     assert result.assessments[0].satisfied is True
-    assert len(result.assessments[0].cited_event_ids) > 0
+    assert result.assessments[0].cited_event_ids == tuple(envelope.event_id for envelope in trace)
 
 
-def test_judge_satisfied_by_fact_and_goal():
-    facts = {
-        "core_cause": FactRecord(
-            id="core_cause",
-            truth_status=FactTruthStatus.COMMITTED,
-            value="alice",
-            visibility=FactVisibility.REVEALED,
-            evidence_required=1,
-            evidence_event_ids=("evt-1",),
-        ),
-    }
-    goals = {
-        "find_ally": GoalRuntime(goal_id="find_ally", status=GoalStatus.COMPLETED, progress=1.0),
-    }
-    state = _make_state(facts=facts, goals=goals)
-    reqs = (
-        _make_requirement(req_id="req_a", fact_ids=("core_cause",)),
-        _make_requirement(req_id="req_b", goal_ids=("find_ally",)),
+def test_fact_revealed_requires_reveal_event_even_when_final_state_is_revealed():
+    facts = {"notebook_holder": _revealed_fact("notebook_holder")}
+    requirement = CompletionRequirementSource(
+        id="truth_understood",
+        description="Understand holder.",
+        fact_revealed={"fact_id": "notebook_holder"},
     )
-    trace = (
-        EventEnvelope(
-            session_id="s1",
-            sequence=5,
-            event=FactCommitted(fact_id="core_cause", value="alice", evidence_event_ids=("evt-1",)),
-        ),
-        EventEnvelope(
-            session_id="s1",
-            sequence=10,
-            event=GoalAdvanced(goal_id="find_ally", delta=0.5),
-        ),
-    )
-    judge = CompletionJudge()
-    result = judge.evaluate(reqs, state, trace)
-    assert result.cleared is True
-    assert result.assessments[0].satisfied is True
-    assert result.assessments[1].satisfied is True
+    trace = _fact_trace("notebook_holder", 1)[:-1]
+
+    result = CompletionJudge().evaluate((requirement,), _make_state(facts), trace)
+
+    assert result.cleared is False
+    assert "was not revealed by event" in result.assessments[0].rationale
 
 
-def test_judge_not_satisfied_by_uncommitted_fact():
-    facts = {
-        "core_cause": FactRecord(
-            id="core_cause",
-            truth_status=FactTruthStatus.POSSIBLE,
-            value=None,
-            visibility=FactVisibility.HIDDEN,
-            evidence_required=1,
-        ),
-    }
-    state = _make_state(facts=facts)
-    reqs = (
-        _Requirement(
-            id="core_truth",
-            description="Understand the cause.",
-            evidence_hints=_ReqHint(fact_ids=("core_cause",)),
-        ),
+def test_unavailable_semantic_leaf_is_unsatisfied_instead_of_crashing():
+    requirement = CompletionRequirementSource(
+        id="accepted_cost",
+        description="Carry a cost.",
+        cost_incurred={"min_severity": 1},
     )
-    trace = ()
-    judge = CompletionJudge()
-    result = judge.evaluate(reqs, state, trace)
+
+    result = CompletionJudge().evaluate((requirement,), _make_state(), ())
+
     assert result.cleared is False
     assert result.assessments[0].satisfied is False
-
-
-def test_judge_satisfied_by_completed_goal():
-    goals = {
-        "find_ally": GoalRuntime(goal_id="find_ally", status=GoalStatus.COMPLETED, progress=1.0),
-    }
-    state = _make_state(goals=goals)
-    reqs = (
-        _Requirement(
-            id="ally",
-            description="Find an ally.",
-            evidence_hints=_ReqHint(goal_ids=("find_ally",)),
-        ),
-    )
-    trace = (
-        EventEnvelope(
-            session_id="s1",
-            sequence=10,
-            event=GoalAdvanced(goal_id="find_ally", delta=0.5),
-        ),
-    )
-    judge = CompletionJudge()
-    result = judge.evaluate(reqs, state, trace)
-    assert result.cleared is True
-
-
-def test_judge_no_hints_unsatisfied():
-    state = _make_state()
-    reqs = (_Requirement(id="vague", description="Something."),)
-    trace = ()
-    judge = CompletionJudge()
-    result = judge.evaluate(reqs, state, trace)
-    assert result.cleared is False
-    assert "no evidence hints" in result.assessments[0].rationale
-
-
-def test_judge_multiple_requirements_partial():
-    facts = {
-        "fact_a": FactRecord(
-            id="fact_a",
-            truth_status=FactTruthStatus.COMMITTED,
-            value=True,
-            visibility=FactVisibility.REVEALED,
-            evidence_required=1,
-            evidence_event_ids=("e1",),
-        ),
-    }
-    state = _make_state(facts=facts)
-    reqs = (
-        _Requirement(
-            id="req_a",
-            description="A",
-            evidence_hints=_ReqHint(fact_ids=("fact_a",)),
-        ),
-        _Requirement(
-            id="req_b",
-            description="B",
-            evidence_hints=_ReqHint(fact_ids=("fact_missing",)),
-        ),
-    )
-    trace = ()
-    judge = CompletionJudge()
-    result = judge.evaluate(reqs, state, trace)
-    assert result.cleared is False
-    assert result.assessments[0].satisfied is True
-    assert result.assessments[1].satisfied is False
+    assert "no qualifying cost" in result.assessments[0].rationale
 
 
 def test_judge_empty_requirements_not_cleared():
-    """An empty requirements tuple should not clear — no requirements to satisfy."""
-    state = _make_state()
-    judge = CompletionJudge()
-    result = judge.evaluate((), state, ())
+    result = CompletionJudge().evaluate((), _make_state(), ())
+
     assert isinstance(result, CompletionResult)
     assert result.cleared is False
     assert result.assessments == ()
-
-
-def test_judge_with_real_completion_requirement_source():
-    """Judge should accept the real CompletionRequirementSource from script_pack.models."""
-    from src.story.script_pack.models import (
-        CompletionRequirementSource,
-        EvidenceHintsSource,
-    )
-
-    facts = {
-        "core_cause": FactRecord(
-            id="core_cause",
-            truth_status=FactTruthStatus.COMMITTED,
-            value="alice",
-            visibility=FactVisibility.REVEALED,
-            evidence_required=1,
-            evidence_event_ids=("evt-1",),
-        ),
-    }
-    state = _make_state(facts=facts)
-    reqs = (
-        CompletionRequirementSource(
-            id="req1",
-            description="Understand the cause.",
-            evidence_hints=EvidenceHintsSource(fact_ids=("core_cause",)),
-        ),
-    )
-    trace = (
-        EventEnvelope(
-            session_id="s1",
-            sequence=5,
-            event=FactCommitted(fact_id="core_cause", value="alice", evidence_event_ids=("evt-1",)),
-        ),
-    )
-    judge = CompletionJudge()
-    result = judge.evaluate(reqs, state, trace)
-    assert result.cleared is True
-    assert result.assessments[0].satisfied is True

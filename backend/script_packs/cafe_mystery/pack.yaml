@@ -5,15 +5,15 @@ identity:
   title: "咖啡馆疑云"
   language: zh-CN
   genres: [romance, mystery]
-  expected_minutes: 120
+  expected_minutes: 45
 
 experience:
   viewpoint: first_person
   prose_style: "克制的轻小说风格，重视动作、停顿和对话潜台词"
   tone: "温柔、日常表面下的悬疑"
   choice_density: key_moments
-  min_scenes: 20
-  max_scenes: 60
+  min_scenes: 8
+  max_scenes: 14
   reserved_resolution_scenes: 3
   forbidden_content:
     - "露骨色情内容"
@@ -199,6 +199,21 @@ facts:
           requirements: ["relationships.alice.suspicion >= 10"]
       commit_when: [first_irreversible_evidence, explicit_revelation]
       evidence_required: 1
+    - id: notebook_disappearance_cause
+      question: "笔记本为什么会从艾丽丝手中转移？"
+      selection: lazy_commit
+      candidates:
+        - value: prevent_exposure
+          weight: 1.0
+          requirements: ["relationships.bob.trust >= 20"]
+        - value: protective_concealment
+          weight: 1.0
+          requirements: ["relationships.mina.trust >= 25"]
+        - value: third_party_interception
+          weight: 0.8
+          requirements: ["session.scene_count >= 3"]
+      commit_when: [first_irreversible_evidence, explicit_revelation]
+      evidence_required: 2
 
   derived:
     - id: alice_trusts_player
@@ -229,7 +244,7 @@ goals:
     urgency: 0.6
     conflicts_with: []
     success_condition: "facts.notebook_holder.visibility == 'revealed'"
-    failure_condition: "session.scene_count >= 57 and facts.notebook_holder.visibility != 'revealed'"
+    failure_condition: "session.scene_count >= 11 and facts.notebook_holder.visibility != 'revealed'"
 
 conflict_axes:
   - id: trust_vs_evidence
@@ -237,17 +252,38 @@ conflict_axes:
     source_character_ids: [alice, bob]
     initial_incompatibility: >
       艾丽丝需要先确认玩家愿意相信她，鲍勃则拒绝接受没有可验证证据的信任。
+  - id: protection_vs_agency
+    values: [protection, agency]
+    source_character_ids: [mina, alice]
+    initial_incompatibility: >
+      美奈习惯替可能受伤的人隐藏危险信息，艾丽丝则认为当事人有权自己决定是否承担风险。
 
 relationship_event_tags:
   - id: public_trust
     description: "玩家在他人面前明确选择相信一名角色。"
   - id: accepted_truth
     description: "玩家接受了会伤害既有关系但有证据支持的事实。"
+  - id: evidence_respected
+    description: "玩家在关系压力下仍认真对待可验证证据。"
+  - id: risk_shared
+    description: "玩家没有把风险单方面留给提出警告的人。"
+  - id: agency_respected
+    description: "玩家让受影响的人参与决定，而不是替其决定。"
+  - id: responsibility_shared
+    description: "玩家与保护者共同承担决定造成的责任。"
 
 relationship_turning_points:
   - id: alice_mutual_trust
     character_id: alice
     all_of_event_tags: [public_trust, accepted_truth]
+    min_distinct_source_choices: 2
+  - id: bob_earned_respect
+    character_id: bob
+    all_of_event_tags: [evidence_respected, risk_shared]
+    min_distinct_source_choices: 2
+  - id: mina_shared_responsibility
+    character_id: mina
+    all_of_event_tags: [agency_respected, responsibility_shared]
     min_distinct_source_choices: 2
 
 obligation_kinds:
@@ -255,20 +291,33 @@ obligation_kinds:
     description: "保守角色在信任基础上交付的秘密。"
     burden: 2
     allowed_outcomes: [fulfilled, broken, released]
+  - id: explain_lie
+    description: "在隐瞒造成影响后向当事人作出完整解释。"
+    burden: 1
+    allowed_outcomes: [fulfilled, broken, released]
+  - id: share_risk
+    description: "主动承担继续调查或公开证据带来的共同风险。"
+    burden: 3
+    allowed_outcomes: [fulfilled, broken, released]
 
 completion_requirements:
-  - id: core_truth_understood
-    description: "玩家必须理解导致笔记本失踪的核心原因，并知道笔记本持有者的真实身份。"
-    fact_revealed:
-      fact_id: notebook_holder
-  - id: trust_built
-    description: "玩家必须至少与一名主要角色建立可信赖的关系，使其愿意在结局时与玩家合作。"
-    relationship_turning_point:
-      turning_point_id: alice_mutual_trust
-  - id: irreversible_choice
-    description: "玩家必须在继续调查或保护相关人物之间作出不可逆的选择。"
-    cost_incurred:
-      min_severity: 1
+  - id: truth_understood
+    description: "玩家理解谁拿走了笔记本以及笔记本为何易手。"
+    all:
+      - fact_revealed: {fact_id: notebook_holder}
+      - fact_revealed: {fact_id: notebook_disappearance_cause}
+  - id: meaningful_bond
+    description: "玩家与至少一名核心角色形成不可逆的关系变化。"
+    any:
+      - relationship_turning_point: {turning_point_id: alice_mutual_trust}
+      - relationship_turning_point: {turning_point_id: bob_earned_respect}
+      - relationship_turning_point: {turning_point_id: mina_shared_responsibility}
+  - id: accepted_cost
+    description: "玩家承担了自己立场带来的真实代价或责任。"
+    any:
+      - obligation_fulfilled: {min_burden: 1}
+      - cost_incurred: {min_severity: 1}
+      - stance_defended: {min_challenges: 1, min_cost_severity: 1}
 
 interaction_rules:
   enabled_standard: [ask, observe, support, challenge, withhold, disclose, follow, leave]

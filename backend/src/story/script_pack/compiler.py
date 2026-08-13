@@ -345,6 +345,11 @@ def _v2_reference_errors(
     del goal_ids
     tag_ids = {item.id for item in source.relationship_event_tags}
     turning_point_ids = {item.id for item in source.relationship_turning_points}
+    revealable_fact_ids = {
+        item.id
+        for item in source.facts.fixed
+        if item.visibility == "hidden" and item.id not in source.opening_state.known_facts
+    } | {item.id for item in source.facts.latent_questions}
 
     for axis in source.conflict_axes:
         for character_id in axis.source_character_ids:
@@ -370,6 +375,14 @@ def _v2_reference_errors(
                     f"completion requirement {requirement.id} references unknown fact "
                     f"{leaf.fact_revealed.fact_id}"
                 )
+            elif (
+                leaf.fact_revealed is not None
+                and leaf.fact_revealed.fact_id not in revealable_fact_ids
+            ):
+                errors.append(
+                    f"completion requirement {requirement.id} fact "
+                    f"{leaf.fact_revealed.fact_id} cannot produce a FactRevealed event"
+                )
             if (
                 leaf.relationship_turning_point is not None
                 and leaf.relationship_turning_point.turning_point_id not in turning_point_ids
@@ -378,6 +391,17 @@ def _v2_reference_errors(
                     f"completion requirement {requirement.id} references unknown turning point "
                     f"{leaf.relationship_turning_point.turning_point_id}"
                 )
+            if leaf.obligation_fulfilled is not None:
+                minimum_burden = leaf.obligation_fulfilled.min_burden
+                if not any(
+                    obligation.burden >= minimum_burden
+                    and "fulfilled" in obligation.allowed_outcomes
+                    for obligation in source.obligation_kinds
+                ):
+                    errors.append(
+                        f"completion requirement {requirement.id} has no fulfillable "
+                        f"obligation kind with burden >= {minimum_burden}"
+                    )
 
     return errors
 

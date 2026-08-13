@@ -1,99 +1,156 @@
-"""Deterministic completion judge — evaluates final state against author requirements."""
+"""Deterministic completion evaluation over committed semantic evidence."""
 
 from __future__ import annotations
 
-from typing import Protocol
+from dataclasses import dataclass
 
-from src.story.runtime.segment_contracts import (
-    CompletionAssessment,
-    CompletionResult,
-)
-from src.story.state import (
-    EventEnvelope,
-    FactCommitted,
-    FactTruthStatus,
-    GoalAdvanced,
-    SessionState,
-)
+from src.story.runtime.segment_contracts import CompletionAssessment, CompletionResult
+from src.story.script_pack.models import CompletionEvidenceSource, CompletionRequirementSource
+from src.story.state import EventEnvelope, FactCommitted, FactRevealed, SessionState
 
 
-class _EvidenceHintsLike(Protocol):
-    fact_ids: tuple[str, ...]
-    goal_ids: tuple[str, ...]
-
-
-class _RequirementLike(Protocol):
-    id: str
-    description: str
-    evidence_hints: _EvidenceHintsLike
+@dataclass(frozen=True)
+class _EvidenceResult:
+    satisfied: bool
+    cited_event_ids: tuple[str, ...] = ()
+    rationale: str = ""
 
 
 class CompletionJudge:
-    """Evaluates the final state and event trace against completion requirements.
-
-    The judge is deterministic: it checks whether evidence hints (fact IDs,
-    goal IDs) are satisfied in the final state. It cannot add or alter
-    requirements. The kernel computes ``cleared = all(satisfied)``.
-    """
+    """Evaluate authored evidence expressions without model interpretation."""
 
     def evaluate(
         self,
-        requirements: tuple[_RequirementLike, ...],
+        requirements: tuple[CompletionRequirementSource, ...],
         final_state: SessionState,
         event_trace: tuple[EventEnvelope, ...],
     ) -> CompletionResult:
-        assessments: list[CompletionAssessment] = []
-
-        for req in requirements:
-            hints = req.evidence_hints
-            fact_ids = tuple(getattr(hints, "fact_ids", ()))
-            goal_ids = tuple(getattr(hints, "goal_ids", ()))
-
-            satisfied = True
-            cited: list[str] = []
-            rationale_parts: list[str] = []
-
-            for fact_id in fact_ids:
-                fact = final_state.facts.get(fact_id)
-                if fact is not None and fact.truth_status == FactTruthStatus.COMMITTED:
-                    cited.extend(
-                        env.event_id
-                        for env in event_trace
-                        if isinstance(env.event, FactCommitted) and env.event.fact_id == fact_id
-                    )
-                    rationale_parts.append(f"fact {fact_id} is committed")
-                else:
-                    satisfied = False
-                    rationale_parts.append(f"fact {fact_id} is not committed")
-
-            for goal_id in goal_ids:
-                goal = final_state.world.goals.get(goal_id)
-                if goal is not None and goal.completed:
-                    cited.extend(
-                        env.event_id
-                        for env in event_trace
-                        if isinstance(env.event, GoalAdvanced) and env.event.goal_id == goal_id
-                    )
-                    rationale_parts.append(f"goal {goal_id} is completed")
-                else:
-                    satisfied = False
-                    rationale_parts.append(f"goal {goal_id} is not completed")
-
-            if not fact_ids and not goal_ids:
-                satisfied = False
-                rationale_parts.append("no evidence hints provided; cannot auto-satisfy")
-
-            assessments.append(
-                CompletionAssessment(
-                    requirement_id=req.id,
-                    satisfied=satisfied,
-                    cited_event_ids=tuple(dict.fromkeys(cited)),
-                    rationale="; ".join(rationale_parts),
-                )
-            )
-
-        cleared = all(a.satisfied for a in assessments) if assessments else False
-        return CompletionResult(
-            assessments=tuple(assessments),
-            cleared=cleared,
+        assessments = tuple(
+            self._assess(requirement, final_state, event_trace) for requirement in requirements
         )
+        return CompletionResult(
+            assessments=assessments,
+            cleared=(
+                all(assessment.satisfied for assessment in assessments) if assessments else False
+            ),
+        )
+
+    def _assess(
+        self,
+        requirement: CompletionRequirementSource,
+        final_state: SessionState,
+        event_trace: tuple[EventEnvelope, ...],
+    ) -> CompletionAssessment:
+        result = _evaluate_node(requirement, final_state, event_trace)
+        return CompletionAssessment(
+            requirement_id=requirement.id,
+            satisfied=result.satisfied,
+            cited_event_ids=result.cited_event_ids,
+            rationale=result.rationale,
+        )
+
+
+def _evaluate_node(
+    node: CompletionEvidenceSource,
+    final_state: SessionState,
+    event_trace: tuple[EventEnvelope, ...],
+) -> _EvidenceResult:
+    if node.all is not None:
+        children = tuple(_evaluate_node(child, final_state, event_trace) for child in node.all)
+        return _combine_all(children, event_trace)
+    if node.any is not None:
+        children = tuple(_evaluate_node(child, final_state, event_trace) for child in node.any)
+        return _combine_any(children)
+    if node.fact_revealed is not None:
+        return _fact_revealed(node.fact_revealed.fact_id, event_trace)
+    if node.relationship_turning_point is not None:
+        return _EvidenceResult(
+            satisfied=False,
+            rationale=(
+                "no qualifying relationship turning point "
+                f"{node.relationship_turning_point.turning_point_id}"
+            ),
+        )
+    if node.obligation_fulfilled is not None:
+        return _EvidenceResult(
+            satisfied=False,
+            rationale=(
+                "no qualifying fulfilled obligation with burden >= "
+                f"{node.obligation_fulfilled.min_burden}"
+            ),
+        )
+    if node.cost_incurred is not None:
+        return _EvidenceResult(
+            satisfied=False,
+            rationale=f"no qualifying cost with severity >= {node.cost_incurred.min_severity}",
+        )
+    assert node.stance_defended is not None
+    return _EvidenceResult(
+        satisfied=False,
+        rationale=(
+            "no qualifying defended stance with "
+            f"{node.stance_defended.min_challenges} challenges and cost severity >= "
+            f"{node.stance_defended.min_cost_severity}"
+        ),
+    )
+
+
+def _fact_revealed(
+    fact_id: str,
+    event_trace: tuple[EventEnvelope, ...],
+) -> _EvidenceResult:
+    revealed = tuple(
+        envelope
+        for envelope in event_trace
+        if isinstance(envelope.event, FactRevealed) and envelope.event.fact_id == fact_id
+    )
+    if not revealed:
+        return _EvidenceResult(
+            satisfied=False,
+            rationale=f"fact {fact_id} was not revealed by event",
+        )
+
+    citation_ids = {envelope.event_id for envelope in revealed}
+    for envelope in event_trace:
+        if isinstance(envelope.event, FactCommitted) and envelope.event.fact_id == fact_id:
+            citation_ids.add(envelope.event_id)
+            citation_ids.update(envelope.event.evidence_event_ids)
+
+    return _EvidenceResult(
+        satisfied=True,
+        cited_event_ids=_ordered_citations(citation_ids, event_trace),
+        rationale=f"fact {fact_id} was revealed",
+    )
+
+
+def _combine_all(
+    children: tuple[_EvidenceResult, ...],
+    event_trace: tuple[EventEnvelope, ...],
+) -> _EvidenceResult:
+    cited = {
+        event_id for child in children if child.satisfied for event_id in child.cited_event_ids
+    }
+    return _EvidenceResult(
+        satisfied=all(child.satisfied for child in children),
+        cited_event_ids=_ordered_citations(cited, event_trace),
+        rationale="; ".join(child.rationale for child in children),
+    )
+
+
+def _combine_any(children: tuple[_EvidenceResult, ...]) -> _EvidenceResult:
+    for child in children:
+        if child.satisfied:
+            return child
+    return _EvidenceResult(
+        satisfied=False,
+        rationale="; ".join(child.rationale for child in children),
+    )
+
+
+def _ordered_citations(
+    cited_event_ids: set[str],
+    event_trace: tuple[EventEnvelope, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        envelope.event_id for envelope in event_trace if envelope.event_id in cited_event_ids
+    )

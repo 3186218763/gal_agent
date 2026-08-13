@@ -13,9 +13,9 @@ def test_cafe_mystery_pack_compiles_without_fixed_plot():
     assert len(compiled.source.characters) == 3
     assert compiled.completion_requirement_ids == frozenset(
         {
-            "core_truth_understood",
-            "trust_built",
-            "irreversible_choice",
+            "truth_understood",
+            "meaningful_bond",
+            "accepted_cost",
         }
     )
     assert compiled.source.schema_version == "2.0"
@@ -24,6 +24,29 @@ def test_cafe_mystery_pack_compiles_without_fixed_plot():
     assert "plot" not in dumped
     assert "beats" not in dumped
     assert "scenes" not in dumped
+
+
+def test_cafe_mystery_has_complete_machine_verifiable_dramatic_contract():
+    source = compile_script_pack(PACK_DIR).source
+
+    assert source.identity.expected_minutes == 45
+    assert source.experience.min_scenes == 8
+    assert source.experience.max_scenes == 14
+    assert {axis.id for axis in source.conflict_axes} >= {
+        "trust_vs_evidence",
+        "protection_vs_agency",
+    }
+    assert {point.id for point in source.relationship_turning_points} == {
+        "alice_mutual_trust",
+        "bob_earned_respect",
+        "mina_shared_responsibility",
+    }
+    assert {kind.id for kind in source.obligation_kinds} >= {
+        "keep_secret",
+        "explain_lie",
+        "share_risk",
+    }
+    assert "notebook_disappearance_cause" in {fact.id for fact in source.facts.latent_questions}
 
 
 def test_cafe_mystery_pack_hash_is_stable():
