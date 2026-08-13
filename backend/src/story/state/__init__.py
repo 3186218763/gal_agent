@@ -70,6 +70,7 @@ from .models import (
     initial_session_state,
 )
 from .reducer import StateTransitionError, apply_event, apply_events
+from .semantic_derivation import derive_cost_incurred, derive_relationship_turning_points
 
 __all__ = [
     "ActionResolved",
@@ -139,5 +140,7 @@ __all__ = [
     "WorldSnapshot",
     "apply_event",
     "apply_events",
+    "derive_cost_incurred",
+    "derive_relationship_turning_points",
     "initial_session_state",
 ]
