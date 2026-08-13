@@ -56,6 +56,10 @@ _Avoid_: Ending condition, route condition
 A playthrough whose committed history satisfies the work's Completion Contract. Every playthrough reaches a Dynamic Ending, but a playthrough may end without being completed.
 _Avoid_: Good ending, winning route
 
+**Opening Segment**:
+The first Story Segment of a Playthrough, preceding any Player Choice. Because no player action precedes it, it is identical across all Playthroughs of the same Script Pack Version and is pre-generated and cached at pack scope.
+_Avoid_: Intro cutscene, loading screen
+
 **Player Choice**:
 A presented action with stable, machine-readable intent and any associated stance, risk, or potential cost. Its concrete consequences may be generated, but subsequent play cannot ignore or reverse what the player chose.
 _Avoid_: Prompt suggestion, dialogue reply

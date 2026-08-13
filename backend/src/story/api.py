@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -77,6 +80,7 @@ class AppDependencies:
     guard: GuardPort | None = None
     pack_cache: PackCache | None = None
     semantic_judge: object | None = None
+    unified_agent_factory: object | None = None
 
 
 def default_dependencies() -> AppDependencies:
@@ -94,11 +98,18 @@ def default_dependencies() -> AppDependencies:
     director = SdkDirector(bundle.model)
     segment_writer = SdkSegmentWriter(bundle.model)
     guard = Guard()
-    from src.story.runtime.unified_segment import SdkUnifiedSegmentAgent
+    from src.story.runtime.unified_segment import (
+        OPENING_INSTRUCTIONS,
+        SdkUnifiedSegmentAgent,
+    )
 
     unified_agent = SdkUnifiedSegmentAgent(bundle.model)
     semantic_judge = SdkSemanticJudge(bundle.model)
     pack_cache = PackCache(Path(os.getenv("GAL_PACK_CACHE_ROOT", "data/pack_cache")))
+
+    def unified_agent_factory():
+        return SdkUnifiedSegmentAgent(bundle.model, instructions=OPENING_INSTRUCTIONS)
+
     orchestrator = TurnOrchestrator(
         store,
         director,
@@ -119,6 +130,7 @@ def default_dependencies() -> AppDependencies:
         guard=guard,
         pack_cache=pack_cache,
         semantic_judge=semantic_judge,
+        unified_agent_factory=unified_agent_factory,
     )
 
 
@@ -137,9 +149,75 @@ def _sse_error(code: str) -> str:
     return f"event: error\ndata: {json.dumps({'code': code})}\n\n"
 
 
+def _discover_pack_dirs(root: Path) -> list[Path]:
+    """Return every immediate sub-directory that contains a ``pack.yaml``."""
+    if not root.is_dir():
+        return []
+    return [d for d in sorted(root.iterdir()) if d.is_dir() and (d / "pack.yaml").exists()]
+
+
+async def _warmup_opening_caches(deps: AppDependencies) -> None:
+    """Ensure every known pack has a cached Opening Segment.
+
+    Called during API startup so the first player never waits for opening
+    generation.  Failures are logged and skipped — the first player will
+    get a live generation as fallback.
+    """
+    if deps.pack_cache is None or deps.unified_agent_factory is None:
+        logger.info("opening cache warmup skipped (no pack_cache or model agent)")
+        return
+
+    for pack_dir in _discover_pack_dirs(deps.registry.root):
+        try:
+            pack_id = pack_dir.name
+            pack = deps.registry.get(pack_id)
+            if deps.pack_cache.has_opening(pack.pack_hash):
+                logger.info("opening cache hit for pack=%s", pack_id)
+                continue
+            logger.info("warming opening cache for pack=%s ...", pack_id)
+            from src.story.cli import ensure_opening_cache
+
+            await ensure_opening_cache(
+                pack=pack,
+                cache=deps.pack_cache,
+                opening_agent=deps.unified_agent_factory(),
+                guard=deps.guard or _NoopGuard(),
+            )
+            logger.info("opening cache ready for pack=%s", pack_id)
+        except Exception:
+            logger.warning("opening cache warmup failed for pack=%s", pack_id, exc_info=True)
+
+
+@asynccontextmanager
+async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """FastAPI lifespan: warm up opening caches in the background.
+
+    The server starts serving immediately; the warmup task runs
+    concurrently.  If the model is slow or unavailable, the first player
+    gets a live generation as fallback — the server is never blocked.
+    """
+    deps: AppDependencies | None = getattr(app.state, "deps", None)
+    task: asyncio.Task | None = None
+    if deps is not None:
+        task = asyncio.create_task(_warmup_opening_caches(deps))
+    yield
+    if task is not None and not task.done():
+        task.cancel()
+
+
+class _NoopGuard:
+    """Fallback guard that always passes — used only when deps.guard is None."""
+
+    def check_segment(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        from src.story.runtime.segment_contracts import GuardResult
+
+        return GuardResult(passed=True)
+
+
 def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
     deps = dependencies or default_dependencies()
-    app = FastAPI(title="Galgame AI V2")
+    app = FastAPI(title="Galgame AI V2", lifespan=_app_lifespan)
+    app.state.deps = deps
 
     @app.exception_handler(PackNotFound)
     async def pack_not_found(request, exc):

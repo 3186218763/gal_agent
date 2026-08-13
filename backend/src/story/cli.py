@@ -7,8 +7,12 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from src.story.runtime.contracts import PackMismatch, RuntimeGenerationUnavailable
+
+if TYPE_CHECKING:
+    from src.story.runtime.pack_cache import PackCache
 from src.story.script_pack import PackCompileError, compile_script_pack
 from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
 from src.story.state import SessionState, SessionStatus, initial_session_state
@@ -114,30 +118,29 @@ async def autoplay(
         commands += 1
 
 
-async def _init_pack(
+async def ensure_opening_cache(
     pack: CompiledScriptPack,
-    cache_root: Path,
+    cache: PackCache,
     opening_agent,
     guard,
     force: bool = False,
 ) -> dict:
-    """Generate the opening segment only and persist it to PackCache.
+    """Generate the Opening Segment and persist it to *cache* if missing.
 
-    Offline cache tooling: the cached opening passes the same deterministic
-    validation and guard chain the authoritative flow uses, and may only
-    seed an opening generation.  It never defines production state
-    transitions — no pre-generated consequences and no implicit success
-    result are ever written.
+    Shared by ``init-pack`` (CLI) and API startup warmup.  The cached
+    opening passes the same deterministic validation and guard chain the
+    authoritative flow uses, and may only seed an opening generation.  It
+    never defines production state transitions — no pre-generated
+    consequences and no implicit success result are ever written.
     """
     from src.story.runtime.pacing import compute_pacing_envelope
-    from src.story.runtime.pack_cache import CachedOpening, PackCache
+    from src.story.runtime.pack_cache import CachedOpening
     from src.story.runtime.simulator import simulate_segment
     from src.story.runtime.validator import (
         validate_segment_draft,
         validate_segment_plan,
     )
 
-    cache = PackCache(cache_root)
     if cache.load_opening(pack.pack_hash) is not None and not force:
         return {
             "status": "already_initialized",
@@ -172,6 +175,25 @@ async def _init_pack(
         "pack_hash": pack.pack_hash,
         "opening_segment_id": plan.segment_id,
     }
+
+
+async def _init_pack(
+    pack: CompiledScriptPack,
+    cache_root: Path,
+    opening_agent,
+    guard,
+    force: bool = False,
+) -> dict:
+    """CLI wrapper around :func:`ensure_opening_cache`."""
+    from src.story.runtime.pack_cache import PackCache
+
+    return await ensure_opening_cache(
+        pack=pack,
+        cache=PackCache(cache_root),
+        opening_agent=opening_agent,
+        guard=guard,
+        force=force,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
