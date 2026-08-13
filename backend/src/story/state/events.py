@@ -9,12 +9,14 @@ from pydantic import Field
 from src.story.state.models import (
     BeliefRecord,
     CompletionAssessmentRecord,
+    DramaticArcPhase,
     EndingRuntime,
     FrozenModel,
     GoalStatus,
     NarrativeBlock,
     NarrativeThread,
     PresentedChoice,
+    PromiseStatus,
     StoryPhase,
     ThreadStatus,
     utc_now,
@@ -42,6 +44,11 @@ class PlayerActionSelected(FrozenModel):
     decision_id: str
     option_id: str
     idempotency_key: str
+    stance_axis: str | None = None
+    stance_value: str | None = None
+    accepted_cost_category: str | None = None
+    potential_obligation_kind: str | None = None
+    conflict_axis_id: str | None = None
 
 
 class ActionResolved(FrozenModel):
@@ -86,6 +93,108 @@ class RelationshipChanged(FrozenModel):
     character_id: str
     axis: str
     delta: int = Field(ge=-100, le=100)
+    source_choice_event_id: str | None = None
+    relationship_event_id: str | None = None
+
+
+class DramaticQuestionSet(FrozenModel):
+    type: Literal["dramatic_question_set"] = "dramatic_question_set"
+    key: str
+    text: str
+    source_event_id: str
+
+
+class StanceExpressed(FrozenModel):
+    type: Literal["stance_expressed"] = "stance_expressed"
+    key: str
+    axis: str
+    value: str
+    relation: Literal["established", "reinforced", "qualified", "contradicted"]
+    source_choice_event_id: str
+
+
+class StanceChallenged(FrozenModel):
+    type: Literal["stance_challenged"] = "stance_challenged"
+    stance_key: str
+    scene_event_id: str
+    challenging_character_id: str | None = None
+
+
+class RelationshipEventRecorded(FrozenModel):
+    type: Literal["relationship_event_recorded"] = "relationship_event_recorded"
+    character_id: str
+    tag: str
+    source_choice_event_id: str
+    scene_event_id: str
+
+
+class RelationshipTurningPointReached(FrozenModel):
+    type: Literal["relationship_turning_point_reached"] = "relationship_turning_point_reached"
+    turning_point_id: str
+    character_id: str
+    relationship_event_ids: tuple[str, ...] = Field(min_length=1)
+
+
+class PromiseOpened(FrozenModel):
+    type: Literal["promise_opened"] = "promise_opened"
+    promise_id: str
+    expectation: str
+    source_event_id: str
+    involved_character_ids: tuple[str, ...] = ()
+    related_fact_ids: tuple[str, ...] = ()
+    soft_deadline_decision: int = Field(ge=1)
+    hard_deadline_decision: int = Field(ge=1)
+
+
+class PromiseChanged(FrozenModel):
+    type: Literal["promise_changed"] = "promise_changed"
+    promise_id: str
+    status: PromiseStatus
+    payoff_event_ids: tuple[str, ...] = ()
+
+
+class ObligationCreated(FrozenModel):
+    type: Literal["obligation_created"] = "obligation_created"
+    obligation_id: str
+    kind: str
+    burden: int = Field(ge=1, le=3)
+    source_choice_event_id: str
+    character_id: str | None = None
+
+
+class ObligationResolved(FrozenModel):
+    type: Literal["obligation_resolved"] = "obligation_resolved"
+    obligation_id: str
+    outcome: Literal["fulfilled", "broken", "released"]
+    resolution_scene_event_id: str
+
+
+class ConsequenceScheduled(FrozenModel):
+    type: Literal["consequence_scheduled"] = "consequence_scheduled"
+    consequence_id: str
+    cause_event_id: str
+    required_effect: str
+    due_after_decision: int = Field(ge=1)
+    hard_deadline_decision: int = Field(ge=1)
+
+
+class ConsequenceRealized(FrozenModel):
+    type: Literal["consequence_realized"] = "consequence_realized"
+    consequence_id: str
+    effect_event_ids: tuple[str, ...] = Field(min_length=1)
+
+
+class CostIncurred(FrozenModel):
+    type: Literal["cost_incurred"] = "cost_incurred"
+    category: str
+    severity: int = Field(ge=1, le=3)
+    source_choice_event_id: str
+    effect_event_ids: tuple[str, ...] = Field(min_length=1)
+
+
+class ArcPressureAdvanced(FrozenModel):
+    type: Literal["arc_pressure_advanced"] = "arc_pressure_advanced"
+    phase: DramaticArcPhase
 
 
 class GoalAdvanced(FrozenModel):
@@ -160,6 +269,19 @@ StoryEvent = Annotated[
     | CharacterLearnedFact
     | BeliefChanged
     | RelationshipChanged
+    | DramaticQuestionSet
+    | StanceExpressed
+    | StanceChallenged
+    | RelationshipEventRecorded
+    | RelationshipTurningPointReached
+    | PromiseOpened
+    | PromiseChanged
+    | ObligationCreated
+    | ObligationResolved
+    | ConsequenceScheduled
+    | ConsequenceRealized
+    | CostIncurred
+    | ArcPressureAdvanced
     | GoalAdvanced
     | ThreadOpened
     | ThreadAdvanced

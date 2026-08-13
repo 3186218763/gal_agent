@@ -4,10 +4,15 @@ from collections.abc import Iterable
 
 from src.story.state.events import (
     ActionResolved,
+    ArcPressureAdvanced,
     BeliefChanged,
     CharacterLearnedFact,
     CompletionEvaluated,
+    ConsequenceRealized,
+    ConsequenceScheduled,
+    CostIncurred,
     DecisionPresented,
+    DramaticQuestionSet,
     EndingEntered,
     EndingGenerated,
     EventEnvelope,
@@ -15,26 +20,41 @@ from src.story.state.events import (
     FactEvidenced,
     FactRevealed,
     GoalAdvanced,
+    ObligationCreated,
+    ObligationResolved,
     PhaseAdvanced,
     PlayerActionSelected,
+    PromiseChanged,
+    PromiseOpened,
     RelationshipChanged,
+    RelationshipEventRecorded,
+    RelationshipTurningPointReached,
     SceneAcknowledged,
     SceneCommitted,
     SessionEnded,
+    StanceChallenged,
+    StanceExpressed,
     ThreadAdvanced,
     ThreadClosed,
     ThreadOpened,
 )
 from src.story.state.models import (
     CompletionState,
+    DramaticArcPhase,
+    DramaticQuestionRuntime,
     EndingRuntime,
     FactTruthStatus,
     FactVisibility,
     GoalStatus,
+    ObligationRuntime,
     PendingDecisionReference,
     PendingSceneReference,
+    PromiseRuntime,
+    PromiseStatus,
+    ScheduledConsequenceRuntime,
     SessionState,
     SessionStatus,
+    StanceRuntime,
     StoryPhase,
     ThreadStatus,
 )
@@ -51,6 +71,31 @@ _PHASES = (
     StoryPhase.CRISIS,
     StoryPhase.RESOLUTION,
 )
+
+_DRAMATIC_ARC_PHASES = (
+    DramaticArcPhase.APPROACH,
+    DramaticArcPhase.FRACTURE,
+    DramaticArcPhase.ACCOUNTABILITY,
+)
+
+_PROMISE_TRANSITIONS = {
+    PromiseStatus.OPEN: frozenset(
+        {
+            PromiseStatus.ESCALATED,
+            PromiseStatus.TRANSFORMED,
+            PromiseStatus.FULFILLED,
+            PromiseStatus.BROKEN,
+        }
+    ),
+    PromiseStatus.ESCALATED: frozenset(
+        {PromiseStatus.TRANSFORMED, PromiseStatus.FULFILLED, PromiseStatus.BROKEN}
+    ),
+    PromiseStatus.TRANSFORMED: frozenset(
+        {PromiseStatus.ESCALATED, PromiseStatus.FULFILLED, PromiseStatus.BROKEN}
+    ),
+    PromiseStatus.FULFILLED: frozenset(),
+    PromiseStatus.BROKEN: frozenset(),
+}
 
 
 def _require(condition: bool, message: str) -> None:
@@ -148,7 +193,12 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         )
         offered_ids = {item.id for item in next_state.pending_decision.choices}
         _require(event.option_id in offered_ids, "player choice was not offered")
-        next_state = next_state.model_copy(update={"pending_scene": None, "pending_decision": None})
+        drama = next_state.drama.model_copy(
+            update={"decision_count": next_state.drama.decision_count + 1}
+        )
+        next_state = next_state.model_copy(
+            update={"pending_scene": None, "pending_decision": None, "drama": drama}
+        )
 
     elif isinstance(event, ActionResolved):
         pass
@@ -239,6 +289,10 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
 
     elif isinstance(event, RelationshipChanged):
         _require(
+            (event.source_choice_event_id is None) == (event.relationship_event_id is None),
+            "relationship semantic links must be provided together",
+        )
+        _require(
             event.character_id in next_state.world.relationships,
             "unknown relationship character",
         )
@@ -247,6 +301,268 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         relationships[event.character_id][event.axis] = max(0, min(100, current + event.delta))
         world = next_state.world.model_copy(update={"relationships": relationships})
         next_state = next_state.model_copy(update={"world": world})
+
+    elif isinstance(event, DramaticQuestionSet):
+        question = DramaticQuestionRuntime(
+            key=event.key,
+            text=event.text,
+            source_event_id=event.source_event_id,
+        )
+        drama = next_state.drama.model_copy(update={"primary_question": question})
+        next_state = next_state.model_copy(update={"drama": drama})
+
+    elif isinstance(event, StanceExpressed):
+        stances = dict(next_state.drama.stances)
+        current = stances.get(event.key)
+        if current is None:
+            _require(
+                event.relation == "established",
+                "new stance must be established before it can change",
+            )
+            stances[event.key] = StanceRuntime(
+                key=event.key,
+                axis=event.axis,
+                value=event.value,
+                relation=event.relation,
+                expression_event_ids=(envelope.event_id,),
+                source_choice_event_ids=(event.source_choice_event_id,),
+            )
+        else:
+            _require(event.relation != "established", "stance is already established")
+            _require(
+                current.axis == event.axis and current.value == event.value,
+                "stance update must match its established axis and value",
+            )
+            stances[event.key] = current.model_copy(
+                update={
+                    "relation": event.relation,
+                    "expression_event_ids": (
+                        *current.expression_event_ids,
+                        envelope.event_id,
+                    ),
+                    "source_choice_event_ids": (
+                        *current.source_choice_event_ids,
+                        event.source_choice_event_id,
+                    ),
+                }
+            )
+        drama = next_state.drama.model_copy(update={"stances": stances})
+        next_state = next_state.model_copy(update={"drama": drama})
+
+    elif isinstance(event, StanceChallenged):
+        _require(event.stance_key in next_state.drama.stances, "unknown stance")
+        if event.challenging_character_id is not None:
+            _require(
+                event.challenging_character_id in next_state.characters,
+                "unknown challenging character",
+            )
+        stances = dict(next_state.drama.stances)
+        current = stances[event.stance_key]
+        stances[event.stance_key] = current.model_copy(
+            update={"challenge_event_ids": (*current.challenge_event_ids, envelope.event_id)}
+        )
+        drama = next_state.drama.model_copy(update={"stances": stances})
+        next_state = next_state.model_copy(update={"drama": drama})
+
+    elif isinstance(event, RelationshipEventRecorded):
+        _require(event.character_id in next_state.characters, "unknown character")
+        characters = dict(next_state.characters)
+        character = characters[event.character_id]
+        _require(
+            envelope.event_id not in character.relationship_event_ids,
+            "relationship event already recorded",
+        )
+        characters[event.character_id] = character.model_copy(
+            update={
+                "relationship_event_ids": (
+                    *character.relationship_event_ids,
+                    envelope.event_id,
+                )
+            }
+        )
+        next_state = next_state.model_copy(update={"characters": characters})
+
+    elif isinstance(event, RelationshipTurningPointReached):
+        _require(event.character_id in next_state.characters, "unknown character")
+        _require(
+            event.turning_point_id not in next_state.drama.reached_turning_point_ids,
+            "relationship turning point already reached",
+        )
+        reached = frozenset((*next_state.drama.reached_turning_point_ids, event.turning_point_id))
+        drama = next_state.drama.model_copy(update={"reached_turning_point_ids": reached})
+        characters = dict(next_state.characters)
+        character = characters[event.character_id]
+        characters[event.character_id] = character.model_copy(
+            update={
+                "turning_point_ids": frozenset(
+                    (*character.turning_point_ids, event.turning_point_id)
+                )
+            }
+        )
+        next_state = next_state.model_copy(update={"drama": drama, "characters": characters})
+
+    elif isinstance(event, PromiseOpened):
+        _require(event.promise_id not in next_state.drama.promises, "promise already exists")
+        _require(
+            event.soft_deadline_decision <= event.hard_deadline_decision,
+            "promise soft deadline cannot exceed hard deadline",
+        )
+        _require(
+            event.soft_deadline_decision > next_state.drama.decision_count,
+            "promise soft deadline must be in the future",
+        )
+        for character_id in event.involved_character_ids:
+            _require(character_id in next_state.characters, "unknown promise character")
+        for fact_id in event.related_fact_ids:
+            _require(fact_id in next_state.facts, "unknown promise fact")
+        promises = dict(next_state.drama.promises)
+        promises[event.promise_id] = PromiseRuntime(
+            promise_id=event.promise_id,
+            expectation=event.expectation,
+            source_event_id=event.source_event_id,
+            involved_character_ids=event.involved_character_ids,
+            related_fact_ids=event.related_fact_ids,
+            opened_at_decision=next_state.drama.decision_count,
+            soft_deadline_decision=event.soft_deadline_decision,
+            hard_deadline_decision=event.hard_deadline_decision,
+        )
+        drama = next_state.drama.model_copy(update={"promises": promises})
+        next_state = next_state.model_copy(update={"drama": drama})
+
+    elif isinstance(event, PromiseChanged):
+        _require(event.promise_id in next_state.drama.promises, "unknown promise")
+        promises = dict(next_state.drama.promises)
+        current = promises[event.promise_id]
+        _require(
+            bool(_PROMISE_TRANSITIONS[current.status]),
+            "terminal promise cannot change",
+        )
+        _require(
+            event.status in _PROMISE_TRANSITIONS[current.status],
+            "invalid promise lifecycle transition",
+        )
+        promises[event.promise_id] = current.model_copy(
+            update={
+                "status": event.status,
+                "payoff_event_ids": tuple(
+                    dict.fromkeys((*current.payoff_event_ids, *event.payoff_event_ids))
+                ),
+            }
+        )
+        drama = next_state.drama.model_copy(update={"promises": promises})
+        next_state = next_state.model_copy(update={"drama": drama})
+
+    elif isinstance(event, ObligationCreated):
+        _require(
+            event.obligation_id not in next_state.drama.obligations,
+            "obligation already exists",
+        )
+        if event.character_id is not None:
+            _require(event.character_id in next_state.characters, "unknown obligation character")
+        obligations = dict(next_state.drama.obligations)
+        obligations[event.obligation_id] = ObligationRuntime(
+            obligation_id=event.obligation_id,
+            kind=event.kind,
+            burden=event.burden,
+            source_choice_event_id=event.source_choice_event_id,
+            character_id=event.character_id,
+        )
+        characters = next_state.characters
+        if event.character_id is not None:
+            characters = dict(characters)
+            character = characters[event.character_id]
+            characters[event.character_id] = character.model_copy(
+                update={
+                    "unresolved_obligation_ids": frozenset(
+                        (*character.unresolved_obligation_ids, event.obligation_id)
+                    )
+                }
+            )
+        drama = next_state.drama.model_copy(update={"obligations": obligations})
+        next_state = next_state.model_copy(update={"drama": drama, "characters": characters})
+
+    elif isinstance(event, ObligationResolved):
+        _require(event.obligation_id in next_state.drama.obligations, "unknown obligation")
+        obligations = dict(next_state.drama.obligations)
+        current = obligations[event.obligation_id]
+        _require(current.status == "open", "obligation is already resolved")
+        obligations[event.obligation_id] = current.model_copy(
+            update={
+                "status": event.outcome,
+                "resolution_scene_event_id": event.resolution_scene_event_id,
+                "resolution_event_id": envelope.event_id,
+            }
+        )
+        characters = next_state.characters
+        if current.character_id is not None:
+            _require(current.character_id in characters, "unknown obligation character")
+            characters = dict(characters)
+            character = characters[current.character_id]
+            _require(
+                event.obligation_id in character.unresolved_obligation_ids,
+                "obligation is missing from character authority",
+            )
+            unresolved = set(character.unresolved_obligation_ids)
+            unresolved.remove(event.obligation_id)
+            characters[current.character_id] = character.model_copy(
+                update={"unresolved_obligation_ids": frozenset(unresolved)}
+            )
+        drama = next_state.drama.model_copy(update={"obligations": obligations})
+        next_state = next_state.model_copy(update={"drama": drama, "characters": characters})
+
+    elif isinstance(event, ConsequenceScheduled):
+        _require(
+            event.consequence_id not in next_state.drama.scheduled_consequences,
+            "consequence already exists",
+        )
+        _require(
+            event.due_after_decision <= event.hard_deadline_decision,
+            "consequence due decision cannot exceed hard deadline",
+        )
+        consequences = dict(next_state.drama.scheduled_consequences)
+        consequences[event.consequence_id] = ScheduledConsequenceRuntime(
+            consequence_id=event.consequence_id,
+            cause_event_id=event.cause_event_id,
+            required_effect=event.required_effect,
+            due_after_decision=event.due_after_decision,
+            hard_deadline_decision=event.hard_deadline_decision,
+        )
+        drama = next_state.drama.model_copy(update={"scheduled_consequences": consequences})
+        next_state = next_state.model_copy(update={"drama": drama})
+
+    elif isinstance(event, ConsequenceRealized):
+        _require(
+            event.consequence_id in next_state.drama.scheduled_consequences,
+            "unknown consequence",
+        )
+        consequences = dict(next_state.drama.scheduled_consequences)
+        current = consequences[event.consequence_id]
+        _require(current.status == "scheduled", "consequence is already realized")
+        consequences[event.consequence_id] = current.model_copy(
+            update={"status": "realized", "realization_event_id": envelope.event_id}
+        )
+        drama = next_state.drama.model_copy(update={"scheduled_consequences": consequences})
+        next_state = next_state.model_copy(update={"drama": drama})
+
+    elif isinstance(event, CostIncurred):
+        _require(
+            envelope.event_id not in next_state.drama.cost_event_ids,
+            "cost event already recorded",
+        )
+        drama = next_state.drama.model_copy(
+            update={"cost_event_ids": (*next_state.drama.cost_event_ids, envelope.event_id)}
+        )
+        next_state = next_state.model_copy(update={"drama": drama})
+
+    elif isinstance(event, ArcPressureAdvanced):
+        current_index = _DRAMATIC_ARC_PHASES.index(next_state.drama.arc_phase)
+        target_index = _DRAMATIC_ARC_PHASES.index(event.phase)
+        _require(
+            target_index == current_index + 1,
+            "dramatic arc must advance exactly one step",
+        )
+        drama = next_state.drama.model_copy(update={"arc_phase": event.phase})
+        next_state = next_state.model_copy(update={"drama": drama})
 
     elif isinstance(event, GoalAdvanced):
         _require(event.goal_id in next_state.world.goals, "unknown goal")

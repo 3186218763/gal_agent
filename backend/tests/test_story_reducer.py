@@ -2,7 +2,14 @@ import pytest
 
 from src.story.script_pack import compile_source
 from src.story.state import (
+    ArcPressureAdvanced,
     CharacterLearnedFact,
+    CharacterRuntime,
+    ConsequenceRealized,
+    ConsequenceScheduled,
+    CostIncurred,
+    DramaticArcPhase,
+    DramaticQuestionSet,
     EndingEntered,
     EndingRuntime,
     EventEnvelope,
@@ -11,16 +18,25 @@ from src.story.state import (
     FactTruthStatus,
     FactVisibility,
     NarrativeBlock,
+    ObligationCreated,
+    ObligationResolved,
     PendingDecisionReference,
     PhaseAdvanced,
     PlayerActionSelected,
     PresentedChoice,
+    PromiseChanged,
+    PromiseOpened,
+    PromiseStatus,
     RelationshipChanged,
+    RelationshipEventRecorded,
+    RelationshipTurningPointReached,
     SceneAcknowledged,
     SceneCommitted,
     SessionEnded,
     SessionState,
     SessionStatus,
+    StanceChallenged,
+    StanceExpressed,
     StoryPhase,
     WorldSnapshot,
     apply_event,
@@ -579,3 +595,398 @@ def test_completion_evaluated_rejects_without_ending():
     envelope = EventEnvelope(session_id="s1", sequence=11, event=event)
     with pytest.raises(StateTransitionError, match="ending"):
         apply_event(state, envelope)
+
+
+# ---------------------------------------------------------------------------
+# Dramatic authority and semantic event replay
+# ---------------------------------------------------------------------------
+
+
+def test_relationship_event_updates_character_semantics():
+    state = _make_minimal_state(characters={"alice": CharacterRuntime(character_id="alice")})
+    event = RelationshipEventRecorded(
+        character_id="alice",
+        tag="public_trust",
+        source_choice_event_id="choice-1",
+        scene_event_id="scene-1",
+    )
+
+    result = apply_event(
+        state,
+        EventEnvelope(
+            event_id="relationship-1",
+            session_id="s1",
+            sequence=1,
+            event=event,
+        ),
+    )
+
+    assert result.characters["alice"].relationship_event_ids == ("relationship-1",)
+    assert state.characters["alice"].relationship_event_ids == ()
+
+
+def test_stance_establishment_reinforcement_and_challenge_are_replayed():
+    state = _make_minimal_state(characters={"bob": CharacterRuntime(character_id="bob")})
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="stance-1",
+            session_id="s1",
+            sequence=1,
+            event=StanceExpressed(
+                key="trust_vs_evidence:trust",
+                axis="trust_vs_evidence",
+                value="trust",
+                relation="established",
+                source_choice_event_id="choice-1",
+            ),
+        ),
+    )
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="challenge-1",
+            session_id="s1",
+            sequence=2,
+            event=StanceChallenged(
+                stance_key="trust_vs_evidence:trust",
+                scene_event_id="scene-2",
+                challenging_character_id="bob",
+            ),
+        ),
+    )
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="stance-2",
+            session_id="s1",
+            sequence=3,
+            event=StanceExpressed(
+                key="trust_vs_evidence:trust",
+                axis="trust_vs_evidence",
+                value="trust",
+                relation="reinforced",
+                source_choice_event_id="choice-2",
+            ),
+        ),
+    )
+
+    stance = state.drama.stances["trust_vs_evidence:trust"]
+    assert stance.relation == "reinforced"
+    assert stance.expression_event_ids == ("stance-1", "stance-2")
+    assert stance.source_choice_event_ids == ("choice-1", "choice-2")
+    assert stance.challenge_event_ids == ("challenge-1",)
+
+
+def test_stance_update_must_match_existing_axis_and_value():
+    state = apply_event(
+        _make_minimal_state(),
+        EventEnvelope(
+            event_id="stance-1",
+            session_id="s1",
+            sequence=1,
+            event=StanceExpressed(
+                key="trust_vs_evidence:trust",
+                axis="trust_vs_evidence",
+                value="trust",
+                relation="established",
+                source_choice_event_id="choice-1",
+            ),
+        ),
+    )
+
+    with pytest.raises(StateTransitionError, match="axis and value"):
+        apply_event(
+            state,
+            EventEnvelope(
+                event_id="stance-2",
+                session_id="s1",
+                sequence=2,
+                event=StanceExpressed(
+                    key="trust_vs_evidence:trust",
+                    axis="trust_vs_evidence",
+                    value="evidence",
+                    relation="contradicted",
+                    source_choice_event_id="choice-2",
+                ),
+            ),
+        )
+
+
+def test_promise_lifecycle_records_payoff_evidence_and_rejects_terminal_changes():
+    state = _make_minimal_state(characters={"alice": CharacterRuntime(character_id="alice")})
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="promise-opened-1",
+            session_id="s1",
+            sequence=1,
+            event=PromiseOpened(
+                promise_id="explain_lie",
+                expectation="Alice will explain why she lied.",
+                source_event_id="scene-1",
+                involved_character_ids=("alice",),
+                soft_deadline_decision=2,
+                hard_deadline_decision=4,
+            ),
+        ),
+    )
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="promise-changed-1",
+            session_id="s1",
+            sequence=2,
+            event=PromiseChanged(
+                promise_id="explain_lie",
+                status=PromiseStatus.FULFILLED,
+                payoff_event_ids=("scene-3",),
+            ),
+        ),
+    )
+
+    promise = state.drama.promises["explain_lie"]
+    assert promise.status == PromiseStatus.FULFILLED
+    assert promise.payoff_event_ids == ("scene-3",)
+
+    with pytest.raises(StateTransitionError, match="terminal"):
+        apply_event(
+            state,
+            EventEnvelope(
+                event_id="promise-changed-2",
+                session_id="s1",
+                sequence=3,
+                event=PromiseChanged(
+                    promise_id="explain_lie",
+                    status=PromiseStatus.BROKEN,
+                    payoff_event_ids=("scene-4",),
+                ),
+            ),
+        )
+
+
+def test_obligation_cannot_be_resolved_twice():
+    state = _make_minimal_state(characters={"alice": CharacterRuntime(character_id="alice")})
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="created-1",
+            session_id="s1",
+            sequence=1,
+            event=ObligationCreated(
+                obligation_id="secret-1",
+                kind="keep_secret",
+                burden=2,
+                source_choice_event_id="choice-1",
+                character_id="alice",
+            ),
+        ),
+    )
+    assert state.characters["alice"].unresolved_obligation_ids == frozenset({"secret-1"})
+
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="resolved-1",
+            session_id="s1",
+            sequence=2,
+            event=ObligationResolved(
+                obligation_id="secret-1",
+                outcome="fulfilled",
+                resolution_scene_event_id="scene-2",
+            ),
+        ),
+    )
+    assert state.characters["alice"].unresolved_obligation_ids == frozenset()
+
+    with pytest.raises(StateTransitionError, match="already resolved"):
+        apply_event(
+            state,
+            EventEnvelope(
+                event_id="resolved-2",
+                session_id="s1",
+                sequence=3,
+                event=ObligationResolved(
+                    obligation_id="secret-1",
+                    outcome="broken",
+                    resolution_scene_event_id="scene-3",
+                ),
+            ),
+        )
+
+
+def test_scheduled_consequence_can_be_realized_once():
+    state = apply_event(
+        _make_minimal_state(),
+        EventEnvelope(
+            event_id="scheduled-1",
+            session_id="s1",
+            sequence=1,
+            event=ConsequenceScheduled(
+                consequence_id="alice_withdraws",
+                cause_event_id="choice-1",
+                required_effect="Alice withdraws after the public accusation.",
+                due_after_decision=2,
+                hard_deadline_decision=3,
+            ),
+        ),
+    )
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="realized-1",
+            session_id="s1",
+            sequence=2,
+            event=ConsequenceRealized(
+                consequence_id="alice_withdraws",
+                effect_event_ids=("relationship-1", "scene-2"),
+            ),
+        ),
+    )
+
+    consequence = state.drama.scheduled_consequences["alice_withdraws"]
+    assert consequence.status == "realized"
+    assert consequence.realization_event_id == "realized-1"
+
+    with pytest.raises(StateTransitionError, match="already realized"):
+        apply_event(
+            state,
+            EventEnvelope(
+                event_id="realized-2",
+                session_id="s1",
+                sequence=3,
+                event=ConsequenceRealized(
+                    consequence_id="alice_withdraws",
+                    effect_event_ids=("scene-3",),
+                ),
+            ),
+        )
+
+
+def test_relationship_turning_point_is_one_time_and_updates_character():
+    state = _make_minimal_state(characters={"alice": CharacterRuntime(character_id="alice")})
+    reached = RelationshipTurningPointReached(
+        turning_point_id="alice_mutual_trust",
+        character_id="alice",
+        relationship_event_ids=("relationship-1", "relationship-2"),
+    )
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="turning-point-1",
+            session_id="s1",
+            sequence=1,
+            event=reached,
+        ),
+    )
+
+    assert state.drama.reached_turning_point_ids == frozenset({"alice_mutual_trust"})
+    assert state.characters["alice"].turning_point_ids == frozenset({"alice_mutual_trust"})
+
+    with pytest.raises(StateTransitionError, match="already reached"):
+        apply_event(
+            state,
+            EventEnvelope(
+                event_id="turning-point-2",
+                session_id="s1",
+                sequence=2,
+                event=reached,
+            ),
+        )
+
+
+def test_cost_event_is_recorded_as_completion_evidence():
+    state = apply_event(
+        _make_minimal_state(),
+        EventEnvelope(
+            event_id="cost-1",
+            session_id="s1",
+            sequence=1,
+            event=CostIncurred(
+                category="loyalty",
+                severity=2,
+                source_choice_event_id="choice-1",
+                effect_event_ids=("relationship-change-1", "relationship-event-1"),
+            ),
+        ),
+    )
+
+    assert state.drama.cost_event_ids == ("cost-1",)
+
+
+def test_dramatic_question_replaces_previous_primary_question():
+    state = apply_event(
+        _make_minimal_state(),
+        EventEnvelope(
+            event_id="question-1",
+            session_id="s1",
+            sequence=1,
+            event=DramaticQuestionSet(
+                key="trust_alice",
+                text="Will the protagonist trust Alice?",
+                source_event_id="scene-1",
+            ),
+        ),
+    )
+    state = apply_event(
+        state,
+        EventEnvelope(
+            event_id="question-2",
+            session_id="s1",
+            sequence=2,
+            event=DramaticQuestionSet(
+                key="expose_alice",
+                text="Will the protagonist expose Alice's lie?",
+                source_event_id="scene-2",
+            ),
+        ),
+    )
+
+    assert state.drama.primary_question.key == "expose_alice"
+    assert state.drama.primary_question.source_event_id == "scene-2"
+
+
+def test_arc_pressure_advances_monotonically():
+    state = apply_event(
+        _make_minimal_state(),
+        EventEnvelope(
+            event_id="arc-1",
+            session_id="s1",
+            sequence=1,
+            event=ArcPressureAdvanced(phase=DramaticArcPhase.FRACTURE),
+        ),
+    )
+    assert state.drama.arc_phase == DramaticArcPhase.FRACTURE
+
+    with pytest.raises(StateTransitionError, match="advance exactly one step"):
+        apply_event(
+            state,
+            EventEnvelope(
+                event_id="arc-2",
+                session_id="s1",
+                sequence=2,
+                event=ArcPressureAdvanced(phase=DramaticArcPhase.APPROACH),
+            ),
+        )
+
+
+def test_player_action_selection_increments_dramatic_decision_count():
+    state = _decision_state()
+    result = apply_event(
+        state,
+        _envelope(
+            state,
+            PlayerActionSelected(
+                decision_id="decision_01",
+                option_id="ask_alice",
+                idempotency_key="request_01",
+                stance_axis="trust_vs_evidence",
+                stance_value="trust",
+                accepted_cost_category="loyalty",
+                potential_obligation_kind="keep_secret",
+                conflict_axis_id="trust_vs_evidence",
+            ),
+        ),
+    )
+
+    assert result.drama.decision_count == 1

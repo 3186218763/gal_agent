@@ -35,6 +35,12 @@ class StoryPhase(str, Enum):
     RESOLUTION = "resolution"
 
 
+class DramaticArcPhase(str, Enum):
+    APPROACH = "approach"
+    FRACTURE = "fracture"
+    ACCOUNTABILITY = "accountability"
+
+
 class FactTruthStatus(str, Enum):
     POSSIBLE = "possible"
     STAGED = "staged"
@@ -62,6 +68,14 @@ class ThreadStatus(str, Enum):
     ABANDONED = "abandoned"
 
 
+class PromiseStatus(str, Enum):
+    OPEN = "open"
+    ESCALATED = "escalated"
+    TRANSFORMED = "transformed"
+    FULFILLED = "fulfilled"
+    BROKEN = "broken"
+
+
 class FactRecord(FrozenModel):
     id: str
     truth_status: FactTruthStatus
@@ -86,6 +100,14 @@ class CharacterRuntime(FrozenModel):
     suspicions: dict[str, BeliefRecord] = Field(default_factory=dict)
     intentions: tuple[str, ...] = ()
     emotional_state: dict[str, float] = Field(default_factory=dict)
+    current_desire: str | None = None
+    current_fear: str | None = None
+    emotional_condition: str | None = None
+    judgment_of_protagonist: str | None = None
+    boundary_being_tested: str | None = None
+    relationship_event_ids: tuple[str, ...] = ()
+    unresolved_obligation_ids: frozenset[str] = frozenset()
+    turning_point_ids: frozenset[str] = frozenset()
 
 
 class GoalRuntime(FrozenModel):
@@ -169,6 +191,68 @@ class CompletionState(FrozenModel):
     assessments: tuple[CompletionAssessmentRecord, ...]
 
 
+class DramaticQuestionRuntime(FrozenModel):
+    key: str
+    text: str
+    source_event_id: str
+
+
+class PromiseRuntime(FrozenModel):
+    promise_id: str
+    expectation: str
+    source_event_id: str
+    involved_character_ids: tuple[str, ...] = ()
+    related_fact_ids: tuple[str, ...] = ()
+    opened_at_decision: int = Field(ge=0)
+    soft_deadline_decision: int = Field(ge=1)
+    hard_deadline_decision: int = Field(ge=1)
+    status: PromiseStatus = PromiseStatus.OPEN
+    payoff_event_ids: tuple[str, ...] = ()
+
+
+class ObligationRuntime(FrozenModel):
+    obligation_id: str
+    kind: str
+    burden: int = Field(ge=1, le=3)
+    source_choice_event_id: str
+    character_id: str | None = None
+    status: Literal["open", "fulfilled", "broken", "released"] = "open"
+    resolution_scene_event_id: str | None = None
+    resolution_event_id: str | None = None
+
+
+class StanceRuntime(FrozenModel):
+    key: str
+    axis: str
+    value: str
+    relation: Literal["established", "reinforced", "qualified", "contradicted"]
+    expression_event_ids: tuple[str, ...]
+    source_choice_event_ids: tuple[str, ...]
+    challenge_event_ids: tuple[str, ...] = ()
+
+
+class ScheduledConsequenceRuntime(FrozenModel):
+    consequence_id: str
+    cause_event_id: str
+    required_effect: str
+    due_after_decision: int = Field(ge=1)
+    hard_deadline_decision: int = Field(ge=1)
+    status: Literal["scheduled", "realized", "broken"] = "scheduled"
+    realization_event_id: str | None = None
+
+
+class DramaticState(FrozenModel):
+    primary_question: DramaticQuestionRuntime | None = None
+    promises: dict[str, PromiseRuntime] = Field(default_factory=dict)
+    obligations: dict[str, ObligationRuntime] = Field(default_factory=dict)
+    stances: dict[str, StanceRuntime] = Field(default_factory=dict)
+    scheduled_consequences: dict[str, ScheduledConsequenceRuntime] = Field(default_factory=dict)
+    reached_turning_point_ids: frozenset[str] = frozenset()
+    cost_event_ids: tuple[str, ...] = ()
+    arc_phase: DramaticArcPhase = DramaticArcPhase.APPROACH
+    decision_count: int = Field(default=0, ge=0)
+
+
 class WorldSnapshot(FrozenModel):
     location_id: str
     time_label: str
@@ -194,6 +278,7 @@ class SessionState(FrozenModel):
     world: WorldSnapshot
     facts: dict[str, FactRecord]
     characters: dict[str, CharacterRuntime]
+    drama: DramaticState = Field(default_factory=DramaticState)
     threads: dict[str, NarrativeThread] = Field(default_factory=dict)
     pending_scene: PendingSceneReference | None = None
     pending_decision: PendingDecisionReference | None = None

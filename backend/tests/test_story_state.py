@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from src.story.script_pack import compile_script_pack, compile_source
 from src.story.state import (
+    DramaticArcPhase,
     FactTruthStatus,
     FactVisibility,
     StoryPhase,
@@ -16,7 +17,7 @@ from src.story.state.models import (
     EndingRuntime,
     NarrativeBlock,
 )
-from tests.story_factories import minimal_script_pack_dict
+from tests.story_factories import minimal_pack_v2_dict, minimal_script_pack_dict
 
 
 def test_initial_state_separates_truth_visibility_and_character_knowledge():
@@ -58,6 +59,24 @@ def test_session_state_is_immutable():
 
     with pytest.raises(ValidationError):
         state.revision = 1
+
+
+def test_v2_initial_state_contains_empty_dramatic_authority():
+    state = initial_session_state(
+        compile_source(minimal_pack_v2_dict()),
+        "session_01",
+        session_seed=7,
+    )
+
+    assert state.drama.arc_phase == DramaticArcPhase.APPROACH
+    assert state.drama.primary_question is None
+    assert state.drama.promises == {}
+    assert state.drama.obligations == {}
+    assert state.drama.stances == {}
+    assert state.drama.scheduled_consequences == {}
+    assert state.drama.reached_turning_point_ids == frozenset()
+    assert state.drama.cost_event_ids == ()
+    assert state.drama.decision_count == 0
 
 
 # ---------------------------------------------------------------------------
