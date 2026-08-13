@@ -15,13 +15,16 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from src.story.runtime.contracts import PlannerPort
+from openai import OpenAIError
+
+from src.story.runtime.contracts import ActionResolution, ModelContractError, PlannerPort
 from src.story.runtime.pacing import compute_pacing_envelope
 from src.story.runtime.pack_cache import CachedPregen
 from src.story.runtime.segment_contracts import GuardPort
 from src.story.runtime.simulator import simulate_resolution, simulate_segment
 from src.story.runtime.unified_segment import UnifiedSegmentPort
 from src.story.runtime.validator import (
+    ProposalRejected,
     validate_action_resolution,
     validate_segment_draft,
     validate_segment_plan,
@@ -106,13 +109,9 @@ class PreGenerationManager:
                     resolution,
                     expected_action_id=choice.action_id,
                 )
-            except Exception:
+            except (ModelContractError, OpenAIError, ProposalRejected):
                 # Planner may return inconsistent action_ids on flash models.
-                from src.story.runtime.contracts import ActionResolution
-
-                resolution = ActionResolution(
-                    action_id=choice.action_id, outcome="success"
-                )
+                resolution = ActionResolution(action_id=choice.action_id, outcome="success")
 
             # 3: Simulate resolution events.
             pre_events: tuple[StoryEvent, ...] = simulate_resolution(

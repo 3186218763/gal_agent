@@ -15,7 +15,6 @@ from agents.models.openai_responses import OpenAIResponsesModel
 from pydantic import model_validator
 
 from src.story.runtime.contracts import (
-    ModelContractError,
     RuntimeModel,
     SegmentDraft,
     SegmentPlan,

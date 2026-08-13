@@ -7,7 +7,10 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from src.story.runtime.contracts import PackMismatch
+from openai import OpenAIError
+
+from src.story.runtime.contracts import ActionResolution, ModelContractError, PackMismatch
+from src.story.runtime.validator import ProposalRejected
 from src.story.script_pack import PackCompileError, compile_script_pack
 from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
 from src.story.state import (
@@ -183,14 +186,10 @@ async def _init_pack(
                     resolution,
                     expected_action_id=choice.action_id,
                 )
-            except Exception:
+            except (ModelContractError, OpenAIError, ProposalRejected):
                 # Planner may return inconsistent action_ids on flash models.
                 # Fall back to a default resolution so pre-gen can proceed.
-                from src.story.runtime.contracts import ActionResolution
-
-                resolution = ActionResolution(
-                    action_id=choice.action_id, outcome="success"
-                )
+                resolution = ActionResolution(action_id=choice.action_id, outcome="success")
             pre_events = simulate_resolution(
                 post_state,
                 choice,
@@ -350,6 +349,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if cached_opening is not None and not args.force:
                 # Check completeness — count expected choices from the opening.
                 from src.story.state import EventEnvelope, apply_events
+
                 state = initial_session_state(pack, "check", session_seed=0)
                 envelopes = tuple(
                     EventEnvelope(
