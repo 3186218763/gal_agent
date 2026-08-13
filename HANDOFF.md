@@ -22,7 +22,7 @@ Do not restart design discovery. The user has approved the current direction and
 - Current implementation is the uncommitted worktree diff against `HEAD` (`4355263`). Read it before editing.
 - `README.md` and `backend/README.md` describe the older runtime in several places and are not authoritative where they conflict with the ADRs or current diff. Update them as part of cleanup.
 
-The user intentionally deleted `PROJECT_GOAL.md`, the old `docs/superpowers/` plans/specs, and two older audit/research documents. Do not restore or recreate them. Preserve all unrelated user changes and untracked `.agents/`, `.opencode/`, `skills-lock.json`, and other files.
+The user intentionally deleted `PROJECT_GOAL.md` and two older audit/research documents. Do not restore or recreate them. Preserve all unrelated user changes and untracked `.agents/`, `.opencode/`, `skills-lock.json`, and other files.
 
 ## Current implementation state
 

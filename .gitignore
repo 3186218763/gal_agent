@@ -23,6 +23,4 @@ frontend/package-lock.json
 .DS_Store
 *.swp
 
-# Superpowers / local scratch
-.superpowers/
 .worktrees/
