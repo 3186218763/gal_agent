@@ -12,9 +12,7 @@ def _base():
 
 def state_with_relationship(character_id: str, axis: str, value: int):
     state, pack = _base()
-    relationships = {
-        key: dict(axes) for key, axes in state.world.relationships.items()
-    }
+    relationships = {key: dict(axes) for key, axes in state.world.relationships.items()}
     relationships[character_id] = {**relationships[character_id], axis: value}
     world = state.world.model_copy(update={"relationships": relationships})
     return state.model_copy(update={"world": world}), pack

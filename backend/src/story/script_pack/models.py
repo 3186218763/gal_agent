@@ -168,9 +168,7 @@ class EffectBoundsSource(StrictModel):
             if bounds[0] > bounds[1]:
                 raise ValueError(f"invalid bounds for relationship axis {axis}")
             if bounds[0] < -100 or bounds[1] > 100:
-                raise ValueError(
-                    f"relationship bounds for {axis} must stay within -100..100"
-                )
+                raise ValueError(f"relationship bounds for {axis} must stay within -100..100")
         if self.goal_progress[0] > self.goal_progress[1]:
             raise ValueError("invalid goal_progress bounds")
         if self.goal_progress[0] < -1 or self.goal_progress[1] > 1:

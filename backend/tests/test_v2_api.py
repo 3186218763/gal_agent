@@ -93,9 +93,7 @@ def _parse_sse_lines(response) -> list[tuple[str, dict]]:
     return events
 
 
-def _sse_advance(
-    client: TestClient, session_id: str, revision: int, key: str
-) -> dict[str, Any]:
+def _sse_advance(client: TestClient, session_id: str, revision: int, key: str) -> dict[str, Any]:
     """Call the SSE advance endpoint and return a dict similar to the old JSON response."""
     with client.stream(
         "POST",
@@ -118,9 +116,7 @@ def _sse_advance(
     return result
 
 
-def _sse_advance_raw(
-    client: TestClient, session_id: str, revision: int, key: str
-) -> str:
+def _sse_advance_raw(client: TestClient, session_id: str, revision: int, key: str) -> str:
     """Return the raw SSE response text for inspection."""
     with client.stream(
         "POST",
@@ -213,7 +209,9 @@ def test_unknown_pack_and_session_return_404(client: TestClient):
 # ---------------------------------------------------------------------------
 
 
-def test_unoffered_choice_returns_422(decision_client: TestClient, decision_session: SimpleNamespace):
+def test_unoffered_choice_returns_422(
+    decision_client: TestClient, decision_session: SimpleNamespace
+):
     response = decision_client.post(
         f"/api/v2/sessions/{decision_session.id}/choices/invented",
         json={
@@ -240,7 +238,9 @@ def test_stale_revision_returns_409(decision_client: TestClient, decision_sessio
 # ---------------------------------------------------------------------------
 
 
-def test_pending_decision_returns_error_event(decision_client: TestClient, decision_session: SimpleNamespace):
+def test_pending_decision_returns_error_event(
+    decision_client: TestClient, decision_session: SimpleNamespace
+):
     """Advancing when a decision is pending yields an SSE error event."""
     result = _sse_advance(
         decision_client, decision_session.id, decision_session.revision, "advance-09"
@@ -249,9 +249,7 @@ def test_pending_decision_returns_error_event(decision_client: TestClient, decis
 
 
 def test_provider_failure_sends_generation_error(tmp_path: Path):
-    deps = build_test_dependencies(
-        tmp_path, generator=ProviderFailingGenerator()
-    )
+    deps = build_test_dependencies(tmp_path, generator=ProviderFailingGenerator())
     pack = deps.registry.get("test_pack")
     state = initial_session_state(pack, "session_01", session_seed=1)
     deps.store.create_session(state)
@@ -263,9 +261,7 @@ def test_provider_failure_sends_generation_error(tmp_path: Path):
 
 
 def test_generation_contract_failure_is_retryable_and_redacted(tmp_path: Path):
-    deps = build_test_dependencies(
-        tmp_path, generator=ContractFailingGenerator()
-    )
+    deps = build_test_dependencies(tmp_path, generator=ContractFailingGenerator())
     http = TestClient(create_app(deps))
     created = http.post(
         "/api/v2/sessions",
@@ -321,9 +317,7 @@ def test_default_dependencies_include_segment_pipeline(monkeypatch, tmp_path):
                 yield None
 
     fake_bundle = SimpleNamespace(model=FakeModel(), client=object())
-    monkeypatch.setattr(
-        api_module, "build_model_bundle", lambda _settings: fake_bundle
-    )
+    monkeypatch.setattr(api_module, "build_model_bundle", lambda _settings: fake_bundle)
     monkeypatch.setattr(
         api_module.OpenCodeGoSettings,
         "from_env",
@@ -416,13 +410,9 @@ def test_get_session_keeps_ending_title_and_epilogue_after_end(tmp_path: Path):
 
 
 def test_advance_requires_idempotency_key(client: TestClient):
-    created = client.post(
-        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1}
-    )
+    created = client.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1})
     session_id = created.json()["session_id"]
-    response = client.post(
-        f"/api/v2/sessions/{session_id}/advance", json={"expected_revision": 0}
-    )
+    response = client.post(f"/api/v2/sessions/{session_id}/advance", json={"expected_revision": 0})
     assert response.status_code == 422
 
 
@@ -443,9 +433,7 @@ def test_repeated_advance_with_same_key_replays_identical_events(tmp_path: Path)
 
 
 def test_get_session_returns_public_projection_without_internal_state(client: TestClient):
-    created = client.post(
-        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 4}
-    )
+    created = client.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 4})
     session_id = created.json()["session_id"]
     body = client.get(f"/api/v2/sessions/{session_id}").json()
     assert body["status"] == "active"

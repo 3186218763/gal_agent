@@ -46,8 +46,7 @@ def valid_scene_draft(plan: ScenePlan) -> SceneDraft:
         scene_id=plan.scene_id,
         blocks=(NarrativeBlock(kind="narration", text="The cafe hums quietly."),),
         choices=tuple(
-            WrittenChoice(option_id=item.option_id, label=item.intent[:80])
-            for item in plan.choices
+            WrittenChoice(option_id=item.option_id, label=item.intent[:80]) for item in plan.choices
         ),
     )
 

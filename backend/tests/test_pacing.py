@@ -13,9 +13,9 @@ def _make_pack_and_state(scene_count=0, min_scenes=8, max_scenes=20, reserved=3)
     pack = compile_source(raw)
     state = initial_session_state(pack, "s1", session_seed=1)
     if scene_count > 0:
-        state = state.model_copy(update={
-            "world": state.world.model_copy(update={"scene_count": scene_count})
-        })
+        state = state.model_copy(
+            update={"world": state.world.model_copy(update={"scene_count": scene_count})}
+        )
     return pack, state
 
 

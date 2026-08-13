@@ -93,9 +93,7 @@ def test_segment_ending_populated_from_ending_generated():
         title="Dawn",
         tone="hopeful",
         terminal_state_summary="Everyone survived.",
-        blocks=(
-            NarrativeBlock(kind="narration", text="The sun rose."),
-        ),
+        blocks=(NarrativeBlock(kind="narration", text="The sun rose."),),
     )
     state = apply_events(state, (_envelope(event, 1),))
     proj = project_session(state)

@@ -59,8 +59,7 @@ class CompletionJudge:
                     cited.extend(
                         env.event_id
                         for env in event_trace
-                        if isinstance(env.event, FactCommitted)
-                        and env.event.fact_id == fact_id
+                        if isinstance(env.event, FactCommitted) and env.event.fact_id == fact_id
                     )
                     rationale_parts.append(f"fact {fact_id} is committed")
                 else:
@@ -73,8 +72,7 @@ class CompletionJudge:
                     cited.extend(
                         env.event_id
                         for env in event_trace
-                        if isinstance(env.event, GoalAdvanced)
-                        and env.event.goal_id == goal_id
+                        if isinstance(env.event, GoalAdvanced) and env.event.goal_id == goal_id
                     )
                     rationale_parts.append(f"goal {goal_id} is completed")
                 else:
@@ -83,9 +81,7 @@ class CompletionJudge:
 
             if not fact_ids and not goal_ids:
                 satisfied = False
-                rationale_parts.append(
-                    "no evidence hints provided; cannot auto-satisfy"
-                )
+                rationale_parts.append("no evidence hints provided; cannot auto-satisfy")
 
             assessments.append(
                 CompletionAssessment(

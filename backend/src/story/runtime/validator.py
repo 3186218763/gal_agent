@@ -47,7 +47,9 @@ def _validate_fact_commits(pack, state, commits) -> list[str]:
         for index in range(len(candidate.requirements)):
             key = f"fact.{commit.fact_id}.candidate.{commit.value}.requirement.{index}"
             if not pack.conditions[key].evaluate(context):
-                errors.append(f"candidate requirement is false: {commit.fact_id}.{commit.value}.{index}")
+                errors.append(
+                    f"candidate requirement is false: {commit.fact_id}.{commit.value}.{index}"
+                )
         unknown_learners = set(commit.learned_by) - pack.character_ids
         errors.extend(f"unknown character: {item}" for item in sorted(unknown_learners))
         if commit.reveal and question.evidence_required > 1:
@@ -55,7 +57,9 @@ def _validate_fact_commits(pack, state, commits) -> list[str]:
     return errors
 
 
-def validate_scene_plan(pack: CompiledScriptPack, state: SessionState, plan: ScenePlan) -> ScenePlan:
+def validate_scene_plan(
+    pack: CompiledScriptPack, state: SessionState, plan: ScenePlan
+) -> ScenePlan:
     errors: list[str] = []
     location_ids = {
         item.id
@@ -72,8 +76,12 @@ def validate_scene_plan(pack: CompiledScriptPack, state: SessionState, plan: Sce
         for item in plan.present_character_ids
         if item not in pack.character_ids
     )
-    errors.extend(f"unknown goal: {item}" for item in plan.focus_goal_ids if item not in pack.goal_ids)
-    errors.extend(f"unknown fact: {item}" for item in plan.related_fact_ids if item not in pack.fact_ids)
+    errors.extend(
+        f"unknown goal: {item}" for item in plan.focus_goal_ids if item not in pack.goal_ids
+    )
+    errors.extend(
+        f"unknown fact: {item}" for item in plan.related_fact_ids if item not in pack.fact_ids
+    )
     allowed_actions = pack.action_ids & set(pack.source.protagonist.capabilities)
     errors.extend(
         f"unavailable action: {choice.action_id}"
@@ -103,7 +111,11 @@ def validate_action_resolution(
             f"resolution action mismatch: expected {expected_action_id}, got {resolution.action_id}"
         )
     extension = next(
-        (item for item in pack.source.interaction_rules.extensions if item.id == resolution.action_id),
+        (
+            item
+            for item in pack.source.interaction_rules.extensions
+            if item.id == resolution.action_id
+        ),
         None,
     )
     if extension is not None:
@@ -120,7 +132,9 @@ def validate_action_resolution(
         if item.axis not in axes:
             errors.append(f"unknown relationship axis: {item.character_id}.{item.axis}")
             continue
-        bounds = (-10, 10) if extension is None else extension.effects.relationship_axes.get(item.axis)
+        bounds = (
+            (-10, 10) if extension is None else extension.effects.relationship_axes.get(item.axis)
+        )
         if bounds is None or not bounds[0] <= item.delta <= bounds[1]:
             errors.append(f"relationship delta out of bounds: {item.character_id}.{item.axis}")
     relationship_keys = [(item.character_id, item.axis) for item in resolution.relationship_deltas]
@@ -154,8 +168,7 @@ def validate_action_resolution(
         elif fact.truth_status != FactTruthStatus.COMMITTED:
             errors.append(f"cannot reveal uncommitted fact: {fact_id}")
         elif (
-            len(fact.evidence_event_ids)
-            + (1 if fact_id in resolution.evidence_fact_ids else 0)
+            len(fact.evidence_event_ids) + (1 if fact_id in resolution.evidence_fact_ids else 0)
             < fact.evidence_required
         ):
             errors.append(f"fact lacks evidence: {fact_id}")
@@ -235,9 +248,7 @@ def validate_segment_plan(
     # All but last scene must have terminal="continue".
     for i, scene in enumerate(plan.scenes[:-1]):
         if scene.terminal != "continue":
-            errors.append(
-                f"non-terminal scene at index {i} must have terminal='continue'"
-            )
+            errors.append(f"non-terminal scene at index {i} must have terminal='continue'")
 
     # Scene count must not exceed remaining budget.
     # Exception: must_end forces a mandatory ending, which is allowed even
@@ -255,16 +266,14 @@ def validate_segment_plan(
     if plan.terminal == "ending":
         if last_scene.terminal != "ending":
             errors.append(
-                "last scene must have terminal='ending' when segment "
-                "terminal is 'Ending'"
+                "last scene must have terminal='ending' when segment terminal is 'Ending'"
             )
         if plan.ending_proposal is None:
             errors.append("ending_proposal is required when terminal is 'ending'")
     elif plan.terminal == "decision":
         if last_scene.terminal != "decision":
             errors.append(
-                "last scene must have terminal='decision' when segment "
-                "terminal is 'decision'"
+                "last scene must have terminal='decision' when segment terminal is 'decision'"
             )
 
     # Validate each scene plan individually.
@@ -278,15 +287,12 @@ def validate_segment_plan(
     if pacing.in_convergence or pacing.max_new_threads == 0:
         new_thread_count = sum(1 for op in plan.thread_ops if op.kind == "open")
         if new_thread_count > 0:
-            errors.append(
-                f"cannot open {new_thread_count} new thread(s) in convergence window"
-            )
+            errors.append(f"cannot open {new_thread_count} new thread(s) in convergence window")
     else:
         new_thread_count = sum(1 for op in plan.thread_ops if op.kind == "open")
         if new_thread_count > pacing.max_new_threads:
             errors.append(
-                f"segment opens {new_thread_count} threads but budget is "
-                f"{pacing.max_new_threads}"
+                f"segment opens {new_thread_count} threads but budget is {pacing.max_new_threads}"
             )
 
     # Validate thread operation referential integrity.
@@ -309,9 +315,7 @@ def validate_segment_draft(
     errors: list[str] = []
 
     if draft.segment_id != plan.segment_id:
-        errors.append(
-            f"segment_id mismatch: expected {plan.segment_id}, got {draft.segment_id}"
-        )
+        errors.append(f"segment_id mismatch: expected {plan.segment_id}, got {draft.segment_id}")
 
     if len(draft.scene_drafts) != len(plan.scenes):
         errors.append(
@@ -330,9 +334,7 @@ def validate_segment_draft(
                 f"scene {scene_plan.scene_id}: id mismatch "
                 f"(expected {scene_plan.scene_id}, got {scene_draft.scene_id})"
             )
-        if not scene_draft.blocks or any(
-            not block.text.strip() for block in scene_draft.blocks
-        ):
+        if not scene_draft.blocks or any(not block.text.strip() for block in scene_draft.blocks):
             errors.append(f"scene {scene_plan.scene_id}: requires non-empty blocks")
         for block in scene_draft.blocks:
             if (
@@ -352,9 +354,7 @@ def validate_segment_draft(
             planned_ids = {c.option_id for c in last_scene.choices}
             written_ids = set(written_map)
             if written_ids != planned_ids:
-                errors.append(
-                    "segment choice ids must match last scene's planned choices"
-                )
+                errors.append("segment choice ids must match last scene's planned choices")
             for wc in draft.choices:
                 if not wc.label.strip():
                     errors.append(f"choice label cannot be empty: {wc.option_id}")

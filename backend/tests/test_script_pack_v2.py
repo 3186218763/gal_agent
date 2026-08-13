@@ -481,14 +481,20 @@ class TestCafeMysteryV2:
 
     def test_cafe_mystery_has_no_endings_field(self):
         import yaml
-        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+
+        pack_path = (
+            Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+        )
         raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
         assert "endings" not in raw
         assert raw["schema_version"] == "2.0"
 
     def test_cafe_mystery_has_world_setting(self):
         import yaml
-        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+
+        pack_path = (
+            Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+        )
         raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
         assert "world_setting" in raw
         assert raw["world_setting"]["premise"]
@@ -496,14 +502,20 @@ class TestCafeMysteryV2:
 
     def test_cafe_mystery_has_story_history(self):
         import yaml
-        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+
+        pack_path = (
+            Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+        )
         raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
         assert "story_history" in raw
         assert raw["story_history"]["summary"]
 
     def test_cafe_mystery_has_opening_state(self):
         import yaml
-        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+
+        pack_path = (
+            Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+        )
         raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
         assert "opening_state" in raw
         assert raw["opening_state"]["location"] == "cafe"

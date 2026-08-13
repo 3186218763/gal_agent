@@ -63,13 +63,9 @@ class SegmentPlan(RuntimeModel):
             raise ValueError("segment must have at least 1 scene")
         for i, scene in enumerate(self.scenes[:-1]):
             if scene.terminal != "continue":
-                raise ValueError(
-                    f"non-last scene at index {i} must have terminal='continue'"
-                )
+                raise ValueError(f"non-last scene at index {i} must have terminal='continue'")
         if self.terminal == "ending" and self.ending_proposal is None:
-            raise ValueError(
-                "ending_proposal is required when terminal is 'ending'"
-            )
+            raise ValueError("ending_proposal is required when terminal is 'ending'")
         return self
 
 
@@ -97,6 +93,7 @@ class PacingEnvelope(RuntimeModel):
     in_convergence: bool
     max_new_threads: int
     quiet_scene_allowance: int
+    target_block_range: tuple[int, int]
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +147,7 @@ class DirectorPort(Protocol):
         pack: CompiledScriptPack,
         state: SessionState,
         pacing: PacingEnvelope,
-    ) -> SegmentPlan:
-        ...
+    ) -> SegmentPlan: ...
 
 
 class SegmentWriterPort(Protocol):
@@ -160,8 +156,7 @@ class SegmentWriterPort(Protocol):
         pack: CompiledScriptPack,
         state: SessionState,
         plan: SegmentPlan,
-    ) -> SegmentDraft:
-        ...
+    ) -> SegmentDraft: ...
 
 
 class GuardPort(Protocol):
@@ -171,5 +166,4 @@ class GuardPort(Protocol):
         state: SessionState,
         plan: SegmentPlan,
         draft: SegmentDraft,
-    ) -> GuardResult:
-        ...
+    ) -> GuardResult: ...

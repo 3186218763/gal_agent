@@ -158,9 +158,7 @@ def test_no_duplicate_choice_ids(tmp_path: Path, policy: PlayerPolicy):
         for c in ready["choices"]:
             assert c["id"] not in all_choice_ids, f"duplicate choice id: {c['id']}"
             all_choice_ids.add(c["id"])
-        ready = _run_turn(
-            orch, pack, "sess_choices", revision, f"cmd-{turn}", choice
-        )
+        ready = _run_turn(orch, pack, "sess_choices", revision, f"cmd-{turn}", choice)
         revision = ready["revision"]
 
 
@@ -203,6 +201,4 @@ def test_sessions_with_different_policies_produce_different_revisions(tmp_path: 
     if len(choices1) == len(choices2) and len(choices1) > 0:
         option_ids1 = [e.event.option_id for e in choices1]
         option_ids2 = [e.event.option_id for e in choices2]
-        assert option_ids1 != option_ids2, (
-            "different policies should select different options"
-        )
+        assert option_ids1 != option_ids2, "different policies should select different options"

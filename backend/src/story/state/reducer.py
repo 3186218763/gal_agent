@@ -100,9 +100,7 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
                 "location_id": event.location_id,
                 "present_character_ids": event.present_character_ids,
                 "scene_count": (
-                    next_state.world.scene_count
-                    if is_ending
-                    else next_state.world.scene_count + 1
+                    next_state.world.scene_count if is_ending else next_state.world.scene_count + 1
                 ),
             }
         )
@@ -150,9 +148,7 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         )
         offered_ids = {item.id for item in next_state.pending_decision.choices}
         _require(event.option_id in offered_ids, "player choice was not offered")
-        next_state = next_state.model_copy(
-            update={"pending_scene": None, "pending_decision": None}
-        )
+        next_state = next_state.model_copy(update={"pending_scene": None, "pending_decision": None})
 
     elif isinstance(event, ActionResolved):
         pass
@@ -322,11 +318,7 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         choice_ids = [item.id for item in event.choices]
         _require(len(choice_ids) == len(set(choice_ids)), "choice ids must be unique")
         _require(2 <= len(event.choices) <= 4, "decision requires 2-4 choices")
-        scene_id = (
-            next_state.pending_scene.scene_id
-            if next_state.pending_scene is not None
-            else ""
-        )
+        scene_id = next_state.pending_scene.scene_id if next_state.pending_scene is not None else ""
         pending_decision = PendingDecisionReference(
             decision_id=event.decision_id,
             scene_id=scene_id,

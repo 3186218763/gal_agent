@@ -35,4 +35,5 @@ def compute_pacing_envelope(
         in_convergence=in_convergence,
         max_new_threads=0 if in_convergence else DEFAULT_MAX_OPEN_THREADS,
         quiet_scene_allowance=max(0, min(2, remaining // 4)),
+        target_block_range=(30, 60) if scene_count == 0 else (8, 25),
     )

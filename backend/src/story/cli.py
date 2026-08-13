@@ -9,8 +9,14 @@ from pathlib import Path
 
 from src.story.runtime.contracts import PackMismatch
 from src.story.script_pack import PackCompileError, compile_script_pack
-from src.story.script_pack.models import ScriptPackSourceV2
-from src.story.state import SessionState, SessionStatus, initial_session_state
+from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
+from src.story.state import (
+    EventEnvelope,
+    SessionState,
+    SessionStatus,
+    apply_events,
+    initial_session_state,
+)
 from src.story.storage import SessionAlreadyExists, SessionNotFound, StoryEventStore
 
 
@@ -38,6 +44,10 @@ def _parser() -> argparse.ArgumentParser:
     play.add_argument("--seed", type=int, required=True)
     play.add_argument("--choice-strategy", choices=("first", "last"), default="first")
     play.add_argument("--max-commands", type=int, default=200)
+    init_pack = commands.add_parser("init-pack")
+    init_pack.add_argument("pack_path", type=Path)
+    init_pack.add_argument("--force", action="store_true")
+    init_pack.add_argument("--cache-root", type=Path, default=Path("data/pack_cache"))
     return parser
 
 
@@ -82,6 +92,141 @@ async def autoplay(
         state = store.load_session(session_id)
         commands += 1
     return state
+
+
+async def _init_pack(
+    pack: CompiledScriptPack,
+    cache_root: Path,
+    opening_agent,
+    unified_agent,
+    planner,
+    guard,
+    force: bool = False,
+) -> dict:
+    """Generate opening + pregen, persist to PackCache.
+
+    Returns summary dict for CLI output.
+    """
+    from src.story.runtime.pacing import compute_pacing_envelope
+    from src.story.runtime.pack_cache import CachedOpening, CachedPregen, PackCache
+    from src.story.runtime.simulator import simulate_resolution, simulate_segment
+    from src.story.runtime.validator import (
+        validate_action_resolution,
+        validate_segment_draft,
+        validate_segment_plan,
+    )
+
+    cache = PackCache(cache_root)
+
+    # Build initial state.
+    state = initial_session_state(pack, "init_pack", session_seed=0)
+
+    # Generate opening segment.
+    pacing = compute_pacing_envelope(state, pack)
+    result = await opening_agent.generate(pack, state, pacing)
+    plan = validate_segment_plan(pack, state, result.segment_plan, pacing)
+    draft = validate_segment_draft(plan, result.segment_draft)
+
+    guard_result = guard.check_segment(pack, state, plan, draft)
+    if not guard_result.passed:
+        raise RuntimeError("guard rejected opening segment")
+
+    seg_events = simulate_segment(pack, state, plan, draft)
+
+    # Save opening.
+    cache.save_opening(
+        pack.pack_hash,
+        CachedOpening(
+            segment_plan=plan,
+            segment_draft=draft,
+            seg_events=seg_events,
+            pacing=pacing,
+        ),
+    )
+
+    # Build post-opening state for pre-generation.
+    envelopes = tuple(
+        EventEnvelope(
+            session_id="init_pack",
+            sequence=state.revision + i,
+            event=e,
+        )
+        for i, e in enumerate(seg_events, start=1)
+    )
+    post_state = apply_events(state, envelopes)
+
+    choice_ids: list[str] = []
+    if post_state.pending_decision is not None:
+        for choice in post_state.pending_decision.choices:
+            choice_ids.append(choice.id)
+
+    # Pre-generate each choice.
+    pregen_count = 0
+    for choice in post_state.pending_decision.choices if post_state.pending_decision else []:
+        try:
+            resolution = await planner.resolve_action(pack, post_state, choice)
+            resolution = validate_action_resolution(
+                pack,
+                post_state,
+                resolution,
+                expected_action_id=choice.action_id,
+            )
+            pre_events = simulate_resolution(
+                post_state,
+                choice,
+                resolution,
+                idempotency_key=f"initpack-{choice.id}",
+            )
+            pre_envelopes = tuple(
+                EventEnvelope(
+                    session_id="init_pack",
+                    sequence=post_state.revision + i,
+                    event=e,
+                )
+                for i, e in enumerate(pre_events, start=1)
+            )
+            hypo_state = apply_events(post_state, pre_envelopes)
+            hypo_pacing = compute_pacing_envelope(hypo_state, pack)
+
+            seg_result = await unified_agent.generate(pack, hypo_state, hypo_pacing)
+            seg_plan = validate_segment_plan(pack, hypo_state, seg_result.segment_plan, hypo_pacing)
+            seg_draft = validate_segment_draft(seg_plan, seg_result.segment_draft)
+
+            seg_guard = guard.check_segment(pack, hypo_state, seg_plan, seg_draft)
+            if not seg_guard.passed:
+                continue
+
+            pre_seg_events = simulate_segment(pack, hypo_state, seg_plan, seg_draft)
+
+            cache.save_pregen(
+                pack.pack_hash,
+                choice.id,
+                CachedPregen(
+                    choice_id=choice.id,
+                    pre_events=pre_events,
+                    seg_events=pre_seg_events,
+                    segment_plan=seg_plan,
+                    segment_draft=seg_draft,
+                    pacing=hypo_pacing,
+                ),
+            )
+            pregen_count += 1
+        except Exception:
+            # Individual pre-gen failure is non-fatal.
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "init-pack pre-gen failed for a choice", exc_info=True
+            )
+
+    return {
+        "status": "initialized",
+        "pack_id": pack.source.identity.id,
+        "pack_hash": pack.pack_hash,
+        "opening_segment_id": plan.segment_id,
+        "choice_ids": choice_ids,
+        "pregen_count": pregen_count,
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -161,6 +306,54 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_commands=args.max_commands,
                 )
             )
+            return 0
+        if args.command == "init-pack":
+            from dotenv import load_dotenv
+
+            from src.story.runtime.config import OpenCodeGoSettings
+            from src.story.runtime.guard import Guard
+            from src.story.runtime.model import build_model_bundle
+            from src.story.runtime.pack_cache import PackCache
+            from src.story.runtime.planner import SdkPlanner
+            from src.story.runtime.unified_segment import (
+                OPENING_INSTRUCTIONS,
+                SdkUnifiedSegmentAgent,
+            )
+
+            load_dotenv()
+            pack = compile_script_pack(args.pack_path)
+            cache = PackCache(args.cache_root)
+
+            # Idempotent: skip if already complete and --force not set.
+            if not args.force and cache.has_opening(pack.pack_hash):
+                _print(
+                    {
+                        "status": "already_initialized",
+                        "pack_id": pack.source.identity.id,
+                        "pack_hash": pack.pack_hash,
+                    }
+                )
+                return 0
+
+            settings = OpenCodeGoSettings.from_env()
+            bundle = build_model_bundle(settings)
+            opening_agent = SdkUnifiedSegmentAgent(bundle.model, instructions=OPENING_INSTRUCTIONS)
+            unified_agent = SdkUnifiedSegmentAgent(bundle.model)
+            planner = SdkPlanner(bundle.model)
+            guard = Guard()
+
+            result = asyncio.run(
+                _init_pack(
+                    pack=pack,
+                    cache_root=args.cache_root,
+                    opening_agent=opening_agent,
+                    unified_agent=unified_agent,
+                    planner=planner,
+                    guard=guard,
+                    force=args.force,
+                )
+            )
+            _print(result)
             return 0
         raise AssertionError(f"unhandled command: {args.command}")
     except (

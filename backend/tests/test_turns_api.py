@@ -61,15 +61,16 @@ def _build_deps(tmp_path: Path) -> AppDependencies:
         planner=FakePlanner(),
     )
     return AppDependencies(
-        store=store, registry=registry, runtime=None, orchestrator=orchestrator,
+        store=store,
+        registry=registry,
+        runtime=None,
+        orchestrator=orchestrator,
     )
 
 
 def test_turns_endpoint_streams_segment(tmp_path: Path):
     http = TestClient(create_app(_build_deps(tmp_path)))
-    created = http.post(
-        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1}
-    )
+    created = http.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1})
     assert created.status_code == 201
     session_id = created.json()["session_id"]
 
@@ -93,20 +94,20 @@ def test_turns_endpoint_streams_segment(tmp_path: Path):
 
 def test_turns_endpoint_ending(tmp_path: Path):
     http = TestClient(create_app(_build_deps(tmp_path)))
-    created = http.post(
-        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 2}
-    )
+    created = http.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 2})
     assert created.status_code == 201
 
     # Manually set scene_count to max to trigger ending.
     from src.story.script_pack.compiler import compile_source
+
     pack = compile_source(budget_test_pack_dict())
     from src.story.state import initial_session_state
+
     store = _build_deps(tmp_path).store
     state = initial_session_state(pack, "force_ending", session_seed=1)
-    state = state.model_copy(update={
-        "world": state.world.model_copy(update={"scene_count": state.world.max_scenes})
-    })
+    state = state.model_copy(
+        update={"world": state.world.model_copy(update={"scene_count": state.world.max_scenes})}
+    )
     store.create_session(state)
 
     with http.stream(
@@ -123,9 +124,7 @@ def test_turns_endpoint_ending(tmp_path: Path):
 
 def test_turns_endpoint_idempotent_replay(tmp_path: Path):
     http = TestClient(create_app(_build_deps(tmp_path)))
-    created = http.post(
-        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 3}
-    )
+    created = http.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 3})
     session_id = created.json()["session_id"]
 
     with http.stream(

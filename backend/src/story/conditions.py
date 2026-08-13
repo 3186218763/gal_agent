@@ -120,8 +120,7 @@ def _resolve(context: Mapping[str, Any], dotted: str) -> Any:
             value = value[part]
             continue
         raise ConditionEvaluationError(
-            f"condition path not found: {'.'.join(consumed)} "
-            f"(full path: {dotted})"
+            f"condition path not found: {'.'.join(consumed)} (full path: {dotted})"
         )
     return value
 

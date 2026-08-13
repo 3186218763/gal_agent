@@ -66,10 +66,14 @@ class FakeStreamingGenerator:
         blocks: list[dict[str, Any]] | None = None,
         complete: dict[str, Any] | None = None,
     ) -> None:
-        self._blocks = blocks if blocks is not None else [
-            {"kind": "narration", "text": "The cafe hums quietly."},
-            {"kind": "dialogue", "character_id": "alice", "text": "You came back."},
-        ]
+        self._blocks = (
+            blocks
+            if blocks is not None
+            else [
+                {"kind": "narration", "text": "The cafe hums quietly."},
+                {"kind": "dialogue", "character_id": "alice", "text": "You came back."},
+            ]
+        )
         self._complete = complete or {
             "scene_id": "scene_stream_1",
             "terminal": "decision",
@@ -131,8 +135,7 @@ def valid_scene_draft(plan: ScenePlan) -> SceneDraft:
         scene_id=plan.scene_id,
         blocks=(NarrativeBlock(kind="narration", text="The cafe hums quietly."),),
         choices=tuple(
-            WrittenChoice(option_id=item.option_id, label=item.intent[:80])
-            for item in plan.choices
+            WrittenChoice(option_id=item.option_id, label=item.intent[:80]) for item in plan.choices
         ),
     )
 
@@ -220,8 +223,14 @@ class FakeDirector:
                     terminal="decision",
                     decision_id=f"dec_{segment_id}",
                     choices=(
-                        ChoicePlan(option_id=f"opt_{segment_id}_a", action_id="ask", intent="Ask directly"),
-                        ChoicePlan(option_id=f"opt_{segment_id}_b", action_id="observe", intent="Watch carefully"),
+                        ChoicePlan(
+                            option_id=f"opt_{segment_id}_a", action_id="ask", intent="Ask directly"
+                        ),
+                        ChoicePlan(
+                            option_id=f"opt_{segment_id}_b",
+                            action_id="observe",
+                            intent="Watch carefully",
+                        ),
                     ),
                 ),
             ),
@@ -312,10 +321,12 @@ class DeterministicGuard:
         plan_scene_ids = {s.scene_id for s in plan.scenes}
         draft_scene_ids = {s.scene_id for s in draft.scene_drafts}
         if plan_scene_ids != draft_scene_ids:
-            violations.append(GuardViolation(
-                kind="contradiction",
-                detail=f"Scene ID mismatch: plan has {plan_scene_ids}, draft has {draft_scene_ids}",
-            ))
+            violations.append(
+                GuardViolation(
+                    kind="contradiction",
+                    detail=f"Scene ID mismatch: plan has {plan_scene_ids}, draft has {draft_scene_ids}",
+                )
+            )
 
         # Check all speakers in drafts exist in plan's present_character_ids
         all_present_ids: set[str] = set()
@@ -324,12 +335,14 @@ class DeterministicGuard:
         for i, scene_draft in enumerate(draft.scene_drafts):
             for j, block in enumerate(scene_draft.blocks):
                 if block.character_id and block.character_id not in all_present_ids:
-                    violations.append(GuardViolation(
-                        kind="wrong_speaker",
-                        block_index=i,
-                        character_id=block.character_id,
-                        detail=f"Character {block.character_id} not present in scene",
-                    ))
+                    violations.append(
+                        GuardViolation(
+                            kind="wrong_speaker",
+                            block_index=i,
+                            character_id=block.character_id,
+                            detail=f"Character {block.character_id} not present in scene",
+                        )
+                    )
 
         # Check all choice IDs in draft match plan's choice IDs
         if plan.terminal == "decision" and plan.scenes:
@@ -337,26 +350,32 @@ class DeterministicGuard:
             plan_choice_ids = {c.option_id for c in last_scene.choices}
             draft_choice_ids = {c.option_id for c in draft.choices}
             if plan_choice_ids != draft_choice_ids:
-                violations.append(GuardViolation(
-                    kind="contradiction",
-                    detail=f"Choice ID mismatch: plan {plan_choice_ids}, draft {draft_choice_ids}",
-                ))
+                violations.append(
+                    GuardViolation(
+                        kind="contradiction",
+                        detail=f"Choice ID mismatch: plan {plan_choice_ids}, draft {draft_choice_ids}",
+                    )
+                )
 
         # Check narration blocks have no character_id
         for i, scene_draft in enumerate(draft.scene_drafts):
             for j, block in enumerate(scene_draft.blocks):
                 if block.kind == "narration" and block.character_id:
-                    violations.append(GuardViolation(
-                        kind="wrong_speaker",
-                        block_index=i,
-                        detail="Narration block has character_id",
-                    ))
+                    violations.append(
+                        GuardViolation(
+                            kind="wrong_speaker",
+                            block_index=i,
+                            detail="Narration block has character_id",
+                        )
+                    )
 
         # Check scene count does not exceed max_scenes
         if len(plan.scenes) > state.world.max_scenes:
-            violations.append(GuardViolation(
-                kind="contradiction",
-                detail=f"Scene count {len(plan.scenes)} exceeds max_scenes {state.world.max_scenes}",
-            ))
+            violations.append(
+                GuardViolation(
+                    kind="contradiction",
+                    detail=f"Scene count {len(plan.scenes)} exceeds max_scenes {state.world.max_scenes}",
+                )
+            )
 
         return GuardResult(passed=len(violations) == 0, violations=tuple(violations))

@@ -57,6 +57,7 @@ def pacing():
         in_convergence=False,
         max_new_threads=2,
         quiet_scene_allowance=1,
+        target_block_range=(8, 25),
     )
 
 
@@ -85,7 +86,9 @@ def valid_segment_plan() -> SegmentPlan:
                 decision_id="dec_01",
                 choices=(
                     ChoicePlan(option_id="opt_ask", action_id="ask", intent="ask directly"),
-                    ChoicePlan(option_id="opt_observe", action_id="observe", intent="watch carefully"),
+                    ChoicePlan(
+                        option_id="opt_observe", action_id="observe", intent="watch carefully"
+                    ),
                 ),
             ),
         ),

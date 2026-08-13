@@ -72,7 +72,9 @@ def decision_segment_plan() -> SegmentPlan:
                 decision_id="dec_01",
                 choices=(
                     ChoicePlan(option_id="opt_ask", action_id="ask", intent="ask directly"),
-                    ChoicePlan(option_id="opt_observe", action_id="observe", intent="watch carefully"),
+                    ChoicePlan(
+                        option_id="opt_observe", action_id="observe", intent="watch carefully"
+                    ),
                 ),
             ),
         ),
@@ -113,7 +115,9 @@ def valid_decision_draft() -> SegmentDraft:
                 scene_id="scene_02",
                 blocks=(
                     NarrativeBlock(kind="narration", text="Alice looked up."),
-                    NarrativeBlock(kind="dialogue", character_id="alice", text="So what will you do?"),
+                    NarrativeBlock(
+                        kind="dialogue", character_id="alice", text="So what will you do?"
+                    ),
                 ),
                 choices=(
                     WrittenChoice(option_id="opt_ask", label="Ask her directly"),
@@ -152,7 +156,10 @@ def test_segment_writer_output_strict_schema():
 
 
 def test_writer_instructions_forbid_adding_facts():
-    assert "cannot add" in SEGMENT_WRITER_INSTRUCTIONS.lower() or "must not add" in SEGMENT_WRITER_INSTRUCTIONS.lower()
+    assert (
+        "cannot add" in SEGMENT_WRITER_INSTRUCTIONS.lower()
+        or "must not add" in SEGMENT_WRITER_INSTRUCTIONS.lower()
+    )
     assert "fact" in SEGMENT_WRITER_INSTRUCTIONS.lower()
 
 
@@ -164,7 +171,9 @@ async def test_writer_returns_decision_draft(monkeypatch, shared_model, pack, st
         payload = json.loads(input)
         assert payload["operation"] == "write_segment"
         assert payload["context"]["approved_plan"]["segment_id"] == "seg_01"
-        return SimpleNamespace(final_output=SegmentWriterOutput(segment_draft=valid_decision_draft()))
+        return SimpleNamespace(
+            final_output=SegmentWriterOutput(segment_draft=valid_decision_draft())
+        )
 
     monkeypatch.setattr(Runner, "run", fake_run)
     writer = SdkSegmentWriter(shared_model)
@@ -203,7 +212,9 @@ async def test_writer_contract_error_retries_once(monkeypatch, shared_model, pac
         calls += 1
         if calls == 1:
             raise ModelBehaviorError("bad output")
-        return SimpleNamespace(final_output=SegmentWriterOutput(segment_draft=valid_decision_draft()))
+        return SimpleNamespace(
+            final_output=SegmentWriterOutput(segment_draft=valid_decision_draft())
+        )
 
     monkeypatch.setattr(Runner, "run", fake_run)
     writer = SdkSegmentWriter(shared_model)
@@ -222,7 +233,9 @@ async def test_writer_per_character_context_scoping(monkeypatch, shared_model, p
         nonlocal captured_context
         payload = json.loads(input)
         captured_context = payload["context"]
-        return SimpleNamespace(final_output=SegmentWriterOutput(segment_draft=valid_decision_draft()))
+        return SimpleNamespace(
+            final_output=SegmentWriterOutput(segment_draft=valid_decision_draft())
+        )
 
     monkeypatch.setattr(Runner, "run", fake_run)
     writer = SdkSegmentWriter(shared_model)

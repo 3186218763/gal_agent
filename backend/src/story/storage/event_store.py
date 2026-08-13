@@ -260,9 +260,7 @@ class StoryEventStore:
                 return CommandClaim(replay_json=row["result_json"])
             lease_expires_at = datetime.fromisoformat(row["lease_expires_at"])
             if now < lease_expires_at:
-                raise CommandInProgress(
-                    f"command {session_id}/{command_id} is still in progress"
-                )
+                raise CommandInProgress(f"command {session_id}/{command_id} is still in progress")
             connection.execute(
                 """
                 UPDATE story_command_receipts
@@ -401,7 +399,9 @@ class StoryEventStore:
 
     def list_sessions(self) -> list[str]:
         with self._connect() as connection:
-            rows = connection.execute("SELECT session_id FROM story_sessions ORDER BY session_id").fetchall()
+            rows = connection.execute(
+                "SELECT session_id FROM story_sessions ORDER BY session_id"
+            ).fetchall()
             return [row["session_id"] for row in rows]
 
     def event_count(self, session_id: str) -> int:
@@ -411,9 +411,7 @@ class StoryEventStore:
             ).fetchone()
             return int(row["count"])
 
-    def load_events(
-        self, session_id: str, after_sequence: int = 0
-    ) -> tuple[EventEnvelope, ...]:
+    def load_events(self, session_id: str, after_sequence: int = 0) -> tuple[EventEnvelope, ...]:
         with self._connect() as connection:
             exists = connection.execute(
                 "SELECT 1 FROM story_sessions WHERE session_id = ?", (session_id,)
@@ -428,6 +426,4 @@ class StoryEventStore:
                 """,
                 (session_id, after_sequence),
             ).fetchall()
-            return tuple(
-                EventEnvelope.model_validate_json(row["event_json"]) for row in rows
-            )
+            return tuple(EventEnvelope.model_validate_json(row["event_json"]) for row in rows)

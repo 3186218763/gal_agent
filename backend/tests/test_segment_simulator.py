@@ -97,10 +97,9 @@ def test_multi_scene_segment_auto_acks():
 def test_ending_segment_events():
     state = _make_state()
     # Force state past min_scenes for ending.
-    state = state.model_copy(update={
-        "world": state.world.model_copy(update={"scene_count": 10})
-    })
+    state = state.model_copy(update={"world": state.world.model_copy(update={"scene_count": 10})})
     from src.story.runtime.segment_contracts import EndingProposal
+
     plan = SegmentPlan(
         segment_id="seg_03",
         scenes=(_make_continue_plan(),),
@@ -114,9 +113,7 @@ def test_ending_segment_events():
     draft = SegmentDraft(
         segment_id="seg_03",
         scene_drafts=(_make_continue_draft(),),
-        ending=__import__(
-            "src.story.runtime.contracts", fromlist=["EndingDraft"]
-        ).EndingDraft(
+        ending=__import__("src.story.runtime.contracts", fromlist=["EndingDraft"]).EndingDraft(
             ending_id="ending_s1_001",
             title="The Long Goodbye",
             blocks=(NarrativeBlock(kind="narration", text="They parted."),),
@@ -150,11 +147,10 @@ def test_simulate_segment_validates():
 
 def test_simulate_segment_exceeding_max_raises():
     from src.story.state import StateTransitionError
+
     state = _make_state()
     # Set scene_count to max to force overflow.
-    state = state.model_copy(update={
-        "world": state.world.model_copy(update={"scene_count": 20})
-    })
+    state = state.model_copy(update={"world": state.world.model_copy(update={"scene_count": 20})})
     plan = SegmentPlan(
         segment_id="seg_04",
         scenes=(_make_continue_plan(),),

@@ -40,9 +40,7 @@ class SdkWriter:
             {
                 "operation": "write_scene",
                 "approved_plan": plan.model_dump(mode="json"),
-                "context": build_writer_context(
-                    pack, state, plan.present_character_ids, plan
-                ),
+                "context": build_writer_context(pack, state, plan.present_character_ids, plan),
             },
             ensure_ascii=False,
         )

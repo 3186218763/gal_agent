@@ -278,12 +278,14 @@ class Guard:
         for scene in plan.scenes:
             for fact_commit in scene.fact_commits:
                 fact_runtime = state.facts.get(fact_commit.fact_id)
-                if fact_runtime and fact_runtime.evidence_required > len(fact_runtime.evidence_event_ids):
+                if fact_runtime and fact_runtime.evidence_required > len(
+                    fact_runtime.evidence_event_ids
+                ):
                     violations.append(
                         GuardViolation(
                             kind="unauthorized_fact",
                             detail=f"fact '{fact_commit.fact_id}' committed without sufficient evidence: "
-                                   f"required {fact_runtime.evidence_required}, have {len(fact_runtime.evidence_event_ids)}",
+                            f"required {fact_runtime.evidence_required}, have {len(fact_runtime.evidence_event_ids)}",
                         )
                     )
 
@@ -327,8 +329,7 @@ class Guard:
         # references a fact_id from another character's knowledge that the
         # speaker doesn't know.
         character_knowledge = {
-            char_id: set(runtime.knowledge)
-            for char_id, runtime in state.characters.items()
+            char_id: set(runtime.knowledge) for char_id, runtime in state.characters.items()
         }
 
         # Build a set of authorized fact IDs for this segment

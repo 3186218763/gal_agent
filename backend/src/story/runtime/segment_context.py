@@ -39,9 +39,7 @@ def _get_forbidden_content(source):
     return source.experience.forbidden_content
 
 
-def _fact_summary_views(
-    pack: CompiledScriptPack, state: SessionState
-) -> list[dict[str, Any]]:
+def _fact_summary_views(pack: CompiledScriptPack, state: SessionState) -> list[dict[str, Any]]:
     """Return fact summaries suitable for the Director (structural, not prose)."""
     views: list[dict[str, Any]] = []
     for fact in pack.source.facts.fixed:
@@ -122,7 +120,9 @@ def _event_trace_digest(state: SessionState) -> dict[str, Any]:
         "scene_count": state.world.scene_count,
         "revision": state.revision,
         "recent_scene_summaries": [],  # Would be populated from event store in full implementation
-        "resolved_thread_count": sum(1 for t in state.threads.values() if t.status.value == "resolved"),
+        "resolved_thread_count": sum(
+            1 for t in state.threads.values() if t.status.value == "resolved"
+        ),
         "open_thread_count": sum(1 for t in state.threads.values() if t.status.value == "open"),
     }
 
@@ -153,9 +153,7 @@ def build_director_context(
                 "relationship": dict(state.world.relationships.get(character.id, {})),
                 "emotional_state": dict(runtime.emotional_state),
                 "known_fact_ids": sorted(runtime.knowledge),
-                "beliefs": {
-                    k: v.model_dump(mode="json") for k, v in runtime.beliefs.items()
-                },
+                "beliefs": {k: v.model_dump(mode="json") for k, v in runtime.beliefs.items()},
                 "secrets": [],  # Director does not get raw secrets
             }
         )
@@ -182,9 +180,7 @@ def build_director_context(
         "open_threads": _thread_views(state),
         "characters": characters,
         "pacing": pacing.model_dump(mode="json"),
-        "available_action_ids": sorted(
-            pack.action_ids & set(source.protagonist.capabilities)
-        ),
+        "available_action_ids": sorted(pack.action_ids & set(source.protagonist.capabilities)),
         "event_trace": _event_trace_digest(state),
     }
 
@@ -251,10 +247,7 @@ def build_segment_writer_context(
                 "relationship": dict(state.world.relationships.get(character_id, {})),
                 "emotional_state": dict(runtime.emotional_state),
                 "known_facts": _character_known_facts(pack, state, character_id),
-                "beliefs": {
-                    k: v.model_dump(mode="json")
-                    for k, v in runtime.beliefs.items()
-                },
+                "beliefs": {k: v.model_dump(mode="json") for k, v in runtime.beliefs.items()},
             }
         )
 
@@ -278,10 +271,7 @@ def build_segment_writer_context(
         "world_rules": {
             "premise": world_setting.premise,
             "immutable_rules": _get_immutable_rules(source),
-            "locations": [
-                {"id": loc.id, "name": loc.name}
-                for loc in world_setting.locations
-            ],
+            "locations": [{"id": loc.id, "name": loc.name} for loc in world_setting.locations],
         },
         "approved_plan": plan.model_dump(mode="json"),
         "approved_narration_facts": narration_facts,

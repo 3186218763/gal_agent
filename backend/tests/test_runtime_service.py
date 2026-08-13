@@ -99,7 +99,9 @@ def pending_scene_service_fixture(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_advance_commits_scene_and_persists_choices(tmp_path):
     service, pack, store = service_fixture(tmp_path, FakePlanner(), FakeWriter())
-    result = await service.advance(pack, "session_01", expected_revision=0, idempotency_key="advance-1")
+    result = await service.advance(
+        pack, "session_01", expected_revision=0, idempotency_key="advance-1"
+    )
     assert result.scene_id == "scene_01"
     assert len(result.choices) == 2
     assert store.load_session("session_01").pending_decision is not None
@@ -123,9 +125,7 @@ async def test_advance_refuses_while_decision_is_pending(tmp_path):
     service, pack, store = decision_service_fixture(tmp_path)
     state = store.load_session("session_01")
     with pytest.raises(DecisionRequired):
-        await service.advance(
-            pack, state.session_id, state.revision, idempotency_key="advance-2"
-        )
+        await service.advance(pack, state.session_id, state.revision, idempotency_key="advance-2")
 
 
 @pytest.mark.asyncio

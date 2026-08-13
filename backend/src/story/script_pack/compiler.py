@@ -127,9 +127,7 @@ def load_script_pack_source(pack_path: Path | str) -> ScriptPackSource:
 def _duplicate_ids(label: str, values: Iterable[str]) -> list[str]:
     counts = Counter(values)
     return [
-        f"duplicate {label} id: {value}"
-        for value, count in sorted(counts.items())
-        if count > 1
+        f"duplicate {label} id: {value}" for value, count in sorted(counts.items()) if count > 1
     ]
 
 
@@ -173,9 +171,7 @@ def _condition_reference_errors(
                 errors.append(f"{condition_key}: unknown fact in path {dotted}")
             if root == "goals" and (len(parts) < 2 or parts[1] not in goal_ids):
                 errors.append(f"{condition_key}: unknown goal in path {dotted}")
-            if root == "relationships" and (
-                len(parts) < 2 or parts[1] not in character_ids
-            ):
+            if root == "relationships" and (len(parts) < 2 or parts[1] not in character_ids):
                 errors.append(f"{condition_key}: unknown character in path {dotted}")
     return errors
 
@@ -220,10 +216,7 @@ def _shared_reference_errors(
             if fact_id not in fact_ids:
                 errors.append(f"character {character.id} references unknown fact {fact_id}")
             elif fact_id not in fixed_ids:
-                errors.append(
-                    "opening knowledge must be fixed: "
-                    f"{character.id} -> {fact_id}"
-                )
+                errors.append(f"opening knowledge must be fixed: {character.id} -> {fact_id}")
             elif character.id not in fixed_known_by[fact_id]:
                 errors.append(
                     "opening knowledge is not granted by fact known_by: "
@@ -284,9 +277,7 @@ def _reference_errors(
             errors.append(f"opening known fact must be fixed: {fact_id}")
 
     errors.extend(
-        _shared_reference_errors(
-            source, character_ids, fixed_ids, fact_ids, goal_ids, action_ids
-        )
+        _shared_reference_errors(source, character_ids, fixed_ids, fact_ids, goal_ids, action_ids)
     )
     return errors
 
@@ -301,10 +292,7 @@ def _has_guaranteed_fallback(
             continue
         if ending.eligibility.any or ending.eligibility.none:
             continue
-        keys = [
-            f"ending.{ending.id}.all.{index}"
-            for index in range(len(ending.eligibility.all))
-        ]
+        keys = [f"ending.{ending.id}.all.{index}" for index in range(len(ending.eligibility.all))]
         try:
             if all(
                 set(programs[key].paths) <= {"session.scene_count"}
@@ -335,9 +323,7 @@ def _v2_reference_errors(
 
     # opening_state.location must be a known location
     if source.opening_state.location not in location_ids:
-        errors.append(
-            f"opening_state references unknown location {source.opening_state.location}"
-        )
+        errors.append(f"opening_state references unknown location {source.opening_state.location}")
 
     # opening_state.present_characters must be known characters
     for character_id in source.opening_state.present_characters:
@@ -406,9 +392,7 @@ def compile_source(
     else:
         version = raw.get("schema_version", "1.0")
         if version not in ("1.0", "2.0"):
-            raise PackCompileError(
-                f"Unknown schema_version: {version!r} (supported: '1.0', '2.0')"
-            )
+            raise PackCompileError(f"Unknown schema_version: {version!r} (supported: '1.0', '2.0')")
         try:
             source = (
                 ScriptPackSourceV1.model_validate(raw)
@@ -426,9 +410,9 @@ def compile_source(
     goal_ids = {item.id for item in source.goals}
     extension_id_values = [item.id for item in source.interaction_rules.extensions]
     extension_ids = set(extension_id_values)
-    action_ids = (
-        set(source.interaction_rules.enabled_standard) | extension_ids
-    ) - set(source.interaction_rules.disabled)
+    action_ids = (set(source.interaction_rules.enabled_standard) | extension_ids) - set(
+        source.interaction_rules.disabled
+    )
 
     errors: list[str] = []
     errors.extend(_duplicate_ids("character", (item.id for item in source.characters)))
@@ -466,9 +450,7 @@ def compile_source(
                 (req.id for req in source.completion_requirements),
             )
         )
-        errors.extend(
-            _v2_reference_errors(source, character_ids, fixed_ids, fact_ids, goal_ids)
-        )
+        errors.extend(_v2_reference_errors(source, character_ids, fixed_ids, fact_ids, goal_ids))
         errors.extend(
             _shared_reference_errors(
                 source, character_ids, fixed_ids, fact_ids, goal_ids, action_ids

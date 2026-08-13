@@ -33,7 +33,9 @@ from src.story.runtime.contracts import (
     RuntimeSessionEnded,
 )
 from src.story.runtime.model import build_model_bundle
+from src.story.runtime.pack_cache import PackCache
 from src.story.runtime.planner import SdkPlanner
+from src.story.runtime.pregeneration import PreGenerationManager
 from src.story.runtime.segment_contracts import (
     DirectorPort,
     GuardPort,
@@ -78,6 +80,8 @@ class AppDependencies:
     director: DirectorPort | None = None
     segment_writer: SegmentWriterPort | None = None
     guard: GuardPort | None = None
+    pack_cache: PackCache | None = None
+    pregen_manager: PreGenerationManager | None = None
 
 
 def default_dependencies() -> AppDependencies:
@@ -88,6 +92,8 @@ def default_dependencies() -> AppDependencies:
     from src.story.runtime.completion_judge import CompletionJudge
     from src.story.runtime.director import SdkDirector
     from src.story.runtime.guard import Guard
+    from src.story.runtime.pack_cache import PackCache
+    from src.story.runtime.pregeneration import PreGenerationManager
     from src.story.runtime.segment_writer import SdkSegmentWriter
     from src.story.runtime.stream_writer import StreamingSceneGenerator
 
@@ -103,6 +109,12 @@ def default_dependencies() -> AppDependencies:
     from src.story.runtime.unified_segment import SdkUnifiedSegmentAgent
 
     unified_agent = SdkUnifiedSegmentAgent(bundle.model)
+    pack_cache = PackCache(Path(os.getenv("GAL_PACK_CACHE_ROOT", "data/pack_cache")))
+    pregen_manager = PreGenerationManager(
+        planner=SdkPlanner(bundle.model),
+        unified_agent=unified_agent,
+        guard=Guard(),
+    )
     orchestrator = TurnOrchestrator(
         store,
         director,
@@ -111,6 +123,8 @@ def default_dependencies() -> AppDependencies:
         CompletionJudge(),
         planner=SdkPlanner(bundle.model),
         unified_agent=unified_agent,
+        pack_cache=pack_cache,
+        pregen_manager=pregen_manager,
     )
     return AppDependencies(
         store=store,
@@ -120,6 +134,8 @@ def default_dependencies() -> AppDependencies:
         director=director,
         segment_writer=segment_writer,
         guard=guard,
+        pack_cache=pack_cache,
+        pregen_manager=pregen_manager,
     )
 
 

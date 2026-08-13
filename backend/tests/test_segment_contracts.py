@@ -62,6 +62,7 @@ def _valid_pacing_envelope() -> PacingEnvelope:
         in_convergence=False,
         max_new_threads=2,
         quiet_scene_allowance=1,
+        target_block_range=(8, 25),
     )
 
 
@@ -333,7 +334,9 @@ def test_segment_plan_ending():
         scenes=(_make_ending_scene_plan(),),
         terminal="ending",
         ending_proposal=EndingProposal(
-            title="Finale", tone="epic", terminal_state_summary="The end.",
+            title="Finale",
+            tone="epic",
+            terminal_state_summary="The end.",
         ),
     )
     assert plan.ending_proposal is not None
@@ -347,7 +350,9 @@ def test_segment_plan_ending_with_continue_last_scene_allowed():
         scenes=(_valid_scene_plan(),),
         terminal="ending",
         ending_proposal=EndingProposal(
-            title="Finale", tone="epic", terminal_state_summary="The end.",
+            title="Finale",
+            tone="epic",
+            terminal_state_summary="The end.",
         ),
     )
     assert plan.scenes[-1].terminal == "continue"

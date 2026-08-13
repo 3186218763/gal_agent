@@ -53,6 +53,7 @@ async def test_segment_pipeline_director_writer_guard_roundtrip():
         in_convergence=False,
         max_new_threads=2,
         quiet_scene_allowance=1,
+        target_block_range=(8, 25),
     )
 
     # 1. Director produces a SegmentPlan
@@ -87,9 +88,7 @@ async def test_segment_pipeline_director_writer_guard_roundtrip():
     # Verify all present characters exist
     for scene in plan.scenes:
         for char_id in scene.present_character_ids:
-            assert char_id in pack.character_ids, (
-                f"Director proposed unknown character: {char_id}"
-            )
+            assert char_id in pack.character_ids, f"Director proposed unknown character: {char_id}"
 
     # 2. Writer produces a SegmentDraft
     writer = SdkSegmentWriter(bundle.model)
@@ -113,8 +112,11 @@ async def test_segment_pipeline_director_writer_guard_roundtrip():
         # If guard found violations, they should be typed and detailed
         for v in result.violations:
             assert v.kind in (
-                "knowledge_leak", "contradiction", "unauthorized_fact",
-                "wrong_speaker", "unsupported_certainty",
+                "knowledge_leak",
+                "contradiction",
+                "unauthorized_fact",
+                "wrong_speaker",
+                "unsupported_certainty",
             )
             assert v.detail
         # Print violations for debugging (not sensitive data)

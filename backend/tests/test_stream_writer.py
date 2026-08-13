@@ -87,40 +87,40 @@ async def test_streaming_adapter_consumes_approved_plan(pack, state):
     plan = _approved_plan()
 
     # Build a valid JSON output matching the plan
-    output_json = json.dumps({
-        "segment_draft": {
-            "segment_id": "seg_01",
-            "scene_drafts": [
-                {
-                    "scene_id": "scene_01",
-                    "blocks": [
-                        {"kind": "narration", "text": "The cafe was quiet."},
-                    ],
-                },
-                {
-                    "scene_id": "scene_02",
-                    "blocks": [
-                        {"kind": "narration", "text": "Alice looked up."},
-                        {"kind": "dialogue", "character_id": "alice", "text": "Well?"},
-                    ],
-                    "choices": [
-                        {"option_id": "opt_a", "label": "Ask"},
-                        {"option_id": "opt_b", "label": "Watch"},
-                    ],
-                },
-            ],
-            "choices": [
-                {"option_id": "opt_a", "label": "Ask"},
-                {"option_id": "opt_b", "label": "Watch"},
-            ],
-        },
-    })
+    output_json = json.dumps(
+        {
+            "segment_draft": {
+                "segment_id": "seg_01",
+                "scene_drafts": [
+                    {
+                        "scene_id": "scene_01",
+                        "blocks": [
+                            {"kind": "narration", "text": "The cafe was quiet."},
+                        ],
+                    },
+                    {
+                        "scene_id": "scene_02",
+                        "blocks": [
+                            {"kind": "narration", "text": "Alice looked up."},
+                            {"kind": "dialogue", "character_id": "alice", "text": "Well?"},
+                        ],
+                        "choices": [
+                            {"option_id": "opt_a", "label": "Ask"},
+                            {"option_id": "opt_b", "label": "Watch"},
+                        ],
+                    },
+                ],
+                "choices": [
+                    {"option_id": "opt_a", "label": "Ask"},
+                    {"option_id": "opt_b", "label": "Watch"},
+                ],
+            },
+        }
+    )
 
     mock_client = MagicMock(spec=AsyncOpenAI)
     mock_client.responses = MagicMock()
-    mock_client.responses.create = AsyncMock(
-        return_value=FakeStream([output_json])
-    )
+    mock_client.responses.create = AsyncMock(return_value=FakeStream([output_json]))
 
     generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
     events = []
@@ -137,29 +137,31 @@ async def test_streaming_adapter_builds_prompt_from_plan(pack, state):
     plan = _approved_plan()
     captured_kwargs: dict[str, Any] = {}
 
-    output_json = json.dumps({
-        "segment_draft": {
-            "segment_id": "seg_01",
-            "scene_drafts": [
-                {
-                    "scene_id": "scene_01",
-                    "blocks": [{"kind": "narration", "text": "test"}],
-                },
-                {
-                    "scene_id": "scene_02",
-                    "blocks": [{"kind": "narration", "text": "test2"}],
-                    "choices": [
-                        {"option_id": "opt_a", "label": "A"},
-                        {"option_id": "opt_b", "label": "B"},
-                    ],
-                },
-            ],
-            "choices": [
-                {"option_id": "opt_a", "label": "A"},
-                {"option_id": "opt_b", "label": "B"},
-            ],
-        },
-    })
+    output_json = json.dumps(
+        {
+            "segment_draft": {
+                "segment_id": "seg_01",
+                "scene_drafts": [
+                    {
+                        "scene_id": "scene_01",
+                        "blocks": [{"kind": "narration", "text": "test"}],
+                    },
+                    {
+                        "scene_id": "scene_02",
+                        "blocks": [{"kind": "narration", "text": "test2"}],
+                        "choices": [
+                            {"option_id": "opt_a", "label": "A"},
+                            {"option_id": "opt_b", "label": "B"},
+                        ],
+                    },
+                ],
+                "choices": [
+                    {"option_id": "opt_a", "label": "A"},
+                    {"option_id": "opt_b", "label": "B"},
+                ],
+            },
+        }
+    )
 
     async def fake_create(**kwargs):
         captured_kwargs.update(kwargs)
@@ -183,15 +185,17 @@ async def test_streaming_adapter_builds_prompt_from_plan(pack, state):
 async def test_streaming_segment_parses_json(pack, state):
     """Verify the streaming adapter parses JSON output correctly."""
     plan = _approved_plan()
-    output_json = json.dumps({
-        "segment_draft": {
-            "segment_id": "seg_01",
-            "scene_drafts": [
-                {"scene_id": "scene_01", "blocks": [{"kind": "narration", "text": "test"}]},
-            ],
-            "choices": [],
-        },
-    })
+    output_json = json.dumps(
+        {
+            "segment_draft": {
+                "segment_id": "seg_01",
+                "scene_drafts": [
+                    {"scene_id": "scene_01", "blocks": [{"kind": "narration", "text": "test"}]},
+                ],
+                "choices": [],
+            },
+        }
+    )
 
     mock_client = MagicMock(spec=AsyncOpenAI)
     mock_client.responses = MagicMock()
@@ -229,11 +233,13 @@ async def test_streaming_segment_rejects_wrong_shape_output(pack, state):
     """Valid JSON of the wrong shape (e.g. the legacy scene format) is
     rejected with ModelContractError, matching the unparseable branch."""
     plan = _approved_plan()
-    wrong_shape_json = json.dumps({
-        "blocks": [{"kind": "narration", "text": "test"}],
-        "terminal": "decision",
-        "choices": [],
-    })
+    wrong_shape_json = json.dumps(
+        {
+            "blocks": [{"kind": "narration", "text": "test"}],
+            "terminal": "decision",
+            "choices": [],
+        }
+    )
 
     mock_client = MagicMock(spec=AsyncOpenAI)
     mock_client.responses = MagicMock()

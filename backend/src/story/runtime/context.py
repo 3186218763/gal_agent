@@ -116,8 +116,7 @@ def build_planner_context(pack: CompiledScriptPack, state: SessionState) -> dict
                     key: value.model_dump(mode="json") for key, value in runtime.beliefs.items()
                 },
                 "suspicions": {
-                    key: value.model_dump(mode="json")
-                    for key, value in runtime.suspicions.items()
+                    key: value.model_dump(mode="json") for key, value in runtime.suspicions.items()
                 },
             }
         )
@@ -187,8 +186,7 @@ def build_writer_context(
                     key: value.model_dump(mode="json") for key, value in runtime.beliefs.items()
                 },
                 "suspicions": {
-                    key: value.model_dump(mode="json")
-                    for key, value in runtime.suspicions.items()
+                    key: value.model_dump(mode="json") for key, value in runtime.suspicions.items()
                 },
             }
         )
@@ -231,9 +229,7 @@ def build_ending_context(
         "tone": pack.source.experience.tone,
         "ending": ending.model_dump(mode="json"),
         "relationships": {key: dict(value) for key, value in state.world.relationships.items()},
-        "goals": {
-            key: value.model_dump(mode="json") for key, value in state.world.goals.items()
-        },
+        "goals": {key: value.model_dump(mode="json") for key, value in state.world.goals.items()},
         "revealed_facts": revealed_facts,
         "characters": [
             {

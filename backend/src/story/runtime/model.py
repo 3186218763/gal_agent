@@ -48,9 +48,7 @@ def _inline_anyof_refs(schema: Any, defs: dict[str, Any], seen: set[str]) -> Any
     if isinstance(schema, dict):
         any_of = schema.get("anyOf")
         if isinstance(any_of, list):
-            schema["anyOf"] = [
-                _resolve_anyof_branch(branch, defs, seen) for branch in any_of
-            ]
+            schema["anyOf"] = [_resolve_anyof_branch(branch, defs, seen) for branch in any_of]
         for value in schema.values():
             _inline_anyof_refs(value, defs, seen)
     elif isinstance(schema, list):

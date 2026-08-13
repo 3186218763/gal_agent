@@ -36,15 +36,16 @@ def _group(
 
 def select_ending(pack: CompiledScriptPack, state: SessionState) -> EndingSource | None:
     if isinstance(pack.source, ScriptPackSourceV2):
-        raise TypeError(
-            "v2.0 packs do not support fixed endings; use the segment engine (Plan 2)"
-        )
+        raise TypeError("v2.0 packs do not support fixed endings; use the segment engine (Plan 2)")
     context = build_condition_context(state)
     at_max = state.world.scene_count >= state.world.max_scenes
     for ending in sorted(pack.source.endings, key=lambda item: item.priority, reverse=True):
         if ending.type == "fallback" and not at_max:
             continue
-        if ending.type != "fallback" and state.world.scene_count < pack.source.experience.min_scenes:
+        if (
+            ending.type != "fallback"
+            and state.world.scene_count < pack.source.experience.min_scenes
+        ):
             continue
         all_values = _group(pack, ending.id, "all", len(ending.eligibility.all), context)
         any_values = _group(pack, ending.id, "any", len(ending.eligibility.any), context)

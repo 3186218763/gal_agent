@@ -145,8 +145,12 @@ def _anyof_branches_without_type(schema: Any) -> list[list[Any]]:
 def test_provider_schemas_have_no_bare_refs_in_anyof():
     from src.story.runtime.model import ProviderStrictOutputSchema
 
-    assert _anyof_branches_without_type(ProviderStrictOutputSchema(PlannerOutput)._output_schema) == []
-    assert _anyof_branches_without_type(ProviderStrictOutputSchema(WriterOutput)._output_schema) == []
+    assert (
+        _anyof_branches_without_type(ProviderStrictOutputSchema(PlannerOutput)._output_schema) == []
+    )
+    assert (
+        _anyof_branches_without_type(ProviderStrictOutputSchema(WriterOutput)._output_schema) == []
+    )
 
 
 @pytest.mark.asyncio
@@ -188,9 +192,7 @@ async def test_writer_uses_same_model_instance(monkeypatch, shared_model, pack, 
         if payload["operation"] == "write_scene":
             return SimpleNamespace(final_output=valid_writer_scene_output())
         if payload["operation"] == "write_ending":
-            return SimpleNamespace(
-                final_output=valid_writer_ending_output(ending.id)
-            )
+            return SimpleNamespace(final_output=valid_writer_ending_output(ending.id))
         raise AssertionError(f"unexpected operation: {payload['operation']}")
 
     monkeypatch.setattr(Runner, "run", fake_run)

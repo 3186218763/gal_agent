@@ -132,9 +132,7 @@ def test_advance_streamed_yields_blocks_then_choices_then_done(streaming_env):
 
     async def run():
         results = []
-        async for evt, data in deps.runtime.advance_streamed(
-            pack, "stream_session", 0, "key-001"
-        ):
+        async for evt, data in deps.runtime.advance_streamed(pack, "stream_session", 0, "key-001"):
             results.append((evt, data))
         return results
 
@@ -238,9 +236,7 @@ def test_advance_streamed_continue_terminal_skips_choices(tmp_path: Path):
     async def collect():
         return [
             (evt, data)
-            async for evt, data in deps.runtime.advance_streamed(
-                pack, "s_cont", 0, "k-cont"
-            )
+            async for evt, data in deps.runtime.advance_streamed(pack, "s_cont", 0, "k-cont")
         ]
 
     results = asyncio.run(collect())
@@ -264,9 +260,7 @@ def test_advance_streamed_ending_path_yields_ending_metadata(tmp_path: Path):
     async def collect():
         return [
             (evt, data)
-            async for evt, data in deps.runtime.advance_streamed(
-                pack, "s_end", 0, "k-ending"
-            )
+            async for evt, data in deps.runtime.advance_streamed(pack, "s_end", 0, "k-ending")
         ]
 
     results = asyncio.run(collect())
@@ -281,6 +275,7 @@ def test_advance_streamed_ending_path_yields_ending_metadata(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # SSE HTTP endpoint tests (Task 4)
 # ---------------------------------------------------------------------------
+
 
 def _parse_sse_lines(response) -> list[tuple[str, dict]]:
     """Parse SSE frames from a Starlette TestClient streaming response."""
@@ -312,9 +307,7 @@ def test_sse_advance_streams_blocks_and_choices(tmp_path: Path):
     deps = build_streaming_deps(tmp_path)
     client = TestClient(create_app(deps))
 
-    created = client.post(
-        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1}
-    )
+    created = client.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1})
     assert created.status_code == 201
     session_id = created.json()["session_id"]
 
@@ -352,9 +345,7 @@ def test_sse_advance_idempotent_replay(tmp_path: Path):
     deps = build_streaming_deps(tmp_path)
     client = TestClient(create_app(deps))
 
-    created = client.post(
-        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 2}
-    )
+    created = client.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 2})
     session_id = created.json()["session_id"]
 
     with client.stream(
@@ -396,9 +387,7 @@ def test_sse_advance_error_sends_error_event(tmp_path: Path):
     deps = AppDependencies(store=store, registry=registry, runtime=runtime)
     client = TestClient(create_app(deps))
 
-    created = client.post(
-        "/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 3}
-    )
+    created = client.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 3})
     session_id = created.json()["session_id"]
 
     with client.stream(

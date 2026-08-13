@@ -46,11 +46,11 @@ def scene_events(pack, state, plan, draft) -> tuple[StoryEvent, ...]:
         events.append(PhaseAdvanced(phase=phase))
     for fact in plan.fact_commits:
         evidence = (
-            (plan.scene_id,)
-            if fact.reason == "first_irreversible_evidence" or fact.reveal
-            else ()
+            (plan.scene_id,) if fact.reason == "first_irreversible_evidence" or fact.reveal else ()
         )
-        events.append(FactCommitted(fact_id=fact.fact_id, value=fact.value, evidence_event_ids=evidence))
+        events.append(
+            FactCommitted(fact_id=fact.fact_id, value=fact.value, evidence_event_ids=evidence)
+        )
         if fact.reveal:
             events.append(FactRevealed(fact_id=fact.fact_id))
         events.extend(
@@ -122,8 +122,7 @@ def resolution_effect_events(
         for item in resolution.relationship_deltas
     ]
     events.extend(
-        GoalAdvanced(goal_id=item.goal_id, delta=item.delta)
-        for item in resolution.goal_deltas
+        GoalAdvanced(goal_id=item.goal_id, delta=item.delta) for item in resolution.goal_deltas
     )
     events.extend(
         FactEvidenced(
@@ -183,14 +182,10 @@ def _thread_op_events(
             )
             events.append(ThreadOpened(thread=thread))
         elif op.kind == "advance":
-            events.append(
-                ThreadAdvanced(thread_id=op.thread_id, urgency=op.urgency)
-            )
+            events.append(ThreadAdvanced(thread_id=op.thread_id, urgency=op.urgency))
         elif op.kind == "close":
             status = (
-                ThreadStatus.RESOLVED
-                if op.close_status == "resolved"
-                else ThreadStatus.ABANDONED
+                ThreadStatus.RESOLVED if op.close_status == "resolved" else ThreadStatus.ABANDONED
             )
             events.append(ThreadClosed(thread_id=op.thread_id, status=status))
     return events
@@ -224,13 +219,9 @@ def segment_events(
     events.extend(_thread_op_events(state, plan.thread_ops))
 
     # Build per-scene events with auto-acknowledge between scenes.
-    for i, (scene_plan, scene_draft) in enumerate(
-        zip(plan.scenes, draft.scene_drafts)
-    ):
+    for i, (scene_plan, scene_draft) in enumerate(zip(plan.scenes, draft.scene_drafts)):
         if i > 0 and plan.terminal != "ending":
-            events.append(
-                SceneAcknowledged(scene_id=plan.scenes[i - 1].scene_id)
-            )
+            events.append(SceneAcknowledged(scene_id=plan.scenes[i - 1].scene_id))
 
         # Fact commits for this scene.
         for fact in scene_plan.fact_commits:
@@ -298,11 +289,7 @@ def segment_events(
                 )
                 for wc in draft.choices
             )
-        decision_id = (
-            last_scene.decision_id
-            if last_scene.decision_id
-            else f"dec_{plan.segment_id}"
-        )
+        decision_id = last_scene.decision_id if last_scene.decision_id else f"dec_{plan.segment_id}"
         events.append(DecisionPresented(decision_id=decision_id, choices=choices))
 
     # Ending terminal events.
@@ -314,11 +301,7 @@ def segment_events(
                 EndingGenerated(
                     ending_id=ending_draft.ending_id,
                     title=ending_draft.title,
-                    tone=(
-                        ending_draft.tone
-                        or (proposal.tone if proposal else "")
-                        or "neutral"
-                    ),
+                    tone=(ending_draft.tone or (proposal.tone if proposal else "") or "neutral"),
                     terminal_state_summary=(
                         ending_draft.terminal_state_summary
                         or (proposal.terminal_state_summary if proposal else "")

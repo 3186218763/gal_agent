@@ -117,15 +117,9 @@ def project_session(
     segment_blocks = blocks
 
     segment_revision = (
-        state.pending_decision.revision
-        if state.pending_decision is not None
-        else None
+        state.pending_decision.revision if state.pending_decision is not None else None
     )
-    segment_choices = (
-        state.pending_decision.choices
-        if state.pending_decision is not None
-        else ()
-    )
+    segment_choices = state.pending_decision.choices if state.pending_decision is not None else ()
 
     # Only dynamically-generated endings (EndingGenerated) carry tone and
     # terminal_state_summary; plain EndingEntered does not.
@@ -148,8 +142,7 @@ def project_session(
     req_descriptions: dict[str, str] = {}
     if pack is not None and state.completion is not None:
         req_descriptions = {
-            req.id: req.description
-            for req in getattr(pack.source, "completion_requirements", ())
+            req.id: req.description for req in getattr(pack.source, "completion_requirements", ())
         }
 
     completion_summaries: tuple[CompletionSummary, ...] = ()
@@ -157,9 +150,7 @@ def project_session(
         completion_summaries = tuple(
             CompletionSummary(
                 requirement_id=assessment.requirement_id,
-                description=req_descriptions.get(
-                    assessment.requirement_id, assessment.rationale
-                ),
+                description=req_descriptions.get(assessment.requirement_id, assessment.rationale),
                 satisfied=assessment.satisfied,
                 rationale=assessment.rationale,
             )
@@ -174,15 +165,11 @@ def project_session(
         phase=state.world.phase.value,
         scene_count=state.world.scene_count,
         pending_decision_id=(
-            state.pending_decision.decision_id
-            if state.pending_decision is not None
-            else None
+            state.pending_decision.decision_id if state.pending_decision is not None else None
         ),
         scene_id=scene_id,
         blocks=blocks,
-        choices=(
-            state.pending_decision.choices if state.pending_decision is not None else ()
-        ),
+        choices=(state.pending_decision.choices if state.pending_decision is not None else ()),
         ending_id=state.ending.ending_id if state.ending is not None else None,
         ending_title=state.ending.title if state.ending is not None else None,
         location_id=state.world.location_id,

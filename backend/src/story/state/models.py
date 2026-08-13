@@ -243,9 +243,7 @@ def initial_session_state(
     characters: dict[str, CharacterRuntime] = {}
     for character in source.characters:
         knowledge = set(character.knowledge)
-        knowledge.update(
-            fact.id for fact in source.facts.fixed if character.id in fact.known_by
-        )
+        knowledge.update(fact.id for fact in source.facts.fixed if character.id in fact.known_by)
         characters[character.id] = CharacterRuntime(
             character_id=character.id,
             knowledge=frozenset(knowledge),

@@ -94,9 +94,7 @@ def _translate_segment_complete(
     scene_drafts = segment_draft.get("scene_drafts") or []
     last_scene = plan.scenes[-1]
     translated: dict[str, Any] = {
-        "scene_id": (
-            scene_drafts[0]["scene_id"] if scene_drafts else plan.scenes[0].scene_id
-        ),
+        "scene_id": (scene_drafts[0]["scene_id"] if scene_drafts else plan.scenes[0].scene_id),
     }
     if last_scene.terminal == "decision":
         translated["terminal"] = "decision"
@@ -376,8 +374,13 @@ class RuntimeService:
             ending = select_ending(pack, state)
             if ending is not None:
                 async for evt, data in self._stream_ending(
-                    pack, state, ending, idempotency_key, fingerprint,
-                    events, expected_revision,
+                    pack,
+                    state,
+                    ending,
+                    idempotency_key,
+                    fingerprint,
+                    events,
+                    expected_revision,
                 ):
                     yield (evt, data)
                 return
@@ -393,9 +396,7 @@ class RuntimeService:
                     elif event_type == "complete":
                         complete_data = data
             except ModelContractError as exc:
-                raise RuntimeGenerationUnavailable(
-                    "streaming generator failed"
-                ) from exc
+                raise RuntimeGenerationUnavailable("streaming generator failed") from exc
 
             if complete_data is None:
                 raise RuntimeGenerationUnavailable("stream ended without complete data")
@@ -545,9 +546,12 @@ class RuntimeService:
             events,
             result_factory,
         )
-        yield ("done", {
-            "session_id": state.session_id,
-            "revision": updated_state.revision,
-            "ending_id": ending.id,
-            "ending_title": draft.title,
-        })
+        yield (
+            "done",
+            {
+                "session_id": state.session_id,
+                "revision": updated_state.revision,
+                "ending_id": ending.id,
+                "ending_title": draft.title,
+            },
+        )

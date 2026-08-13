@@ -21,9 +21,7 @@ def test_compile_source_collects_conditions_and_stable_hash():
     assert first.pack_hash == second.pack_hash
     assert len(first.pack_hash) == 64
     assert "ending.ally_ending.all.0" in first.conditions
-    assert first.conditions["goal.alice_find_ally.success"].paths == (
-        "relationships.alice.trust",
-    )
+    assert first.conditions["goal.alice_find_ally.success"].paths == ("relationships.alice.trust",)
     assert first.character_ids == frozenset({"alice"})
     assert first.action_ids >= {"ask", "observe", "support", "challenge"}
 
@@ -46,9 +44,7 @@ def test_compile_rejects_unknown_character_reference():
 
 def test_compile_rejects_unknown_fact_in_condition():
     raw = minimal_script_pack_dict()
-    raw["endings"][0]["eligibility"]["all"] = [
-        "facts.missing_fact.truth_status == 'committed'"
-    ]
+    raw["endings"][0]["eligibility"]["all"] = ["facts.missing_fact.truth_status == 'committed'"]
 
     with pytest.raises(PackCompileError, match="missing_fact"):
         compile_source(raw)

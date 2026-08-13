@@ -42,6 +42,7 @@ def pacing():
         in_convergence=False,
         max_new_threads=2,
         quiet_scene_allowance=1,
+        target_block_range=(8, 25),
     )
 
 

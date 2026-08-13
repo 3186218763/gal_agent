@@ -11,9 +11,13 @@ def test_cafe_mystery_pack_compiles_without_fixed_plot():
 
     assert compiled.source.identity.id == "cafe_mystery"
     assert len(compiled.source.characters) == 3
-    assert compiled.completion_requirement_ids == frozenset({
-        "core_truth_understood", "trust_built", "irreversible_choice",
-    })
+    assert compiled.completion_requirement_ids == frozenset(
+        {
+            "core_truth_understood",
+            "trust_built",
+            "irreversible_choice",
+        }
+    )
     assert compiled.source.schema_version == "2.0"
     assert compiled.ending_ids == frozenset()  # v2.0 has no endings
     assert len(compiled.source.facts.latent_questions) >= 2

@@ -42,9 +42,7 @@ def generate_fallback_segment(
     scene_id = f"{seg_id}_s1"
 
     # Pick 2-3 standard actions for choices
-    available_actions = sorted(
-        pack.action_ids & set(source.protagonist.capabilities)
-    )
+    available_actions = sorted(pack.action_ids & set(source.protagonist.capabilities))
     # Prioritize observe/ask/support for a natural "think" moment
     preferred = ["observe", "ask", "support", "challenge", "wait"]
     chosen: list[str] = []
@@ -119,9 +117,7 @@ def generate_fallback_segment(
         scene_drafts=(
             SceneDraft(
                 scene_id=scene_id,
-                blocks=(
-                    NarrativeBlock(kind="narration", text=narration),
-                ),
+                blocks=(NarrativeBlock(kind="narration", text=narration),),
                 choices=choices_written,
             ),
         ),

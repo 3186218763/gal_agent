@@ -55,9 +55,7 @@ class OpenCodeGoSettings(BaseModel):
         return cls(
             provider=provider,
             api_key=SecretStr(key),
-            base_url=env.get("OPENCODE_GO_BASE_URL", "https://opencode.ai/zen/go/v1").rstrip(
-                "/"
-            ),
+            base_url=env.get("OPENCODE_GO_BASE_URL", "https://opencode.ai/zen/go/v1").rstrip("/"),
             model=env.get("GAL_LLM_MODEL", "deepseek-v4-flash"),
             api=api,
             timeout_seconds=float(env.get("GAL_LLM_TIMEOUT_SECONDS", "45")),

@@ -114,12 +114,14 @@ def test_guard_rejects_wrong_speaker(guard, pack, state):
     bad_blocks = draft.scene_drafts[1].blocks + (
         NarrativeBlock(kind="dialogue", character_id="unknown_char", text="Hello."),
     )
-    draft = draft.model_copy(update={
-        "scene_drafts": (
-            draft.scene_drafts[0],
-            draft.scene_drafts[1].model_copy(update={"blocks": bad_blocks}),
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "scene_drafts": (
+                draft.scene_drafts[0],
+                draft.scene_drafts[1].model_copy(update={"blocks": bad_blocks}),
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
     assert any(v.kind == "wrong_speaker" for v in result.violations)
@@ -128,12 +130,14 @@ def test_guard_rejects_wrong_speaker(guard, pack, state):
 def test_guard_rejects_scene_id_mismatch(guard, pack, state):
     plan = _decision_plan()
     draft = _matching_draft()
-    draft = draft.model_copy(update={
-        "scene_drafts": (
-            draft.scene_drafts[0].model_copy(update={"scene_id": "wrong_id"}),
-            draft.scene_drafts[1],
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "scene_drafts": (
+                draft.scene_drafts[0].model_copy(update={"scene_id": "wrong_id"}),
+                draft.scene_drafts[1],
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
     assert any("scene_id" in v.detail.lower() for v in result.violations)
@@ -142,12 +146,14 @@ def test_guard_rejects_scene_id_mismatch(guard, pack, state):
 def test_guard_rejects_choice_id_mismatch(guard, pack, state):
     plan = _decision_plan()
     draft = _matching_draft()
-    draft = draft.model_copy(update={
-        "choices": (
-            WrittenChoice(option_id="opt_a", label="Ask"),
-            WrittenChoice(option_id="wrong_id", label="Something else"),
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "choices": (
+                WrittenChoice(option_id="opt_a", label="Ask"),
+                WrittenChoice(option_id="wrong_id", label="Something else"),
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
     assert any("choice" in v.detail.lower() for v in result.violations)
@@ -156,12 +162,14 @@ def test_guard_rejects_choice_id_mismatch(guard, pack, state):
 def test_guard_rejects_empty_blocks(guard, pack, state):
     plan = _decision_plan()
     draft = _matching_draft()
-    draft = draft.model_copy(update={
-        "scene_drafts": (
-            draft.scene_drafts[0].model_copy(update={"blocks": ()}),
-            draft.scene_drafts[1],
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "scene_drafts": (
+                draft.scene_drafts[0].model_copy(update={"blocks": ()}),
+                draft.scene_drafts[1],
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
 
@@ -169,12 +177,14 @@ def test_guard_rejects_empty_blocks(guard, pack, state):
 def test_guard_rejects_duplicate_choice_labels(guard, pack, state):
     plan = _decision_plan()
     draft = _matching_draft()
-    draft = draft.model_copy(update={
-        "choices": (
-            WrittenChoice(option_id="opt_a", label="Same"),
-            WrittenChoice(option_id="opt_b", label="Same"),
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "choices": (
+                WrittenChoice(option_id="opt_a", label="Same"),
+                WrittenChoice(option_id="opt_b", label="Same"),
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
 
@@ -186,12 +196,14 @@ def test_guard_rejects_dialogue_from_absent_character(guard, pack, state):
     bad_blocks = draft.scene_drafts[1].blocks + (
         NarrativeBlock(kind="dialogue", character_id="non_present_char", text="Hello."),
     )
-    draft = draft.model_copy(update={
-        "scene_drafts": (
-            draft.scene_drafts[0],
-            draft.scene_drafts[1].model_copy(update={"blocks": bad_blocks}),
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "scene_drafts": (
+                draft.scene_drafts[0],
+                draft.scene_drafts[1].model_copy(update={"blocks": bad_blocks}),
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
     assert any(v.kind == "wrong_speaker" for v in result.violations)
@@ -202,12 +214,14 @@ def test_guard_detects_knowledge_leak(guard, pack, state):
     plan = _decision_plan()
     # Scene 02 is related to the hidden latent question "who_took_notebook",
     # which alice has not learned (it is not in her knowledge set).
-    plan = plan.model_copy(update={
-        "scenes": (
-            plan.scenes[0],
-            plan.scenes[1].model_copy(update={"related_fact_ids": ("who_took_notebook",)}),
-        )
-    })
+    plan = plan.model_copy(
+        update={
+            "scenes": (
+                plan.scenes[0],
+                plan.scenes[1].model_copy(update={"related_fact_ids": ("who_took_notebook",)}),
+            )
+        }
+    )
     draft = _matching_draft()
     # Alice states the hidden fact's ID verbatim in dialogue.
     leaky_blocks = draft.scene_drafts[1].blocks + (
@@ -217,12 +231,14 @@ def test_guard_detects_knowledge_leak(guard, pack, state):
             text="I know who_took_notebook: the stranger took it!",
         ),
     )
-    draft = draft.model_copy(update={
-        "scene_drafts": (
-            draft.scene_drafts[0],
-            draft.scene_drafts[1].model_copy(update={"blocks": leaky_blocks}),
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "scene_drafts": (
+                draft.scene_drafts[0],
+                draft.scene_drafts[1].model_copy(update={"blocks": leaky_blocks}),
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
     assert any(v.kind == "knowledge_leak" for v in result.violations)
@@ -232,12 +248,14 @@ def test_guard_does_not_flag_unmentioned_hidden_fact(guard, pack, state):
     """A hidden related fact in the plan must not reject dialogue that never
     mentions it — regression for the fact-visibility false positive."""
     plan = _decision_plan()
-    plan = plan.model_copy(update={
-        "scenes": (
-            plan.scenes[0],
-            plan.scenes[1].model_copy(update={"related_fact_ids": ("who_took_notebook",)}),
-        )
-    })
+    plan = plan.model_copy(
+        update={
+            "scenes": (
+                plan.scenes[0],
+                plan.scenes[1].model_copy(update={"related_fact_ids": ("who_took_notebook",)}),
+            )
+        }
+    )
     draft = _matching_draft()  # dialogue never mentions who_took_notebook
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is True
@@ -250,7 +268,9 @@ def test_guard_scene_count_matches_plan(guard, pack, state):
     draft = draft.model_copy(update={"scene_drafts": (draft.scene_drafts[0],)})
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
-    assert any("scene" in v.detail.lower() and "count" in v.detail.lower() for v in result.violations)
+    assert any(
+        "scene" in v.detail.lower() and "count" in v.detail.lower() for v in result.violations
+    )
 
 
 def test_guard_does_not_mutate_state(guard, pack, state):
@@ -303,14 +323,18 @@ def test_guard_rejects_choices_on_continue_terminal(guard, pack, state):
     # Check 6b: for a decision plan, a non-last scene draft must not carry choices.
     plan = _decision_plan()
     draft = _matching_draft()
-    draft = draft.model_copy(update={
-        "scene_drafts": (
-            draft.scene_drafts[0].model_copy(update={
-                "choices": (WrittenChoice(option_id="opt_x", label="Fabricated"),),
-            }),
-            draft.scene_drafts[1],
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "scene_drafts": (
+                draft.scene_drafts[0].model_copy(
+                    update={
+                        "choices": (WrittenChoice(option_id="opt_x", label="Fabricated"),),
+                    }
+                ),
+                draft.scene_drafts[1],
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
     assert any(v.kind == "unauthorized_fact" for v in result.violations)
@@ -424,12 +448,14 @@ def test_guard_detects_world_rule_contradiction(guard, pack, state):
             text="Dead characters cannot return. Actually, they can!",
         ),
     )
-    draft = draft.model_copy(update={
-        "scene_drafts": (
-            draft.scene_drafts[0],
-            draft.scene_drafts[1].model_copy(update={"blocks": bad_blocks}),
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "scene_drafts": (
+                draft.scene_drafts[0],
+                draft.scene_drafts[1].model_copy(update={"blocks": bad_blocks}),
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is False
     assert any(v.kind == "contradiction" for v in result.violations)
@@ -448,12 +474,14 @@ def test_guard_does_not_flag_compliant_rule_restatement(guard, pack, state):
             text="Dead characters cannot return. So we must move on.",
         ),
     )
-    draft = draft.model_copy(update={
-        "scene_drafts": (
-            draft.scene_drafts[0],
-            draft.scene_drafts[1].model_copy(update={"blocks": good_blocks}),
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "scene_drafts": (
+                draft.scene_drafts[0],
+                draft.scene_drafts[1].model_copy(update={"blocks": good_blocks}),
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert not any(v.kind == "contradiction" for v in result.violations)
 
@@ -466,9 +494,7 @@ def test_guard_does_not_flag_compliant_rule_restatement(guard, pack, state):
         "Dead characters cannot return. Their memories will live on.",
     ),
 )
-def test_guard_does_not_flag_rule_reference_with_ordinary_modals(
-    guard, pack, state, text
-):
+def test_guard_does_not_flag_rule_reference_with_ordinary_modals(guard, pack, state, text):
     plan = _decision_plan()
     draft = _matching_draft()
     # Compliant dialogue mentioning the rule alongside ordinary modal/auxiliary
@@ -476,11 +502,13 @@ def test_guard_does_not_flag_rule_reference_with_ordinary_modals(
     good_blocks = draft.scene_drafts[1].blocks + (
         NarrativeBlock(kind="dialogue", character_id="alice", text=text),
     )
-    draft = draft.model_copy(update={
-        "scene_drafts": (
-            draft.scene_drafts[0],
-            draft.scene_drafts[1].model_copy(update={"blocks": good_blocks}),
-        )
-    })
+    draft = draft.model_copy(
+        update={
+            "scene_drafts": (
+                draft.scene_drafts[0],
+                draft.scene_drafts[1].model_copy(update={"blocks": good_blocks}),
+            )
+        }
+    )
     result = guard.check_segment(pack, state, plan, draft)
     assert not any(v.kind == "contradiction" for v in result.violations)

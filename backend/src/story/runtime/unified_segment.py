@@ -56,9 +56,7 @@ class UnifiedSegmentOutput(RuntimeModel):
         plan_scenes = [s.scene_id for s in self.segment_plan.scenes]
         draft_scenes = [s.scene_id for s in self.segment_draft.scene_drafts]
         if plan_scenes != draft_scenes:
-            raise ValueError(
-                f"scene mismatch: plan={plan_scenes}, draft={draft_scenes}"
-            )
+            raise ValueError(f"scene mismatch: plan={plan_scenes}, draft={draft_scenes}")
         return self
 
 
@@ -73,8 +71,7 @@ class UnifiedSegmentPort(Protocol):
         pack: CompiledScriptPack,
         state: SessionState,
         pacing: PacingEnvelope,
-    ) -> UnifiedSegmentOutput:
-        ...
+    ) -> UnifiedSegmentOutput: ...
 
 
 # ---------------------------------------------------------------------------
@@ -128,17 +125,10 @@ def build_unified_context(
                 "voice": char_source.voice.model_dump(mode="json"),
                 "drives": char_source.drives,
                 "boundaries": char_source.boundaries.model_dump(mode="json"),
-                "relationship": dict(
-                    state.world.relationships.get(character.id, {})
-                ),
+                "relationship": dict(state.world.relationships.get(character.id, {})),
                 "emotional_state": dict(runtime.emotional_state),
-                "known_facts": _character_known_facts(
-                    pack, state, character.id
-                ),
-                "beliefs": {
-                    k: v.model_dump(mode="json")
-                    for k, v in runtime.beliefs.items()
-                },
+                "known_facts": _character_known_facts(pack, state, character.id),
+                "beliefs": {k: v.model_dump(mode="json") for k, v in runtime.beliefs.items()},
             }
         )
 
@@ -170,9 +160,7 @@ def build_unified_context(
         "completion_requirements": _completion_requirement_views(pack, state),
         "open_threads": _thread_views(state),
         "pacing": pacing.model_dump(mode="json"),
-        "available_action_ids": sorted(
-            pack.action_ids & set(source.protagonist.capabilities)
-        ),
+        "available_action_ids": sorted(pack.action_ids & set(source.protagonist.capabilities)),
         "event_trace": _event_trace_digest(state),
         # Rendering section (per-character scoped knowledge)
         "characters": rendering_chars,
@@ -243,16 +231,98 @@ same segment_id, same scene_ids in the same order.
    dialogue.
 
 6. Write in the script pack language and prose style.
+
+7. SEGMENT LENGTH: Generate sufficiently long continuous Galgame performance.
+   Aim for at least 8 blocks of narration and dialogue between choices.
+   Do not rush toward the decision point — let the player linger in each scene.
+
+8. Return only the requested structured contract."""
+
+
+OPENING_INSTRUCTIONS = """You are the Unified Segment Agent for a constrained visual novel.
+This is the game OPENING — a long, atmospheric prologue that must immerse the player
+in the world before the first decision.
+
+You do TWO things in one pass:
+
+  STEP 1 — PLAN: Decide the scene structure for a long opening sequence.
+  STEP 2 — WRITE: Render each planned scene as narration and dialogue blocks.
+
+Return segment_plan (structure) and segment_draft (prose). They must be consistent:
+same segment_id, same scene_ids in the same order.
+
+═══ OPENING-SPECIFIC RULES ═══
+
+1. Generate 8-15 scenes (target 30-50 narrative blocks total).
+2. The opening must world-build: establish the setting, character relationships,
+   and the initial conflict or mystery.
+3. Do NOT rush to a decision — let the player immerse in the opening atmosphere.
+   Use ample narration, environmental description, and character interaction.
+4. The LAST scene MUST be terminal="decision" with 2-4 choices.
+5. All middle scenes must be terminal="continue".
+
+═══ PLANNING RULES ═══
+
+1. The plan must contain 1 or more scenes. Only the last scene may be terminal.
+2. If pacing.must_end is true or the story has a defensible conclusion, set terminal="ending"
+   and provide an ending_proposal with title, tone, and terminal_state_summary.
+3. Otherwise set terminal="decision" and provide 2-4 choices on the last scene.
+4. Middle scenes must always be terminal="continue".
+5. You may propose thread_ops (open/advance/close), new_facts (fact commits), and phase_after.
+6. new_facts may ONLY contain fact IDs whose "kind" is "latent" in the facts list.
+   Never commit a fact with "kind": "fixed".
+7. All proposals are checked by the deterministic kernel — never assume state has changed.
+8. Use only IDs, locations, characters, goals, facts, and action IDs from the input.
+9. Do not invent new character IDs, location IDs, or action IDs.
+10. present_character_ids must contain ONLY character IDs from the provided "characters"
+    list. The protagonist is the player character, not part of that list — never put
+    "protagonist" in present_character_ids.
+11. Write all summaries in the script pack language.
+
+═══ WRITING RULES ═══
+
+1. KNOWLEDGE SCOPING (most important):
+   A character's dialogue may reference ONLY facts listed in that character's own
+   "known_facts" section in the "characters" array. A character must never state, hint at,
+   or reference a fact they have not learned — never by name, content, or implication.
+   If a fact is not in the speaker's known_facts, the speaker cannot know it.
+
+2. NO INTERNAL IDS IN PROSE:
+   Never write a fact ID, thread ID, character ID, location ID, or option ID inside
+   narration or dialogue text. Any snake_case identifier in a block's text is rejected.
+
+3. DECISION CHOICES ARE MANDATORY:
+   When terminal is "decision", the draft MUST contain every planned choice from the
+   plan's last scene with the EXACT same option_id, and 2-4 unique natural-language labels.
+
+4. STRUCTURE:
+   - Each scene_id in the draft must match the plan's scene_id exactly.
+   - Narration blocks have no character_id; dialogue blocks have a character_id.
+   - For an ending terminal, generate the dynamic title and final ending blocks.
+
+5. Keep each character's dialogue within that character's supplied knowledge, beliefs,
+   voice, and boundaries. Do NOT share one character's secrets with another character's
+   dialogue.
+
+6. Write in the script pack language and prose style.
 7. Return only the requested structured contract."""
 
 
 class SdkUnifiedSegmentAgent:
-    """Unified Segment Agent backed by the OpenAI Agents SDK."""
+    """Unified Segment Agent backed by the OpenAI Agents SDK.
 
-    def __init__(self, model: OpenAIResponsesModel) -> None:
+    Pass ``instructions=OPENING_INSTRUCTIONS`` to create an agent that
+    generates long, atmospheric opening segments.
+    """
+
+    def __init__(
+        self,
+        model: OpenAIResponsesModel,
+        instructions: str = UNIFIED_INSTRUCTIONS,
+    ) -> None:
         self.agent = Agent(
             name="Unified Segment Agent",
-            instructions=UNIFIED_INSTRUCTIONS,
+            instructions=instructions,
             model=model,
             output_type=ProviderStrictOutputSchema(UnifiedSegmentOutput),
         )
@@ -270,21 +340,16 @@ class SdkUnifiedSegmentAgent:
             },
             ensure_ascii=False,
         )
-        output = await run_with_contract_retry(
-            self.agent, prompt, UnifiedSegmentOutput
-        )
+        output = await run_with_contract_retry(self.agent, prompt, UnifiedSegmentOutput)
         # Extra validation: draft choices must match plan choices
         if output.segment_plan.terminal == "decision":
             plan_scene = output.segment_plan.scenes[-1]
-            plan_option_ids = {
-                c.option_id for c in plan_scene.choices
-            } if plan_scene.choices else set()
-            draft_option_ids = {
-                c.option_id for c in output.segment_draft.choices
-            }
+            plan_option_ids = (
+                {c.option_id for c in plan_scene.choices} if plan_scene.choices else set()
+            )
+            draft_option_ids = {c.option_id for c in output.segment_draft.choices}
             if plan_option_ids and not plan_option_ids.issubset(draft_option_ids):
                 raise ModelContractError(
-                    f"draft choices {draft_option_ids} do not cover "
-                    f"plan choices {plan_option_ids}"
+                    f"draft choices {draft_option_ids} do not cover plan choices {plan_option_ids}"
                 )
         return output

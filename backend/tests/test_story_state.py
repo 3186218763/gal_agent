@@ -89,7 +89,9 @@ def test_completion_assessment_record_full():
 
 def test_completion_state():
     assessment = CompletionAssessmentRecord(
-        requirement_id="req_a", satisfied=True, rationale="ok",
+        requirement_id="req_a",
+        satisfied=True,
+        rationale="ok",
     )
     state = CompletionState(cleared=True, assessments=(assessment,))
     assert state.cleared is True

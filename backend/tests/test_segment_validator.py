@@ -42,6 +42,7 @@ def _make_pacing(**overrides):
         "in_convergence": False,
         "max_new_threads": 3,
         "quiet_scene_allowance": 2,
+        "target_block_range": (8, 25),
     }
     defaults.update(overrides)
     return PacingEnvelope(**defaults)
@@ -49,6 +50,7 @@ def _make_pacing(**overrides):
 
 def _make_state():
     from src.story.state import initial_session_state
+
     pack = _make_pack()
     return initial_session_state(pack, "s1", session_seed=1)
 
@@ -110,7 +112,9 @@ def test_valid_ending_segment_plan():
         scenes=(_make_ending_scene(),),
         terminal="ending",
         ending_proposal=EndingProposal(
-            title="Finale", tone="epic", terminal_state_summary="The end.",
+            title="Finale",
+            tone="epic",
+            terminal_state_summary="The end.",
         ),
     )
     result = validate_segment_plan(pack, state, plan, pacing)
@@ -126,7 +130,9 @@ def test_ending_before_min_scenes_rejected():
         scenes=(_make_continue_scene(),),
         terminal="ending",
         ending_proposal=EndingProposal(
-            title="Finale", tone="epic", terminal_state_summary="The end.",
+            title="Finale",
+            tone="epic",
+            terminal_state_summary="The end.",
         ),
     )
     with pytest.raises(ProposalRejected, match="min_scenes"):

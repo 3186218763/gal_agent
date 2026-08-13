@@ -81,9 +81,7 @@ def test_judge_satisfied_by_committed_fact():
         EventEnvelope(
             session_id="s1",
             sequence=5,
-            event=FactCommitted(
-                fact_id="core_cause", value="alice", evidence_event_ids=("evt-1",)
-            ),
+            event=FactCommitted(fact_id="core_cause", value="alice", evidence_event_ids=("evt-1",)),
         ),
     )
     judge = CompletionJudge()
@@ -105,9 +103,7 @@ def test_judge_satisfied_by_fact_and_goal():
         ),
     }
     goals = {
-        "find_ally": GoalRuntime(
-            goal_id="find_ally", status=GoalStatus.COMPLETED, progress=1.0
-        ),
+        "find_ally": GoalRuntime(goal_id="find_ally", status=GoalStatus.COMPLETED, progress=1.0),
     }
     state = _make_state(facts=facts, goals=goals)
     reqs = (
@@ -118,9 +114,7 @@ def test_judge_satisfied_by_fact_and_goal():
         EventEnvelope(
             session_id="s1",
             sequence=5,
-            event=FactCommitted(
-                fact_id="core_cause", value="alice", evidence_event_ids=("evt-1",)
-            ),
+            event=FactCommitted(fact_id="core_cause", value="alice", evidence_event_ids=("evt-1",)),
         ),
         EventEnvelope(
             session_id="s1",
@@ -162,9 +156,7 @@ def test_judge_not_satisfied_by_uncommitted_fact():
 
 def test_judge_satisfied_by_completed_goal():
     goals = {
-        "find_ally": GoalRuntime(
-            goal_id="find_ally", status=GoalStatus.COMPLETED, progress=1.0
-        ),
+        "find_ally": GoalRuntime(goal_id="find_ally", status=GoalStatus.COMPLETED, progress=1.0),
     }
     state = _make_state(goals=goals)
     reqs = (
@@ -267,9 +259,7 @@ def test_judge_with_real_completion_requirement_source():
         EventEnvelope(
             session_id="s1",
             sequence=5,
-            event=FactCommitted(
-                fact_id="core_cause", value="alice", evidence_event_ids=("evt-1",)
-            ),
+            event=FactCommitted(fact_id="core_cause", value="alice", evidence_event_ids=("evt-1",)),
         ),
     )
     judge = CompletionJudge()

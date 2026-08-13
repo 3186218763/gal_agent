@@ -252,13 +252,20 @@ def test_decision_scene_persists_only_allowed_choices():
         blocks=(NarrativeBlock(kind="narration", text="Alice waits."),),
         decision_id="decision_01",
         choices=(
-            PresentedChoice(id="ask_alice", action_id="ask", label="Ask Alice", intent="ask directly"),
-            PresentedChoice(id="observe_alice", action_id="observe", label="Watch quietly", intent="observe"),
+            PresentedChoice(
+                id="ask_alice", action_id="ask", label="Ask Alice", intent="ask directly"
+            ),
+            PresentedChoice(
+                id="observe_alice", action_id="observe", label="Watch quietly", intent="observe"
+            ),
         ),
     )
     committed = apply_event(state, _envelope(state, event))
     assert committed.pending_scene.blocks[0].text == "Alice waits."
-    assert [item.id for item in committed.pending_decision.choices] == ["ask_alice", "observe_alice"]
+    assert [item.id for item in committed.pending_decision.choices] == [
+        "ask_alice",
+        "observe_alice",
+    ]
 
 
 def test_player_cannot_select_unpresented_choice():
@@ -384,7 +391,9 @@ def test_decision_presented_event_serialization():
         decision_id="dec_01",
         choices=(
             PresentedChoice(id="opt_a", action_id="ask", label="Ask", intent="Ask directly"),
-            PresentedChoice(id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"),
+            PresentedChoice(
+                id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"
+            ),
         ),
     )
     assert event.type == "decision_presented"
@@ -462,7 +471,9 @@ def test_decision_presented_sets_pending_decision():
         decision_id="dec_01",
         choices=(
             PresentedChoice(id="opt_a", action_id="ask", label="Ask", intent="Ask directly"),
-            PresentedChoice(id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"),
+            PresentedChoice(
+                id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"
+            ),
         ),
     )
     envelope = EventEnvelope(session_id="s1", sequence=5, event=event)
@@ -489,7 +500,9 @@ def test_decision_presented_rejects_duplicate():
         decision_id="dec_01",
         choices=(
             PresentedChoice(id="opt_a", action_id="ask", label="Ask", intent="Ask directly"),
-            PresentedChoice(id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"),
+            PresentedChoice(
+                id="opt_b", action_id="observe", label="Watch", intent="Watch carefully"
+            ),
         ),
     )
     envelope = EventEnvelope(session_id="s1", sequence=5, event=event)
