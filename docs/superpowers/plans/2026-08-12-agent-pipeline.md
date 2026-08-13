@@ -1,6 +1,6 @@
 # Agent Pipeline Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the single-call streaming writer and separate scene-by-scene planner/writer with a three-agent segment pipeline (Director -> Writer -> Guard) that produces validated, multi-scene performance segments with per-character knowledge scoping, and verify it with a live DeepSeek model round-trip.
 

@@ -2,7 +2,7 @@
 
 > **Status:** ✅ All tasks complete — 381 tests pass, lint clean.
 >
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> Implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Eliminate in-game LLM wait time by implementing a dual-layer cache: a frozen Pack Cache (opening + first-decision pregen, generated at `init-pack` time and shared across all sessions) and a dynamic Session Cache (runtime background pre-generation after each decision segment). When a cache hit occurs the orchestrator skips all LLM calls and streams pre-computed blocks instantly.
 

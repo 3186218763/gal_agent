@@ -1,6 +1,6 @@
 # Segment Engine Core Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the transactional performance-segment runtime that replaces per-scene advance with multi-scene segments, pacing-governed endings, completion judgment, and a single SSE turn endpoint.
 

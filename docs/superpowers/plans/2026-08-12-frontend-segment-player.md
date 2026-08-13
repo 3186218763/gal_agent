@@ -1,6 +1,6 @@
 # Frontend Segment Player Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the per-scene streaming consumer with a segment-aware player that buffers provisional blocks, unlocks playback only on `segment_ready`, and guarantees zero mid-performance network waits between choices.
 
@@ -2479,7 +2479,7 @@ describe('spec 12.4: no client request between internal scenes', () => {
 cd /home/miku/szj/gal_agent/frontend && npx vitest run src/App.test.tsx
 ```
 
-All tests must pass. If any fail, use superpowers:systematic-debugging to diagnose and fix.
+All tests must pass. Diagnose and fix any failure before continuing.
 
 - [ ] **Step 3: Run the complete test suite**
 

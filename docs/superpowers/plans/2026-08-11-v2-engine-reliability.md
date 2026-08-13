@@ -1,6 +1,6 @@
 # V2 Engine Reliability Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> Implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make the V2 Galgame backend reproducible, strict-schema compatible, idempotent, fail-closed on generation errors, and able to expose a safe player-facing session projection for a later browser player.
 
