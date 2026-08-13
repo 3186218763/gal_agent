@@ -6,30 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from src.story.script_pack.models import (
-    EvidenceHintsSource,
     OpeningStateSource,
     StoryHistorySource,
     WorldSettingSource,
 )
-
-
-class TestEvidenceHintsSource:
-    def test_default_empty_hints(self):
-        hints = EvidenceHintsSource()
-        assert hints.fact_ids == ()
-        assert hints.goal_ids == ()
-
-    def test_with_fact_and_goal_refs(self):
-        hints = EvidenceHintsSource(
-            fact_ids=("core_cause",),
-            goal_ids=("protagonist_understand",),
-        )
-        assert hints.fact_ids == ("core_cause",)
-        assert hints.goal_ids == ("protagonist_understand",)
-
-    def test_rejects_non_safe_id(self):
-        with pytest.raises(ValidationError):
-            EvidenceHintsSource(fact_ids=("BadID",))
 
 
 class TestWorldSettingSource:
@@ -169,14 +149,23 @@ def _minimal_v2_raw():
                 "voice": {"style": "direct"},
                 "drives": ["find an ally"],
                 "knowledge": ["cafe_is_open"],
-            }
+            },
+            {
+                "id": "bob",
+                "name": "Bob",
+                "public_profile": "A cautious researcher.",
+                "personality": {"traits": ["cautious"]},
+                "voice": {"style": "precise"},
+                "drives": ["verify the evidence"],
+                "knowledge": ["cafe_is_open"],
+            },
         ],
         "facts": {
             "fixed": [
                 {
                     "id": "cafe_is_open",
                     "statement": "The cafe is open.",
-                    "known_by": ["alice"],
+                    "known_by": ["alice", "bob"],
                     "visibility": "revealed",
                 }
             ],
@@ -195,6 +184,37 @@ def _minimal_v2_raw():
             {
                 "id": "understand_truth",
                 "description": "Player must understand the core truth.",
+                "fact_revealed": {"fact_id": "cafe_is_open"},
+            }
+        ],
+        "conflict_axes": [
+            {
+                "id": "trust_vs_evidence",
+                "values": ["trust", "evidence"],
+                "source_character_ids": ["alice", "bob"],
+                "initial_incompatibility": (
+                    "Alice needs personal trust while Bob requires verifiable evidence."
+                ),
+            }
+        ],
+        "relationship_event_tags": [
+            {"id": "public_trust", "description": "Trusted someone in public."},
+            {"id": "accepted_truth", "description": "Accepted an inconvenient truth."},
+        ],
+        "relationship_turning_points": [
+            {
+                "id": "alice_mutual_trust",
+                "character_id": "alice",
+                "all_of_event_tags": ["public_trust", "accepted_truth"],
+                "min_distinct_source_choices": 2,
+            }
+        ],
+        "obligation_kinds": [
+            {
+                "id": "keep_secret",
+                "description": "Keep a disclosed secret.",
+                "burden": 2,
+                "allowed_outcomes": ["fulfilled", "broken", "released"],
             }
         ],
         "interaction_rules": {
@@ -209,6 +229,7 @@ class TestScriptPackSourceV2:
         source = ScriptPackSource.model_validate(_minimal_v2_raw())
         assert source.schema_version == "2.0"
         assert source.completion_requirements[0].id == "understand_truth"
+        assert source.completion_requirements[0].fact_revealed.fact_id == "cafe_is_open"
 
     def test_v2_rejects_endings_field(self):
         raw = _minimal_v2_raw()
@@ -291,20 +312,110 @@ class TestCompileV2:
         with pytest.raises(PackCompileError, match="duplicate completion_requirement id"):
             compile_source(raw)
 
-    def test_v2_rejects_unknown_fact_in_evidence_hints(self):
+    def test_v2_rejects_unknown_fact_in_completion_evidence(self):
         raw = _minimal_v2_raw()
-        raw["completion_requirements"][0]["evidence_hints"] = {
-            "fact_ids": ["nonexistent_fact"],
+        raw["completion_requirements"][0]["fact_revealed"] = {
+            "fact_id": "nonexistent_fact",
         }
         with pytest.raises(PackCompileError, match="nonexistent_fact"):
             compile_source(raw)
 
-    def test_v2_rejects_unknown_goal_in_evidence_hints(self):
+    def test_v2_accepts_recursive_completion_evidence(self):
         raw = _minimal_v2_raw()
-        raw["completion_requirements"][0]["evidence_hints"] = {
-            "goal_ids": ["nonexistent_goal"],
+        raw["completion_requirements"] = [
+            {
+                "id": "complete_arc",
+                "description": "Reveal truth and carry a meaningful consequence.",
+                "all": [
+                    {"fact_revealed": {"fact_id": "cafe_is_open"}},
+                    {
+                        "any": [
+                            {
+                                "relationship_turning_point": {
+                                    "turning_point_id": "alice_mutual_trust"
+                                }
+                            },
+                            {"obligation_fulfilled": {"min_burden": 1}},
+                            {"cost_incurred": {"min_severity": 1}},
+                            {
+                                "stance_defended": {
+                                    "min_challenges": 1,
+                                    "min_cost_severity": 1,
+                                }
+                            },
+                        ]
+                    },
+                ],
+            }
+        ]
+        compiled = compile_source(raw)
+        requirement = compiled.source.completion_requirements[0]
+        assert requirement.all[0].fact_revealed.fact_id == "cafe_is_open"
+        assert requirement.all[1].any[0].relationship_turning_point.turning_point_id == (
+            "alice_mutual_trust"
+        )
+
+    @pytest.mark.parametrize("operator", ["all", "any"])
+    def test_v2_rejects_empty_completion_group(self, operator):
+        raw = _minimal_v2_raw()
+        raw["completion_requirements"][0].pop("fact_revealed")
+        raw["completion_requirements"][0][operator] = []
+        with pytest.raises(PackCompileError, match=f"{operator} group cannot be empty"):
+            compile_source(raw)
+
+    def test_v2_rejects_completion_requirement_without_evidence(self):
+        raw = _minimal_v2_raw()
+        raw["completion_requirements"][0].pop("fact_revealed")
+        with pytest.raises(PackCompileError, match="exactly one evidence operator"):
+            compile_source(raw)
+
+    def test_v2_rejects_mixed_completion_evidence_node(self):
+        raw = _minimal_v2_raw()
+        raw["completion_requirements"][0]["cost_incurred"] = {"min_severity": 1}
+        with pytest.raises(PackCompileError, match="exactly one evidence operator"):
+            compile_source(raw)
+
+    def test_v2_rejects_unknown_turning_point_in_completion_evidence(self):
+        raw = _minimal_v2_raw()
+        raw["completion_requirements"][0] = {
+            "id": "bond",
+            "description": "Form a bond.",
+            "relationship_turning_point": {"turning_point_id": "missing"},
         }
-        with pytest.raises(PackCompileError, match="nonexistent_goal"):
+        with pytest.raises(PackCompileError, match="unknown turning point missing"):
+            compile_source(raw)
+
+    def test_v2_rejects_future_fields_on_conflict_axis(self):
+        raw = _minimal_v2_raw()
+        raw["conflict_axes"][0]["activation"] = "after scene 2"
+        with pytest.raises(PackCompileError, match="activation"):
+            compile_source(raw)
+
+    @pytest.mark.parametrize(
+        ("field", "label"),
+        [
+            ("conflict_axes", "conflict_axis"),
+            ("relationship_event_tags", "relationship_event_tag"),
+            ("relationship_turning_points", "relationship_turning_point"),
+            ("obligation_kinds", "obligation_kind"),
+        ],
+    )
+    def test_v2_rejects_duplicate_dramatic_declaration_ids(self, field, label):
+        raw = _minimal_v2_raw()
+        raw[field].append(dict(raw[field][0]))
+        with pytest.raises(PackCompileError, match=f"duplicate {label} id"):
+            compile_source(raw)
+
+    def test_v2_rejects_turning_point_unknown_relationship_tag(self):
+        raw = _minimal_v2_raw()
+        raw["relationship_turning_points"][0]["all_of_event_tags"] = ["missing"]
+        with pytest.raises(PackCompileError, match="unknown tag missing"):
+            compile_source(raw)
+
+    def test_v2_rejects_conflict_axis_unknown_character(self):
+        raw = _minimal_v2_raw()
+        raw["conflict_axes"][0]["source_character_ids"] = ["alice", "missing"]
+        with pytest.raises(PackCompileError, match="unknown character missing"):
             compile_source(raw)
 
     def test_v2_validates_opening_state_location(self):
@@ -409,19 +520,12 @@ class TestPackV2Factory:
         assert raw["world_setting"]["forbidden_content"]
         assert raw["world_setting"]["fact_rules"]
 
-    def test_factory_evidence_hints_reference_valid_ids(self):
+    def test_factory_completion_evidence_references_valid_ids(self):
         from tests.story_factories import minimal_pack_v2_dict
 
-        raw = minimal_pack_v2_dict()
-        compiled = compile_source(raw)
-        # Evidence hints should reference actual fact/goal IDs without errors
-        req = compiled.source.completion_requirements[0]
-        if req.evidence_hints.fact_ids:
-            for fid in req.evidence_hints.fact_ids:
-                assert fid in compiled.fact_ids
-        if req.evidence_hints.goal_ids:
-            for gid in req.evidence_hints.goal_ids:
-                assert gid in compiled.goal_ids
+        compiled = compile_source(minimal_pack_v2_dict())
+        requirement = compiled.source.completion_requirements[0]
+        assert requirement.fact_revealed.fact_id in compiled.fact_ids
 
 
 # ---------------------------------------------------------------------------
@@ -520,11 +624,11 @@ class TestCafeMysteryV2:
         assert "opening_state" in raw
         assert raw["opening_state"]["location"] == "cafe"
 
-    def test_cafe_mystery_completion_requirements_have_evidence_hints(self):
+    def test_cafe_mystery_completion_requirements_have_evidence(self):
         pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
         compiled = compile_script_pack(pack_path)
         req = compiled.source.completion_requirements[0]
-        assert req.evidence_hints.fact_ids or req.evidence_hints.goal_ids
+        assert req.all or req.any or req.fact_revealed
 
     def test_cafe_mystery_preserves_all_facts_goals_characters(self):
         pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
@@ -580,14 +684,18 @@ class TestCrossPlanTypeExports:
     def test_completion_requirement_source_importable(self):
         from src.story.script_pack.models import CompletionRequirementSource
 
-        req = CompletionRequirementSource(id="test_req", description="test")
+        req = CompletionRequirementSource(
+            id="test_req",
+            description="test",
+            cost_incurred={"min_severity": 1},
+        )
         assert req.id == "test_req"
 
-    def test_evidence_hints_source_importable(self):
-        from src.story.script_pack.models import EvidenceHintsSource
+    def test_completion_evidence_source_importable(self):
+        from src.story.script_pack.models import CompletionEvidenceSource
 
-        hints = EvidenceHintsSource()
-        assert hints.fact_ids == ()
+        evidence = CompletionEvidenceSource(cost_incurred={"min_severity": 1})
+        assert evidence.cost_incurred.min_severity == 1
 
     def test_world_setting_source_importable(self):
         from src.story.script_pack.models import WorldSettingSource

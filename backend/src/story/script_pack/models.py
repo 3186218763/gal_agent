@@ -212,15 +212,85 @@ class EndingSource(StrictModel):
     closing_tone: str = Field(min_length=1)
 
 
-class EvidenceHintsSource(StrictModel):
-    fact_ids: tuple[SafeId, ...] = ()
-    goal_ids: tuple[SafeId, ...] = ()
+class ConflictAxisSource(StrictModel):
+    id: SafeId
+    values: tuple[SafeId, ...] = Field(min_length=2)
+    source_character_ids: tuple[SafeId, ...] = Field(min_length=2)
+    initial_incompatibility: str = Field(min_length=1)
 
 
-class CompletionRequirementSource(StrictModel):
+class RelationshipEventTagSource(StrictModel):
     id: SafeId
     description: str = Field(min_length=1)
-    evidence_hints: EvidenceHintsSource = Field(default_factory=EvidenceHintsSource)
+
+
+class RelationshipTurningPointSource(StrictModel):
+    id: SafeId
+    character_id: SafeId
+    all_of_event_tags: tuple[SafeId, ...] = Field(min_length=1)
+    min_distinct_source_choices: int = Field(default=1, ge=1)
+
+
+class ObligationKindSource(StrictModel):
+    id: SafeId
+    description: str = Field(min_length=1)
+    burden: int = Field(ge=1, le=3)
+    allowed_outcomes: tuple[Literal["fulfilled", "broken", "released"], ...] = Field(min_length=1)
+
+
+class FactRevealedEvidenceSource(StrictModel):
+    fact_id: SafeId
+
+
+class RelationshipTurningPointEvidenceSource(StrictModel):
+    turning_point_id: SafeId
+
+
+class ObligationFulfilledEvidenceSource(StrictModel):
+    min_burden: int = Field(ge=1, le=3)
+
+
+class CostIncurredEvidenceSource(StrictModel):
+    min_severity: int = Field(ge=1, le=3)
+
+
+class StanceDefendedEvidenceSource(StrictModel):
+    min_challenges: int = Field(ge=1)
+    min_cost_severity: int = Field(ge=1, le=3)
+
+
+class CompletionEvidenceSource(StrictModel):
+    all: tuple[CompletionEvidenceSource, ...] | None = None
+    any: tuple[CompletionEvidenceSource, ...] | None = None
+    fact_revealed: FactRevealedEvidenceSource | None = None
+    relationship_turning_point: RelationshipTurningPointEvidenceSource | None = None
+    obligation_fulfilled: ObligationFulfilledEvidenceSource | None = None
+    cost_incurred: CostIncurredEvidenceSource | None = None
+    stance_defended: StanceDefendedEvidenceSource | None = None
+
+    @model_validator(mode="after")
+    def require_one_operator(self) -> CompletionEvidenceSource:
+        operators = (
+            self.all,
+            self.any,
+            self.fact_revealed,
+            self.relationship_turning_point,
+            self.obligation_fulfilled,
+            self.cost_incurred,
+            self.stance_defended,
+        )
+        if sum(operator is not None for operator in operators) != 1:
+            raise ValueError("completion node must contain exactly one evidence operator")
+        if self.all is not None and not self.all:
+            raise ValueError("completion all group cannot be empty")
+        if self.any is not None and not self.any:
+            raise ValueError("completion any group cannot be empty")
+        return self
+
+
+class CompletionRequirementSource(CompletionEvidenceSource):
+    id: SafeId
+    description: str = Field(min_length=1)
 
 
 class WorldSettingSource(StrictModel):
@@ -305,6 +375,10 @@ class ScriptPackSourceV2(ScriptPackSource):
     characters: tuple[CharacterSource, ...] = Field(min_length=1)
     facts: FactsSource
     goals: tuple[GoalSource, ...] = Field(min_length=1)
+    conflict_axes: tuple[ConflictAxisSource, ...] = Field(min_length=1)
+    relationship_event_tags: tuple[RelationshipEventTagSource, ...] = Field(min_length=1)
+    relationship_turning_points: tuple[RelationshipTurningPointSource, ...] = Field(min_length=1)
+    obligation_kinds: tuple[ObligationKindSource, ...] = Field(min_length=1)
     completion_requirements: tuple[CompletionRequirementSource, ...] = Field(min_length=1)
     interaction_rules: InteractionRulesSource
     assets: dict[str, Any] = Field(default_factory=dict)

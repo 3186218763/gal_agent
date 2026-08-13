@@ -231,20 +231,44 @@ goals:
     success_condition: "facts.notebook_holder.visibility == 'revealed'"
     failure_condition: "session.scene_count >= 57 and facts.notebook_holder.visibility != 'revealed'"
 
+conflict_axes:
+  - id: trust_vs_evidence
+    values: [trust, evidence]
+    source_character_ids: [alice, bob]
+    initial_incompatibility: >
+      艾丽丝需要先确认玩家愿意相信她，鲍勃则拒绝接受没有可验证证据的信任。
+
+relationship_event_tags:
+  - id: public_trust
+    description: "玩家在他人面前明确选择相信一名角色。"
+  - id: accepted_truth
+    description: "玩家接受了会伤害既有关系但有证据支持的事实。"
+
+relationship_turning_points:
+  - id: alice_mutual_trust
+    character_id: alice
+    all_of_event_tags: [public_trust, accepted_truth]
+    min_distinct_source_choices: 2
+
+obligation_kinds:
+  - id: keep_secret
+    description: "保守角色在信任基础上交付的秘密。"
+    burden: 2
+    allowed_outcomes: [fulfilled, broken, released]
+
 completion_requirements:
   - id: core_truth_understood
     description: "玩家必须理解导致笔记本失踪的核心原因，并知道笔记本持有者的真实身份。"
-    evidence_hints:
-      fact_ids: [notebook_holder, core_truth_known]
-      goal_ids: [protagonist_learn_truth]
+    fact_revealed:
+      fact_id: notebook_holder
   - id: trust_built
     description: "玩家必须至少与一名主要角色建立可信赖的关系，使其愿意在结局时与玩家合作。"
-    evidence_hints:
-      fact_ids: [alice_trusts_player, bob_trusts_player]
-      goal_ids: [alice_find_ally, bob_limit_exposure]
+    relationship_turning_point:
+      turning_point_id: alice_mutual_trust
   - id: irreversible_choice
     description: "玩家必须在继续调查或保护相关人物之间作出不可逆的选择。"
-    evidence_hints: {}
+    cost_incurred:
+      min_severity: 1
 
 interaction_rules:
   enabled_standard: [ask, observe, support, challenge, withhold, disclose, follow, leave]

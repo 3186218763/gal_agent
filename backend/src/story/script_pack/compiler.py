@@ -18,6 +18,7 @@ from src.story.conditions import (
 )
 from src.story.script_pack.models import (
     CompiledScriptPack,
+    CompletionEvidenceSource,
     ScriptPackSource,
     ScriptPackSourceV1,
     ScriptPackSourceV2,
@@ -50,6 +51,10 @@ _INCLUDE_KEYS = frozenset(
         "story_history",
         "opening_state",
         "completion_requirements",
+        "conflict_axes",
+        "relationship_event_tags",
+        "relationship_turning_points",
+        "obligation_kinds",
     }
 )
 
@@ -337,20 +342,57 @@ def _v2_reference_errors(
         elif fact_id not in fixed_ids:
             errors.append(f"opening known fact must be fixed: {fact_id}")
 
-    # completion_requirement evidence hint references
-    for req in source.completion_requirements:
-        for fact_id in req.evidence_hints.fact_ids:
-            if fact_id not in fact_ids:
+    del goal_ids
+    tag_ids = {item.id for item in source.relationship_event_tags}
+    turning_point_ids = {item.id for item in source.relationship_turning_points}
+
+    for axis in source.conflict_axes:
+        for character_id in axis.source_character_ids:
+            if character_id not in character_ids:
                 errors.append(
-                    f"completion_requirement {req.id} evidence_hints references unknown fact {fact_id}"
+                    f"conflict axis {axis.id} references unknown character {character_id}"
                 )
-        for goal_id in req.evidence_hints.goal_ids:
-            if goal_id not in goal_ids:
+
+    for turning_point in source.relationship_turning_points:
+        if turning_point.character_id not in character_ids:
+            errors.append(
+                f"turning point {turning_point.id} references unknown character "
+                f"{turning_point.character_id}"
+            )
+        for tag in turning_point.all_of_event_tags:
+            if tag not in tag_ids:
+                errors.append(f"turning point {turning_point.id} references unknown tag {tag}")
+
+    for requirement in source.completion_requirements:
+        for leaf in _walk_completion_evidence(requirement):
+            if leaf.fact_revealed is not None and leaf.fact_revealed.fact_id not in fact_ids:
                 errors.append(
-                    f"completion_requirement {req.id} evidence_hints references unknown goal {goal_id}"
+                    f"completion requirement {requirement.id} references unknown fact "
+                    f"{leaf.fact_revealed.fact_id}"
+                )
+            if (
+                leaf.relationship_turning_point is not None
+                and leaf.relationship_turning_point.turning_point_id not in turning_point_ids
+            ):
+                errors.append(
+                    f"completion requirement {requirement.id} references unknown turning point "
+                    f"{leaf.relationship_turning_point.turning_point_id}"
                 )
 
     return errors
+
+
+def _walk_completion_evidence(
+    node: CompletionEvidenceSource,
+) -> Iterable[CompletionEvidenceSource]:
+    if node.all is not None:
+        for child in node.all:
+            yield from _walk_completion_evidence(child)
+    elif node.any is not None:
+        for child in node.any:
+            yield from _walk_completion_evidence(child)
+    else:
+        yield node
 
 
 def _v2_condition_entries(source: ScriptPackSourceV2) -> Iterable[tuple[str, str]]:
@@ -450,6 +492,44 @@ def compile_source(
                 (req.id for req in source.completion_requirements),
             )
         )
+        errors.extend(_duplicate_ids("conflict_axis", (item.id for item in source.conflict_axes)))
+        errors.extend(
+            _duplicate_ids(
+                "relationship_event_tag",
+                (item.id for item in source.relationship_event_tags),
+            )
+        )
+        errors.extend(
+            _duplicate_ids(
+                "relationship_turning_point",
+                (item.id for item in source.relationship_turning_points),
+            )
+        )
+        errors.extend(
+            _duplicate_ids("obligation_kind", (item.id for item in source.obligation_kinds))
+        )
+        for axis in source.conflict_axes:
+            errors.extend(_duplicate_ids(f"value in conflict_axis {axis.id}", axis.values))
+            errors.extend(
+                _duplicate_ids(
+                    f"source_character in conflict_axis {axis.id}",
+                    axis.source_character_ids,
+                )
+            )
+        for turning_point in source.relationship_turning_points:
+            errors.extend(
+                _duplicate_ids(
+                    f"event_tag in relationship_turning_point {turning_point.id}",
+                    turning_point.all_of_event_tags,
+                )
+            )
+        for obligation_kind in source.obligation_kinds:
+            errors.extend(
+                _duplicate_ids(
+                    f"outcome in obligation_kind {obligation_kind.id}",
+                    obligation_kind.allowed_outcomes,
+                )
+            )
         errors.extend(_v2_reference_errors(source, character_ids, fixed_ids, fact_ids, goal_ids))
         errors.extend(
             _shared_reference_errors(

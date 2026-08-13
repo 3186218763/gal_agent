@@ -265,14 +265,34 @@ def minimal_pack_v2_dict() -> dict[str, Any]:
                 "secrets": ["who_took_notebook"],
                 "capabilities": ["ask", "support"],
                 "initial_relationship": {"trust": 35, "affection": 5},
-            }
+            },
+            {
+                "id": "bob",
+                "name": "Bob",
+                "public_profile": "A cautious researcher.",
+                "personality": {
+                    "traits": ["cautious"],
+                    "values": ["evidence"],
+                    "fears": ["repeating old mistakes"],
+                    "flaws": ["controlling"],
+                },
+                "voice": {
+                    "style": "precise",
+                    "forbidden": ["casual speculation"],
+                },
+                "drives": ["verify the evidence"],
+                "knowledge": ["cafe_is_open"],
+                "secrets": [],
+                "capabilities": ["ask", "observe", "challenge"],
+                "initial_relationship": {"trust": 25, "affection": 0},
+            },
         ],
         "facts": {
             "fixed": [
                 {
                     "id": "cafe_is_open",
                     "statement": "The cafe is open.",
-                    "known_by": ["alice"],
+                    "known_by": ["alice", "bob"],
                     "visibility": "revealed",
                 }
             ],
@@ -314,18 +334,43 @@ def minimal_pack_v2_dict() -> dict[str, Any]:
             {
                 "id": "understand_truth",
                 "description": "Player must understand who took the notebook.",
-                "evidence_hints": {
-                    "fact_ids": ["who_took_notebook"],
-                    "goal_ids": ["alice_find_ally"],
-                },
+                "fact_revealed": {"fact_id": "who_took_notebook"},
             },
             {
                 "id": "build_trust",
                 "description": "Player must earn Alice's trust.",
-                "evidence_hints": {
-                    "fact_ids": ["alice_trusts_player"],
-                },
+                "relationship_turning_point": {"turning_point_id": "alice_mutual_trust"},
             },
+        ],
+        "conflict_axes": [
+            {
+                "id": "trust_vs_evidence",
+                "values": ["trust", "evidence"],
+                "source_character_ids": ["alice", "bob"],
+                "initial_incompatibility": (
+                    "Alice needs personal trust while Bob requires verifiable evidence."
+                ),
+            }
+        ],
+        "relationship_event_tags": [
+            {"id": "public_trust", "description": "Trusted someone in public."},
+            {"id": "accepted_truth", "description": "Accepted an inconvenient truth."},
+        ],
+        "relationship_turning_points": [
+            {
+                "id": "alice_mutual_trust",
+                "character_id": "alice",
+                "all_of_event_tags": ["public_trust", "accepted_truth"],
+                "min_distinct_source_choices": 2,
+            }
+        ],
+        "obligation_kinds": [
+            {
+                "id": "keep_secret",
+                "description": "Keep a disclosed secret.",
+                "burden": 2,
+                "allowed_outcomes": ["fulfilled", "broken", "released"],
+            }
         ],
         "interaction_rules": {
             "enabled_standard": ["ask", "observe", "support", "challenge"],
