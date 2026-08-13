@@ -1,6 +1,10 @@
 # Deterministic Dramatic Kernel Implementation Plan
 
-> Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+
+> **Status:** Complete. Tasks 1-6 are implemented and verified. Task 6's real-Pack
+> migration was completed early in `5acd7c6` while resolving Task 1's executable
+> contract review findings.
 
 **Goal:** Build the deterministic Pack schema, dramatic authority, semantic event kernel, same-batch evidence resolution, and full-history completion judge required by the approved `cafe_mystery` vertical slice.
 
@@ -43,7 +47,7 @@
 - Modify: `backend/tests/story_factories.py`
 - Modify: `backend/tests/test_script_pack_v2.py`
 
-- [ ] **Step 1: Replace evidence-hint tests with failing recursive DSL and dramatic vocabulary tests**
+- [x] **Step 1: Replace evidence-hint tests with failing recursive DSL and dramatic vocabulary tests**
 
 Add tests that construct this contract and assert exact validation behavior:
 
@@ -147,13 +151,13 @@ def test_v2_rejects_future_fields_on_conflict_axis():
         compile_source(raw)
 ```
 
-- [ ] **Step 2: Run the focused Pack tests and verify RED**
+- [x] **Step 2: Run the focused Pack tests and verify RED**
 
 Run: `cd backend && uv run pytest tests/test_script_pack_v2.py -q`
 
 Expected: FAIL because `conflict_axes`, semantic declaration types, and recursive evidence operators are not accepted and `evidence_hints` is still the active contract.
 
-- [ ] **Step 3: Implement the Pack source types**
+- [x] **Step 3: Implement the Pack source types**
 
 Replace `EvidenceHintsSource` with these strict models and add them to `ScriptPackSourceV2`:
 
@@ -250,7 +254,7 @@ relationship_turning_points: tuple[RelationshipTurningPointSource, ...] = Field(
 obligation_kinds: tuple[ObligationKindSource, ...] = Field(min_length=1)
 ```
 
-- [ ] **Step 4: Implement compiler uniqueness and recursive reference validation**
+- [x] **Step 4: Implement compiler uniqueness and recursive reference validation**
 
 Add recursive traversal and validations:
 
@@ -309,17 +313,17 @@ def _v2_dramatic_reference_errors(source: ScriptPackSourceV2) -> list[str]:
 
 Also add duplicate-ID checks for conflict axes, relationship tags, turning points, and obligation kinds, plus duplicate `values`, `source_character_ids`, `all_of_event_tags`, and `allowed_outcomes` within their declarations.
 
-- [ ] **Step 5: Update the minimal V2 fixture and public exports**
+- [x] **Step 5: Update the minimal V2 fixture and public exports**
 
 Give `minimal_pack_v2_dict()` one conflict axis, two relationship tags, one Alice turning point, one obligation kind, and requirements using `fact_revealed`, `relationship_turning_point`, and `cost_incurred`. Export every new source type and remove `EvidenceHintsSource` from `script_pack.__all__`.
 
-- [ ] **Step 6: Run Pack tests and verify GREEN**
+- [x] **Step 6: Run Pack tests and verify GREEN**
 
 Run: `cd backend && uv run pytest tests/test_script_pack_v2.py tests/test_script_pack_compiler.py tests/test_script_pack_models.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```bash
 git add backend/src/story/script_pack backend/tests/story_factories.py backend/tests/test_script_pack_v2.py
@@ -336,7 +340,7 @@ git commit -m "feat: define dramatic pack evidence contract"
 - Modify: `backend/tests/test_story_state.py`
 - Modify: `backend/tests/test_story_reducer.py`
 
-- [ ] **Step 1: Write failing initial-state and reducer tests**
+- [x] **Step 1: Write failing initial-state and reducer tests**
 
 Add tests covering default dramatic authority and immutable replay:
 
@@ -408,13 +412,13 @@ def test_obligation_cannot_be_resolved_twice():
 
 Cover stance establishment/reinforcement/challenge, promise state transitions, scheduled consequence realization, one-time turning points, cost recording, primary dramatic question replacement, and monotonic arc phases.
 
-- [ ] **Step 2: Run state tests and verify RED**
+- [x] **Step 2: Run state tests and verify RED**
 
 Run: `cd backend && uv run pytest tests/test_story_state.py tests/test_story_reducer.py -q`
 
 Expected: FAIL on missing `DramaticState`, semantic event classes, and reducer branches.
 
-- [ ] **Step 3: Add dramatic runtime models**
+- [x] **Step 3: Add dramatic runtime models**
 
 Add frozen models and attach `drama: DramaticState = Field(default_factory=DramaticState)` to `SessionState`:
 
@@ -496,7 +500,7 @@ class DramaticState(FrozenModel):
 
 Extend `CharacterRuntime` with `current_desire`, `current_fear`, `emotional_condition`, `judgment_of_protagonist`, `boundary_being_tested`, `relationship_event_ids`, `unresolved_obligation_ids`, and `turning_point_ids`, all defaulted for saved-state compatibility during development reset.
 
-- [ ] **Step 4: Add semantic event types**
+- [x] **Step 4: Add semantic event types**
 
 Extend `PlayerActionSelected` with optional kernel-copied choice meaning:
 
@@ -514,17 +518,17 @@ qualifies as a semantic cost only when both links are present and validated.
 
 Add `DramaticQuestionSet`, `StanceExpressed`, `StanceChallenged`, `RelationshipEventRecorded`, `RelationshipTurningPointReached`, `PromiseOpened`, `PromiseChanged`, `ObligationCreated`, `ObligationResolved`, `ConsequenceScheduled`, `ConsequenceRealized`, `CostIncurred`, and `ArcPressureAdvanced` to `StoryEvent`. Every evidence link is an explicit `*_event_id` or `*_event_ids` field.
 
-- [ ] **Step 5: Implement reducer branches and invariants**
+- [x] **Step 5: Implement reducer branches and invariants**
 
 Implement copy-on-write transitions. Enforce unknown character rejection, unique IDs, valid lifecycle transitions, matching stance keys, one-time turning points, unresolved-obligation membership, and monotonic `approach -> fracture -> accountability` progression. Increment `drama.decision_count` on `PlayerActionSelected`.
 
-- [ ] **Step 6: Run state tests and verify GREEN**
+- [x] **Step 6: Run state tests and verify GREEN**
 
 Run: `cd backend && uv run pytest tests/test_story_state.py tests/test_story_reducer.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 ```bash
 git add backend/src/story/state backend/tests/test_story_state.py backend/tests/test_story_reducer.py
@@ -538,7 +542,7 @@ git commit -m "feat: add replayable dramatic authority"
 - Create: `backend/tests/test_semantic_derivation.py`
 - Modify: `backend/src/story/state/__init__.py`
 
-- [ ] **Step 1: Write failing turning-point derivation tests**
+- [x] **Step 1: Write failing turning-point derivation tests**
 
 ```python
 def test_turning_point_requires_all_tags_and_distinct_choices():
@@ -576,7 +580,7 @@ def test_turning_point_is_not_derived_after_it_was_reached():
     assert derive_relationship_turning_points((definition(),), trace) == ()
 ```
 
-- [ ] **Step 2: Write failing cost derivation association tests**
+- [x] **Step 2: Write failing cost derivation association tests**
 
 ```python
 def test_relationship_loss_derives_cost_for_same_choice_and_category():
@@ -624,13 +628,13 @@ def test_obligation_cost_uses_pack_burden_not_model_severity():
     assert cost.category == "responsibility"
 ```
 
-- [ ] **Step 3: Run derivation tests and verify RED**
+- [x] **Step 3: Run derivation tests and verify RED**
 
 Run: `cd backend && uv run pytest tests/test_semantic_derivation.py -q`
 
 Expected: FAIL because the module and derivation functions do not exist.
 
-- [ ] **Step 4: Implement focused pure derivation helpers**
+- [x] **Step 4: Implement focused pure derivation helpers**
 
 Implement:
 
@@ -676,13 +680,13 @@ def derive_relationship_turning_points(
 
 Implement `derive_cost_incurred()` so relationship loss requires `delta < 0`, a semantic relationship event, matching character, matching relationship-event ID, and the same source choice on every input. Severity is `min(3, abs(delta) // 5)`. Obligation cost requires the same source choice and copies `burden`. Both require `accepted_cost_category` on the selected choice and copy it exactly into `CostIncurred`.
 
-- [ ] **Step 5: Run derivation tests and verify GREEN**
+- [x] **Step 5: Run derivation tests and verify GREEN**
 
 Run: `cd backend && uv run pytest tests/test_semantic_derivation.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 3**
+- [x] **Step 6: Commit Task 3**
 
 ```bash
 git add backend/src/story/state/semantic_derivation.py backend/src/story/state/__init__.py backend/tests/test_semantic_derivation.py
@@ -698,7 +702,7 @@ git commit -m "feat: derive dramatic costs and turning points"
 - Modify: `backend/src/story/storage/event_store.py`
 - Modify: `backend/tests/test_story_event_store.py`
 
-- [ ] **Step 1: Write failing proposal-local resolution tests**
+- [x] **Step 1: Write failing proposal-local resolution tests**
 
 ```python
 def test_prepare_event_batch_resolves_forward_and_backward_local_refs():
@@ -762,7 +766,7 @@ def test_prepare_event_batch_rejects_duplicate_local_refs():
         prepare_event_batch("s1", 0, duplicate_ref_proposals())
 ```
 
-- [ ] **Step 2: Write failing preallocated store tests**
+- [x] **Step 2: Write failing preallocated store tests**
 
 ```python
 def test_append_envelopes_preserves_preallocated_ids(tmp_path):
@@ -788,13 +792,13 @@ def test_append_envelopes_rejects_invalid_preallocated_batch(tmp_path, mutation)
     assert store.event_count("session_01") == 0
 ```
 
-- [ ] **Step 3: Run batch/store tests and verify RED**
+- [x] **Step 3: Run batch/store tests and verify RED**
 
 Run: `cd backend && uv run pytest tests/test_event_batch.py tests/test_story_event_store.py -q`
 
 Expected: FAIL because `ProposedEvent`, `prepare_event_batch`, and `append_envelopes` do not exist.
 
-- [ ] **Step 4: Implement structured event-reference resolution**
+- [x] **Step 4: Implement structured event-reference resolution**
 
 Create:
 
@@ -839,17 +843,17 @@ def prepare_event_batch(
 
 Implement `_resolve_event_references()` through `model_dump(mode="python")` recursion, resolving only fields named `*_event_id` and `*_event_ids`, then reconstructing the event with `type(event).model_validate(data)`. A reference is valid only when it is a known local ref or an explicitly supplied committed event ID.
 
-- [ ] **Step 5: Implement `StoryEventStore.append_envelopes`**
+- [x] **Step 5: Implement `StoryEventStore.append_envelopes`**
 
 Validate non-empty input, matching session IDs, contiguous sequences beginning at `expected_revision + 1`, and unique event IDs before `apply_events`. Persist the supplied envelopes unchanged in the existing immediate SQLite transaction. Refactor `append()` to allocate ordinary envelopes and delegate to the same private transactional path.
 
-- [ ] **Step 6: Run batch/store tests and verify GREEN**
+- [x] **Step 6: Run batch/store tests and verify GREEN**
 
 Run: `cd backend && uv run pytest tests/test_event_batch.py tests/test_story_event_store.py -q`
 
 Expected: PASS, including forward-reference resolution and atomic rollback tests.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```bash
 git add backend/src/story/state/event_batch.py backend/src/story/state/__init__.py backend/src/story/storage/event_store.py backend/tests/test_event_batch.py backend/tests/test_story_event_store.py
@@ -864,7 +868,7 @@ git commit -m "feat: preallocate semantic event batches"
 - Replace: `backend/tests/test_completion_judge.py`
 - Modify: `backend/tests/test_turn_orchestrator.py`
 
-- [ ] **Step 1: Write failing recursive leaf tests**
+- [x] **Step 1: Write failing recursive leaf tests**
 
 Build a trace whose evidence occurs across early and terminal turns, then assert:
 
@@ -895,21 +899,21 @@ def test_judge_evaluates_recursive_requirements_from_complete_history():
 
 Add isolated tests for all five leaves, nested `all`/`any`, unsatisfied branches, obligation burden, and stance defense ordering.
 
-- [ ] **Step 2: Add the unrelated-cost regression test**
+- [x] **Step 2: Add the unrelated-cost regression test**
 
 Create a trace where `choice-1` declares category `alice_safety`, but `CostIncurred` references `choice-2` or category `bob_trust`. Assert `cost_incurred` and `stance_defended` are unsatisfied. This is a mandatory review finding: no unrelated relationship loss may satisfy the chosen risk.
 
-- [ ] **Step 3: Add the legacy orchestrator full-history regression test**
+- [x] **Step 3: Add the legacy orchestrator full-history regression test**
 
 Persist an early `FactCommitted` and `FactRevealed`, then invoke the terminal branch with a final batch that contains only the ending. Assert the completion judge receives persisted envelopes plus the final pending envelopes, in sequence order.
 
-- [ ] **Step 4: Run completion/orchestrator tests and verify RED**
+- [x] **Step 4: Run completion/orchestrator tests and verify RED**
 
 Run: `cd backend && uv run pytest tests/test_completion_judge.py tests/test_turn_orchestrator.py -q`
 
 Expected: FAIL because the judge still reads `evidence_hints` and the orchestrator passes only the terminal batch.
 
-- [ ] **Step 5: Implement recursive deterministic evaluation**
+- [x] **Step 5: Implement recursive deterministic evaluation**
 
 Implement a private result type and evaluator:
 
@@ -950,7 +954,7 @@ def _evaluate_node(
 
 For `any`, select the first satisfied branch in authored order. Deduplicate citations while preserving event order. Defensively validate that a cost's selected choice exists, the cost category equals `PlayerActionSelected.accepted_cost_category`, and every effect event exists. For stance defense, require an earlier established event for the same key, challenges strictly between establishment and reinforcement, and a qualifying cost whose `source_choice_event_id` equals the reinforcement's source choice.
 
-- [ ] **Step 6: Pass complete history from the legacy terminal caller**
+- [x] **Step 6: Pass complete history from the legacy terminal caller**
 
 In the ending branch, use:
 
@@ -965,13 +969,13 @@ completion_result = self.completion_judge.evaluate(
 
 This is a compatibility fix only; the new drama turn service remains a later plan.
 
-- [ ] **Step 7: Run completion/orchestrator tests and verify GREEN**
+- [x] **Step 7: Run completion/orchestrator tests and verify GREEN**
 
 Run: `cd backend && uv run pytest tests/test_completion_judge.py tests/test_turn_orchestrator.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 5**
+- [x] **Step 8: Commit Task 5**
 
 ```bash
 git add backend/src/story/runtime/completion_judge.py backend/src/story/runtime/turn_orchestrator.py backend/tests/test_completion_judge.py backend/tests/test_turn_orchestrator.py
@@ -985,7 +989,7 @@ git commit -m "feat: judge completion from full semantic history"
 - Modify: `backend/tests/test_script_pack_v2.py`
 - Modify: `backend/tests/test_cafe_mystery_pack.py`
 
-- [ ] **Step 1: Write failing real-Pack assertions**
+- [x] **Step 1: Write failing real-Pack assertions**
 
 ```python
 def test_cafe_mystery_declares_dramatic_kernel_vocabulary():
@@ -1016,13 +1020,13 @@ def test_cafe_mystery_targets_vertical_slice_bounds():
     assert source.experience.max_scenes == 14
 ```
 
-- [ ] **Step 2: Run real-Pack tests and verify RED**
+- [x] **Step 2: Run real-Pack tests and verify RED**
 
 Run: `cd backend && uv run pytest tests/test_script_pack_v2.py tests/test_cafe_mystery_pack.py -q`
 
 Expected: FAIL because the Pack still uses evidence hints, lacks dramatic vocabulary, and targets 120 minutes/60 scenes.
 
-- [ ] **Step 3: Migrate `pack.yaml`**
+- [x] **Step 3: Migrate `pack.yaml`**
 
 Set `expected_minutes: 45`, `min_scenes: 8`, `max_scenes: 14`, and keep three reserved resolution scenes. Add opening-only conflict axes, finite relationship tags, the three approved turning points, and obligation kinds with burdens 1-3. Add latent fact `notebook_disappearance_cause` with authored possible causes and evidence requirement 2.
 
@@ -1051,13 +1055,13 @@ completion_requirements:
 
 Do not add activation conditions, scene beats, deadlines, future actions, or payoff instructions to Pack declarations.
 
-- [ ] **Step 4: Run real-Pack tests and verify GREEN**
+- [x] **Step 4: Run real-Pack tests and verify GREEN**
 
 Run: `cd backend && uv run pytest tests/test_script_pack_v2.py tests/test_cafe_mystery_pack.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Run format, lint, and deterministic kernel regression suites**
+- [x] **Step 5: Run format, lint, and deterministic kernel regression suites**
 
 Run:
 
@@ -1081,13 +1085,13 @@ uv run pytest \
 
 Expected: all commands exit 0.
 
-- [ ] **Step 6: Run the complete non-live backend suite**
+- [x] **Step 6: Run the complete non-live backend suite**
 
 Run: `cd backend && uv run pytest -m "not live" -q`
 
 Expected: PASS. Live provider tests remain outside this deterministic-kernel milestone.
 
-- [ ] **Step 7: Commit Task 6**
+- [x] **Step 7: Commit Task 6**
 
 ```bash
 git add backend/script_packs/cafe_mystery/pack.yaml backend/tests/test_script_pack_v2.py backend/tests/test_cafe_mystery_pack.py
