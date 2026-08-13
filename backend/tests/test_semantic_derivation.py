@@ -147,6 +147,33 @@ def test_turning_point_is_not_derived_after_it_was_reached():
     assert derive_relationship_turning_points((_definition(),), trace) == ()
 
 
+def test_turning_point_evidence_preserves_history_order_with_extra_matches():
+    trace = (
+        _envelope(
+            "r3",
+            1,
+            _relationship_event(
+                tag="accepted_truth",
+                source_choice_event_id="choice-2",
+                scene_event_id="scene-2",
+            ),
+        ),
+        _envelope("r1", 2, _relationship_event()),
+        _envelope(
+            "r2",
+            3,
+            _relationship_event(
+                source_choice_event_id="choice-3",
+                scene_event_id="scene-3",
+            ),
+        ),
+    )
+
+    events = derive_relationship_turning_points((_definition(),), trace)
+
+    assert events[0].relationship_event_ids == ("r3", "r1", "r2")
+
+
 def test_relationship_loss_derives_cost_for_same_choice_and_category():
     choice = _costly_choice()
     change = RelationshipChanged(
@@ -228,6 +255,31 @@ def test_relationship_change_smaller_than_five_is_not_a_cost():
     )
 
 
+def test_positive_relationship_change_is_not_a_cost():
+    change = RelationshipChanged(
+        character_id="bob",
+        axis="trust",
+        delta=10,
+        source_choice_event_id="choice-1",
+        relationship_event_id="relationship-1",
+    )
+
+    assert (
+        derive_cost_incurred(
+            "choice-1",
+            _costly_choice(),
+            "effect-1",
+            change,
+            _envelope(
+                "relationship-1",
+                2,
+                _relationship_event(character_id="bob"),
+            ),
+        )
+        is None
+    )
+
+
 def test_unrelated_relationship_loss_cannot_satisfy_choice_cost():
     change = RelationshipChanged(
         character_id="bob",
@@ -248,6 +300,31 @@ def test_unrelated_relationship_loss_cannot_satisfy_choice_cost():
                 2,
                 _relationship_event(character_id="bob"),
             ),
+        )
+        is None
+    )
+
+
+def test_relationship_cost_requires_semantic_event_from_same_choice():
+    change = RelationshipChanged(
+        character_id="bob",
+        axis="trust",
+        delta=-10,
+        source_choice_event_id="choice-1",
+        relationship_event_id="relationship-1",
+    )
+    semantic = _relationship_event(
+        character_id="bob",
+        source_choice_event_id="choice-2",
+    )
+
+    assert (
+        derive_cost_incurred(
+            "choice-1",
+            _costly_choice(),
+            "effect-1",
+            change,
+            _envelope("relationship-1", 2, semantic),
         )
         is None
     )
@@ -336,12 +413,31 @@ def test_obligation_cost_uses_pack_burden_not_model_severity():
     )
 
 
-def test_obligation_cost_requires_same_choice_and_declared_kind():
+def test_obligation_cost_requires_same_choice():
     obligation = ObligationCreated(
         obligation_id="secret-1",
         kind="keep_secret",
         burden=2,
         source_choice_event_id="choice-2",
+    )
+
+    assert (
+        derive_cost_incurred(
+            "choice-1",
+            _costly_choice("responsibility", obligation_kind="keep_secret"),
+            "obligation-1",
+            obligation,
+        )
+        is None
+    )
+
+
+def test_obligation_cost_requires_declared_kind():
+    obligation = ObligationCreated(
+        obligation_id="secret-1",
+        kind="keep_secret",
+        burden=2,
+        source_choice_event_id="choice-1",
     )
 
     assert (
