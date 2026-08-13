@@ -76,7 +76,6 @@ def _build_live_app(tmp_path: Path):
     deps = AppDependencies(
         store=store,
         registry=registry,
-        runtime=None,
         orchestrator=orchestrator,
     )
     return create_app(deps)

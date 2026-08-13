@@ -1,0 +1,3 @@
+# Make Studio the Authoring Interface
+
+The first authoring audience is non-programmer Galgame writers who can work with structured dramatic concepts but should not need to write YAML, identifiers, numeric thresholds, or condition expressions. Studio is the supported creation, validation, simulation, asset, and playtest interface; it exports and imports a portable, versionable Script Pack artifact. An Authoring Assistant may propose reviewable diffs but cannot silently modify or publish a Work. This commits the project to a real author workflow rather than treating an engine configuration file as the product.

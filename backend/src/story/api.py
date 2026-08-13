@@ -24,7 +24,6 @@ from src.story.projection import (
 )
 from src.story.runtime.config import OpenCodeGoSettings
 from src.story.runtime.contracts import (
-    ActionResult,
     DecisionRequired,
     InvalidChoice,
     PackMismatch,
@@ -35,15 +34,12 @@ from src.story.runtime.contracts import (
 from src.story.runtime.model import build_model_bundle
 from src.story.runtime.pack_cache import PackCache
 from src.story.runtime.planner import SdkPlanner
-from src.story.runtime.pregeneration import PreGenerationManager
 from src.story.runtime.segment_contracts import (
     DirectorPort,
     GuardPort,
     SegmentWriterPort,
 )
-from src.story.runtime.service import RuntimeService
 from src.story.runtime.turn_orchestrator import TurnOrchestrator
-from src.story.runtime.writer import SdkWriter
 from src.story.script_pack import PackCompileError, compile_script_pack
 from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import initial_session_state
@@ -75,13 +71,12 @@ class ScriptPackRegistry:
 class AppDependencies:
     store: StoryEventStore
     registry: ScriptPackRegistry
-    runtime: RuntimeService | None = None
     orchestrator: TurnOrchestrator | None = None
     director: DirectorPort | None = None
     segment_writer: SegmentWriterPort | None = None
     guard: GuardPort | None = None
     pack_cache: PackCache | None = None
-    pregen_manager: PreGenerationManager | None = None
+    semantic_judge: object | None = None
 
 
 def default_dependencies() -> AppDependencies:
@@ -93,28 +88,17 @@ def default_dependencies() -> AppDependencies:
     from src.story.runtime.director import SdkDirector
     from src.story.runtime.guard import Guard
     from src.story.runtime.pack_cache import PackCache
-    from src.story.runtime.pregeneration import PreGenerationManager
     from src.story.runtime.segment_writer import SdkSegmentWriter
-    from src.story.runtime.stream_writer import StreamingSceneGenerator
+    from src.story.runtime.semantic_judge import SdkSemanticJudge
 
-    runtime = RuntimeService(
-        store,
-        SdkPlanner(bundle.model),
-        SdkWriter(bundle.model),
-        StreamingSceneGenerator(bundle.client, settings.model),
-    )
     director = SdkDirector(bundle.model)
     segment_writer = SdkSegmentWriter(bundle.model)
     guard = Guard()
     from src.story.runtime.unified_segment import SdkUnifiedSegmentAgent
 
     unified_agent = SdkUnifiedSegmentAgent(bundle.model)
+    semantic_judge = SdkSemanticJudge(bundle.model)
     pack_cache = PackCache(Path(os.getenv("GAL_PACK_CACHE_ROOT", "data/pack_cache")))
-    pregen_manager = PreGenerationManager(
-        planner=SdkPlanner(bundle.model),
-        unified_agent=unified_agent,
-        guard=Guard(),
-    )
     orchestrator = TurnOrchestrator(
         store,
         director,
@@ -124,33 +108,23 @@ def default_dependencies() -> AppDependencies:
         planner=SdkPlanner(bundle.model),
         unified_agent=unified_agent,
         pack_cache=pack_cache,
-        pregen_manager=pregen_manager,
+        semantic_judge=semantic_judge,
     )
     return AppDependencies(
         store=store,
         registry=registry,
-        runtime=runtime,
         orchestrator=orchestrator,
         director=director,
         segment_writer=segment_writer,
         guard=guard,
         pack_cache=pack_cache,
-        pregen_manager=pregen_manager,
+        semantic_judge=semantic_judge,
     )
 
 
 class CreateSessionRequest(BaseModel):
     pack_id: str
     session_seed: int
-
-
-class RevisionRequest(BaseModel):
-    expected_revision: int = Field(ge=0)
-    idempotency_key: str = Field(min_length=1, max_length=120)
-
-
-class ChoiceRequest(RevisionRequest):
-    pass
 
 
 class TurnRequest(BaseModel):
@@ -215,83 +189,18 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
                 detail={"code": "invalid_script_pack"},
             ) from exc
         state = initial_session_state(pack, str(uuid4()), command.session_seed)
-        deps.store.create_session(state)
-        return project_session(state)
+        deps.store.create_session(state, pack=pack)
+        return project_session(state, pack=pack)
 
     @app.get("/api/v2/sessions/{session_id}", response_model=SessionProjection)
     async def get_session(session_id: str) -> SessionProjection:
-        return project_session(deps.store.load_session(session_id))
+        state = deps.store.load_session(session_id)
+        pack = deps.store.load_pack_version(state.pack_hash)
+        return project_session(state, pack=pack)
 
     @app.get("/api/v2/packs/{pack_id}", response_model=PackProjection)
     async def get_pack(pack_id: str) -> PackProjection:
         return project_pack(deps.registry.get(pack_id))
-
-    @app.post(
-        "/api/v2/sessions/{session_id}/advance",
-        response_class=StreamingResponse,
-    )
-    async def advance(session_id: str, command: RevisionRequest):
-        if deps.runtime is None:
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "runtime_not_configured"},
-            )
-        state = deps.store.load_session(session_id)
-        pack = deps.registry.get(state.pack_id)
-
-        async def event_stream():
-            try:
-                async for event_type, data in deps.runtime.advance_streamed(
-                    pack,
-                    session_id,
-                    command.expected_revision,
-                    command.idempotency_key,
-                ):
-                    yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-            except (RuntimeRevisionConflict, RevisionConflict):
-                yield _sse_error("revision_conflict")
-            except DecisionRequired:
-                yield _sse_error("decision_required")
-            except RuntimeSessionEnded:
-                yield _sse_error("session_ended")
-            except PackMismatch:
-                yield _sse_error("pack_mismatch")
-            except (OpenAIError, RuntimeGenerationUnavailable) as exc:
-                logger.warning("advance stream failed: %s", exc)
-                yield _sse_error("generation_unavailable")
-            except Exception:
-                logger.exception("advance stream unexpected error")
-                yield _sse_error("internal_error")
-
-        return StreamingResponse(
-            event_stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    @app.post(
-        "/api/v2/sessions/{session_id}/choices/{choice_id}",
-        response_model=ActionResult,
-    )
-    async def choose(
-        session_id: str,
-        choice_id: str,
-        command: ChoiceRequest,
-    ) -> ActionResult:
-        if deps.runtime is None:
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "runtime_not_configured"},
-            )
-        state = deps.store.load_session(session_id)
-        pack = deps.registry.get(state.pack_id)
-        return await deps.runtime.select_choice(
-            pack,
-            session_id,
-            choice_id,
-            command.expected_revision,
-            command.idempotency_key,
-        )
 
     @app.post(
         "/api/v2/sessions/{session_id}/turns",
@@ -303,7 +212,8 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
                 status_code=503,
                 detail={"code": "turn_orchestrator_not_configured"},
             )
-        pack = deps.registry.get(deps.store.load_session(session_id).pack_id)
+        state = deps.store.load_session(session_id)
+        pack = deps.store.load_pack_version(state.pack_hash)
 
         async def event_stream():
             try:
@@ -319,6 +229,8 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
                 yield _sse_error("revision_conflict")
             except DecisionRequired:
                 yield _sse_error("decision_required")
+            except InvalidChoice:
+                yield _sse_error("invalid_choice")
             except RuntimeSessionEnded:
                 yield _sse_error("session_ended")
             except PackMismatch:
@@ -341,10 +253,8 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
 
 __all__ = [
     "AppDependencies",
-    "ChoiceRequest",
     "CreateSessionRequest",
     "PackNotFound",
-    "RevisionRequest",
     "ScriptPackRegistry",
     "TurnRequest",
     "create_app",

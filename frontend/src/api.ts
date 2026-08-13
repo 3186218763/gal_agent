@@ -28,6 +28,7 @@ export interface SessionProjection {
   phase: string
   scene_count: number
   pending_decision_id: string | null
+  pending_consequence_status?: 'awaiting_resolution' | null
   scene_id: string | null
   blocks: NarrativeBlock[]
   choices: PresentedChoice[]
@@ -70,13 +71,6 @@ export interface PackProjection {
   language: string
   characters: PackCharacterProjection[]
   locations: PackLocationProjection[]
-}
-
-export interface ActionResult {
-  session_id: string
-  revision: number
-  action_id: string
-  outcome: string
 }
 
 export class ApiError extends Error {
@@ -139,19 +133,6 @@ export function fetchPack(packId: string): Promise<PackProjection> {
   return request<PackProjection>(`/api/v2/packs/${packId}`, { method: 'GET' })
 }
 
-export function choose(
-  sessionId: string,
-  choiceId: string,
-  expectedRevision: number,
-  idempotencyKey: string,
-): Promise<ActionResult> {
-  return request<ActionResult>(`/api/v2/sessions/${sessionId}/choices/${choiceId}`, {
-    method: 'POST',
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ expected_revision: expectedRevision, idempotency_key: idempotencyKey }),
-  })
-}
-
 export function newCommandId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -161,11 +142,6 @@ export function newCommandId(): string {
 
 export function newSessionSeed(): number {
   return Math.floor(Math.random() * 2 ** 31)
-}
-
-/** Build the full URL for the SSE advance endpoint (used by stream.ts). */
-export function advanceUrl(sessionId: string): string {
-  return apiPath(`/api/v2/sessions/${sessionId}/advance`)
 }
 
 /** Build the full URL for the segment turn SSE endpoint (used by stream.ts). */

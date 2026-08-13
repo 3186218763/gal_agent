@@ -1,3 +1,9 @@
+"""V2 API contract tests: sessions, projections, and the /turns route.
+
+The legacy mutation routes (``/advance``, ``/choices/{id}``) are deleted;
+``/turns`` is the one production mutation interface.
+"""
+
 from __future__ import annotations
 
 import json
@@ -8,37 +14,19 @@ from typing import Any
 import pytest
 import yaml
 from fastapi.testclient import TestClient
-from openai import OpenAIError
 
 from src.story.api import AppDependencies, ScriptPackRegistry, create_app
+from src.story.runtime.completion_judge import CompletionJudge
 from src.story.runtime.config import ConfigurationError
-from src.story.runtime.contracts import ModelContractError, StreamingGeneratorPort
-from src.story.runtime.service import RuntimeService
-from src.story.state import initial_session_state
+from src.story.runtime.turn_orchestrator import TurnOrchestrator
 from src.story.storage import StoryEventStore
 from tests.fakes import (
+    FakeDirector,
+    FakeGuard,
     FakePlanner,
-    FakeStreamingGenerator,
-    FakeWriter,
+    FakeSegmentWriter,
+    budget_test_pack_dict,
 )
-from tests.story_factories import minimal_script_pack_dict
-
-# ---------------------------------------------------------------------------
-# Test-specific fakes (not shared)
-# ---------------------------------------------------------------------------
-
-
-class ProviderFailingGenerator:
-    async def generate_scene(self, pack, state):
-        raise OpenAIError("provider secret token leaked")
-        yield  # type: ignore[unreachable]
-
-
-class ContractFailingGenerator:
-    async def generate_scene(self, pack, state):
-        raise ModelContractError("planner contract failed")
-        yield  # type: ignore[unreachable]
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -50,28 +38,25 @@ def write_test_pack(root: Path) -> Path:
     pack_dir = packs_root / "test_pack"
     pack_dir.mkdir(parents=True)
     (pack_dir / "pack.yaml").write_text(
-        yaml.safe_dump(minimal_script_pack_dict(), allow_unicode=True, sort_keys=False),
+        yaml.safe_dump(budget_test_pack_dict(), allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
     return packs_root
 
 
-def build_test_dependencies(
-    tmp_path: Path,
-    planner=None,
-    writer=None,
-    generator: StreamingGeneratorPort | None = None,
-) -> AppDependencies:
+def build_test_dependencies(tmp_path: Path, planner=None) -> AppDependencies:
     packs_root = write_test_pack(tmp_path)
     store = StoryEventStore(tmp_path / "story.db")
     registry = ScriptPackRegistry(packs_root)
-    runtime = RuntimeService(
-        store,
-        planner if planner is not None else FakePlanner(),
-        writer if writer is not None else FakeWriter(),
-        generator if generator is not None else FakeStreamingGenerator(),
+    orchestrator = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=planner if planner is not None else FakePlanner(),
     )
-    return AppDependencies(store=store, registry=registry, runtime=runtime)
+    return AppDependencies(store=store, registry=registry, orchestrator=orchestrator)
 
 
 def _parse_sse_lines(response) -> list[tuple[str, dict]]:
@@ -93,37 +78,38 @@ def _parse_sse_lines(response) -> list[tuple[str, dict]]:
     return events
 
 
-def _sse_advance(client: TestClient, session_id: str, revision: int, key: str) -> dict[str, Any]:
-    """Call the SSE advance endpoint and return a dict similar to the old JSON response."""
+def _sse_turn(
+    client: TestClient,
+    session_id: str,
+    revision: int,
+    key: str,
+    choice_id: str | None = None,
+) -> list[tuple[str, dict]]:
+    """POST /turns and return parsed SSE events."""
     with client.stream(
         "POST",
-        f"/api/v2/sessions/{session_id}/advance",
-        json={"expected_revision": revision, "idempotency_key": key},
+        f"/api/v2/sessions/{session_id}/turns",
+        json={
+            "expected_revision": revision,
+            "idempotency_key": key,
+            "choice_id": choice_id,
+        },
     ) as resp:
-        raw_text = resp.read().decode()
-        events = _parse_sse_lines(resp)
+        assert resp.status_code == 200
+        return _parse_sse_lines(resp)
 
-    result: dict[str, Any] = {"blocks": [], "choices": [], "_raw": raw_text}
+
+def _turn_result(events) -> dict[str, Any]:
+    """Flatten an SSE turn into {revision, choices, error, ...}."""
+    result: dict[str, Any] = {"blocks": [], "choices": [], "events": events}
     for evt_type, data in events:
         if evt_type == "block":
             result["blocks"].append(data)
-        elif evt_type == "choices":
-            result["choices"] = data
-        elif evt_type == "done":
+        elif evt_type == "segment_ready":
             result.update(data)
         elif evt_type == "error":
             result["error"] = data["code"]
     return result
-
-
-def _sse_advance_raw(client: TestClient, session_id: str, revision: int, key: str) -> str:
-    """Return the raw SSE response text for inspection."""
-    with client.stream(
-        "POST",
-        f"/api/v2/sessions/{session_id}/advance",
-        json={"expected_revision": revision, "idempotency_key": key},
-    ) as resp:
-        return resp.read().decode()
 
 
 # ---------------------------------------------------------------------------
@@ -138,20 +124,19 @@ def client(tmp_path: Path) -> TestClient:
 
 @pytest.fixture
 def _decision_bundle(tmp_path: Path) -> tuple[TestClient, SimpleNamespace]:
-    app = create_app(build_test_dependencies(tmp_path))
-    http = TestClient(app)
+    http = TestClient(create_app(build_test_dependencies(tmp_path)))
     created = http.post(
         "/api/v2/sessions",
         json={"pack_id": "test_pack", "session_seed": 11},
     )
     assert created.status_code == 201
     session_id = created.json()["session_id"]
-    scene = _sse_advance(http, session_id, 0, "req-00")
-    assert "error" not in scene
+    turn = _turn_result(_sse_turn(http, session_id, 0, "req-00"))
+    assert "error" not in turn
     session = SimpleNamespace(
         id=session_id,
-        revision=scene["revision"],
-        choices=scene["choices"],
+        revision=turn["revision"],
+        choices=turn["choices"],
     )
     return http, session
 
@@ -171,7 +156,7 @@ def decision_session(_decision_bundle) -> SimpleNamespace:
 # ---------------------------------------------------------------------------
 
 
-def test_create_advance_and_choose_v2_session(tmp_path: Path):
+def test_create_turn_and_choose_v2_session(tmp_path: Path):
     app = create_app(build_test_dependencies(tmp_path))
     client = TestClient(app)
     created = client.post(
@@ -181,19 +166,38 @@ def test_create_advance_and_choose_v2_session(tmp_path: Path):
     assert created.status_code == 201
     session_id = created.json()["session_id"]
 
-    scene = _sse_advance(client, session_id, 0, "req-00")
-    assert len(scene["choices"]) == 2
+    opening = _turn_result(_sse_turn(client, session_id, 0, "req-00"))
+    assert len(opening["choices"]) == 2
 
-    chosen = client.post(
-        f"/api/v2/sessions/{session_id}/choices/{scene['choices'][0]['id']}",
-        json={"expected_revision": scene["revision"], "idempotency_key": "req-01"},
-    )
-    assert chosen.status_code == 200
+    choice_id = opening["choices"][0]["id"]
+    followup = _turn_result(_sse_turn(client, session_id, opening["revision"], "req-01", choice_id))
+    assert "error" not in followup
+    assert followup["revision"] > opening["revision"]
 
 
 def test_v1_routes_are_gone(client: TestClient):
     assert client.post("/api/sessions", json={}).status_code == 404
     assert client.get("/api/sessions/example").status_code == 404
+
+
+def test_legacy_mutation_routes_are_gone(client: TestClient):
+    """The old production mutation surfaces must not exist."""
+    created = client.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 5})
+    session_id = created.json()["session_id"]
+    assert (
+        client.post(
+            f"/api/v2/sessions/{session_id}/advance",
+            json={"expected_revision": 0, "idempotency_key": "k"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/v2/sessions/{session_id}/choices/invented",
+            json={"expected_revision": 0, "idempotency_key": "k"},
+        ).status_code
+        == 404
+    )
 
 
 def test_unknown_pack_and_session_return_404(client: TestClient):
@@ -205,78 +209,79 @@ def test_unknown_pack_and_session_return_404(client: TestClient):
 
 
 # ---------------------------------------------------------------------------
-# Tests: choice endpoint (unchanged JSON)
+# Tests: choice turn errors
 # ---------------------------------------------------------------------------
 
 
-def test_unoffered_choice_returns_422(
+def test_unoffered_choice_yields_invalid_choice_event(
     decision_client: TestClient, decision_session: SimpleNamespace
 ):
-    response = decision_client.post(
-        f"/api/v2/sessions/{decision_session.id}/choices/invented",
-        json={
-            "expected_revision": decision_session.revision,
-            "idempotency_key": "bad-01",
-        },
+    events = _sse_turn(
+        decision_client,
+        decision_session.id,
+        decision_session.revision,
+        "bad-01",
+        "invented",
+    )
+    assert any(t == "error" and d["code"] == "invalid_choice" for t, d in events)
+
+
+def test_stale_revision_yields_revision_conflict_event(
+    decision_client: TestClient, decision_session: SimpleNamespace
+):
+    choice_id = decision_session.choices[0]["id"]
+    events = _sse_turn(
+        decision_client,
+        decision_session.id,
+        0,
+        "stale-01",
+        choice_id,
+    )
+    assert any(t == "error" and d["code"] == "revision_conflict" for t, d in events)
+
+
+def test_decision_required_when_opening_with_pending_decision(
+    decision_client: TestClient, decision_session: SimpleNamespace
+):
+    """Opening with a pending decision must not generate a new segment."""
+    events = _sse_turn(
+        decision_client,
+        decision_session.id,
+        decision_session.revision,
+        "open-again",
+    )
+    assert any(t == "error" and d["code"] == "decision_required" for t, d in events)
+
+
+# ---------------------------------------------------------------------------
+# Tests: /turns SSE failure semantics
+# ---------------------------------------------------------------------------
+
+
+def test_turn_requires_idempotency_key(client: TestClient):
+    created = client.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1})
+    session_id = created.json()["session_id"]
+    response = client.post(
+        f"/api/v2/sessions/{session_id}/turns",
+        json={"expected_revision": 0, "choice_id": None},
     )
     assert response.status_code == 422
-    assert response.json() == {"detail": {"code": "invalid_choice"}}
 
 
-def test_stale_revision_returns_409(decision_client: TestClient, decision_session: SimpleNamespace):
-    choice_id = decision_session.choices[0]["id"]
-    response = decision_client.post(
-        f"/api/v2/sessions/{decision_session.id}/choices/{choice_id}",
-        json={"expected_revision": 0, "idempotency_key": "stale-01"},
-    )
-    assert response.status_code == 409
-    assert response.json() == {"detail": {"code": "command_conflict"}}
-
-
-# ---------------------------------------------------------------------------
-# Tests: advance SSE error handling
-# ---------------------------------------------------------------------------
-
-
-def test_pending_decision_returns_error_event(
-    decision_client: TestClient, decision_session: SimpleNamespace
-):
-    """Advancing when a decision is pending yields an SSE error event."""
-    result = _sse_advance(
-        decision_client, decision_session.id, decision_session.revision, "advance-09"
-    )
-    assert result["error"] == "decision_required"
-
-
-def test_provider_failure_sends_generation_error(tmp_path: Path):
-    deps = build_test_dependencies(tmp_path, generator=ProviderFailingGenerator())
-    pack = deps.registry.get("test_pack")
-    state = initial_session_state(pack, "session_01", session_seed=1)
-    deps.store.create_session(state)
-    http = TestClient(create_app(deps))
-
-    raw = _sse_advance_raw(http, "session_01", 0, "provider-advance")
-    assert "generation_unavailable" in raw
-    assert "secret" not in raw
-
-
-def test_generation_contract_failure_is_retryable_and_redacted(tmp_path: Path):
-    deps = build_test_dependencies(tmp_path, generator=ContractFailingGenerator())
-    http = TestClient(create_app(deps))
-    created = http.post(
-        "/api/v2/sessions",
-        json={"pack_id": "test_pack", "session_seed": 13},
-    )
-    assert created.status_code == 201
+def test_repeated_turn_with_same_key_replays_identical_events(tmp_path: Path):
+    app = create_app(build_test_dependencies(tmp_path))
+    http = TestClient(app)
+    created = http.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 2})
     session_id = created.json()["session_id"]
+    first = _turn_result(_sse_turn(http, session_id, 0, "turn-1"))
+    replay = _turn_result(_sse_turn(http, session_id, 0, "turn-1"))
 
-    result = _sse_advance(http, session_id, 0, "advance-1")
-    assert result["error"] == "generation_unavailable"
-    assert "contract failed" not in result["_raw"]
+    assert replay["revision"] == first["revision"]
+    assert [b["text"] for b in replay["blocks"]] == [b["text"] for b in first["blocks"]]
+    assert replay["choices"] == first["choices"]
 
-    loaded = http.get(f"/api/v2/sessions/{session_id}")
-    assert loaded.status_code == 200
-    assert loaded.json()["revision"] == 0
+    session = http.get(f"/api/v2/sessions/{session_id}").json()
+    assert session["revision"] == first["revision"]
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +311,8 @@ def test_default_dependencies_include_segment_pipeline(monkeypatch, tmp_path):
 
     fields = {f.name for f in dataclasses.fields(AppDependencies)}
     assert {"orchestrator", "director", "segment_writer", "guard"} <= fields
+    assert "runtime" not in fields
+    assert "pregen_manager" not in fields
 
     class FakeModel(Model):
         async def get_response(self, *args: Any, **kwargs: Any) -> Any:
@@ -372,64 +379,6 @@ def test_get_session_returns_created_state(tmp_path: Path):
     assert body["pack_id"] == "test_pack"
     assert body["revision"] == 0
     assert body["status"] == "active"
-
-
-def test_get_session_keeps_ending_title_and_epilogue_after_end(tmp_path: Path):
-    packs_root = write_test_pack(tmp_path)
-    pack_yaml = packs_root / "test_pack" / "pack.yaml"
-    raw = yaml.safe_load(pack_yaml.read_text(encoding="utf-8"))
-    for ending in raw["endings"]:
-        if ending["type"] == "fallback":
-            ending["id"] = "safe_exit"
-    pack_yaml.write_text(
-        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    store = StoryEventStore(tmp_path / "story.db")
-    registry = ScriptPackRegistry(packs_root)
-    runtime = RuntimeService(store, FakePlanner(), FakeWriter(), FakeStreamingGenerator())
-    pack = registry.get("test_pack")
-    state = initial_session_state(pack, "session_ending", session_seed=9)
-    world = state.world.model_copy(update={"scene_count": state.world.max_scenes})
-    store.create_session(state.model_copy(update={"world": world}))
-    http = TestClient(create_app(AppDependencies(store=store, registry=registry, runtime=runtime)))
-
-    scene = _sse_advance(http, "session_ending", 0, "ending-advance")
-    assert scene["ending_id"] == "safe_exit"
-    assert scene["ending_title"] == "Closing Time"
-    assert scene["blocks"][0]["text"] == "Ending: Closing Time"
-
-    loaded = http.get("/api/v2/sessions/session_ending")
-    assert loaded.status_code == 200
-    body = loaded.json()
-    assert body["status"] == "ended"
-    assert body["ending_id"] == "safe_exit"
-    assert body["ending_title"] == "Closing Time"
-    assert body["blocks"][0]["text"] == "Ending: Closing Time"
-    assert body["scene_id"] is None
-
-
-def test_advance_requires_idempotency_key(client: TestClient):
-    created = client.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 1})
-    session_id = created.json()["session_id"]
-    response = client.post(f"/api/v2/sessions/{session_id}/advance", json={"expected_revision": 0})
-    assert response.status_code == 422
-
-
-def test_repeated_advance_with_same_key_replays_identical_events(tmp_path: Path):
-    app = create_app(build_test_dependencies(tmp_path))
-    http = TestClient(app)
-    created = http.post("/api/v2/sessions", json={"pack_id": "test_pack", "session_seed": 2})
-    session_id = created.json()["session_id"]
-    first = _sse_advance(http, session_id, 0, "advance-1")
-    replay = _sse_advance(http, session_id, 0, "advance-1")
-
-    assert replay["revision"] == first["revision"]
-    assert [b["text"] for b in replay["blocks"]] == [b["text"] for b in first["blocks"]]
-    assert replay["choices"] == first["choices"]
-
-    session = http.get(f"/api/v2/sessions/{session_id}").json()
-    assert session["revision"] == first["revision"]
 
 
 def test_get_session_returns_public_projection_without_internal_state(client: TestClient):

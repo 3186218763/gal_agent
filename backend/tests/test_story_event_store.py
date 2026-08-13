@@ -74,6 +74,29 @@ def test_create_and_load_initial_session(tmp_path: Path):
     assert store.event_count("session_01") == 0
 
 
+def test_session_can_persist_and_reload_its_exact_script_pack_version(tmp_path: Path):
+    store = StoryEventStore(tmp_path / "story.db")
+    pack = compile_source(minimal_script_pack_dict())
+    state = initial_session_state(pack, "versioned", session_seed=42)
+
+    store.create_session(state, pack=pack)
+    loaded_pack = store.load_pack_version(pack.pack_hash)
+
+    assert loaded_pack.pack_hash == pack.pack_hash
+    assert loaded_pack.source == pack.source
+
+
+def test_pack_version_hash_must_match_session(tmp_path: Path):
+    store = StoryEventStore(tmp_path / "story.db")
+    pack = compile_source(minimal_script_pack_dict())
+    state = initial_session_state(pack, "versioned", session_seed=42).model_copy(
+        update={"pack_hash": "0" * 64}
+    )
+
+    with pytest.raises(StoryStoreError, match="pack version"):
+        store.create_session(state, pack=pack)
+
+
 def test_append_assigns_sequences_and_replays_after_snapshot(tmp_path: Path):
     database = tmp_path / "story.db"
     store = StoryEventStore(database, snapshot_every=2)

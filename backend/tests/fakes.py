@@ -1,6 +1,6 @@
 """Consolidated test fakes for runtime agents.
 
-Used by test_runtime_service.py, test_streaming_api.py, test_v2_api.py,
+Used by test_v2_api.py, test_turns_api.py, test_turn_orchestrator.py,
 and test_story_cli_live.py.
 """
 
@@ -26,6 +26,7 @@ from src.story.runtime.segment_contracts import (
     SegmentDraft,
     SegmentPlan,
 )
+from src.story.runtime.semantic_judge import JudgeFindings
 from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import NarrativeBlock, SessionState
 
@@ -303,6 +304,33 @@ class FakeGuard:
         draft: SegmentDraft,
     ) -> GuardResult:
         return GuardResult(passed=True)
+
+
+class FakeSemanticJudge:
+    """Always-pass semantic judge; records every call for assertions."""
+
+    def __init__(self, findings: JudgeFindings | None = None) -> None:
+        self._findings = findings if findings is not None else JudgeFindings()
+        self.calls: list[dict[str, Any]] = []
+
+    async def judge_segment(
+        self,
+        pack: Any,
+        state: Any,
+        plan: SegmentPlan,
+        draft: SegmentDraft,
+        pending_choice=None,
+    ) -> JudgeFindings:
+        self.calls.append(
+            {
+                "pack": pack,
+                "state": state,
+                "plan": plan,
+                "draft": draft,
+                "pending_choice": pending_choice,
+            }
+        )
+        return self._findings
 
 
 class DeterministicGuard:

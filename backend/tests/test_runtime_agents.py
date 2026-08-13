@@ -13,7 +13,6 @@ from agents.models.interface import Model
 from src.story.runtime.contracts import (
     ActionResolution,
     ChoicePlan,
-    EndingDraft,
     ModelContractError,
     PlannerOutput,
     SceneDraft,
@@ -23,7 +22,6 @@ from src.story.runtime.contracts import (
 )
 from src.story.runtime.model import run_with_contract_retry
 from src.story.runtime.planner import SdkPlanner
-from src.story.runtime.writer import SdkWriter
 from src.story.script_pack import compile_source
 from src.story.state import NarrativeBlock, PresentedChoice, initial_session_state
 from tests.story_factories import minimal_script_pack_dict
@@ -110,17 +108,6 @@ def valid_writer_scene_output() -> WriterOutput:
     )
 
 
-def valid_writer_ending_output(ending_id: str = "ally_ending") -> WriterOutput:
-    return WriterOutput(
-        kind="ending",
-        ending=EndingDraft(
-            ending_id=ending_id,
-            title="Together",
-            blocks=(NarrativeBlock(kind="narration", text="They leave together."),),
-        ),
-    )
-
-
 def test_planner_and_writer_outputs_support_strict_json_schema():
     assert AgentOutputSchema(PlannerOutput).is_strict_json_schema() is True
     assert AgentOutputSchema(WriterOutput).is_strict_json_schema() is True
@@ -180,28 +167,6 @@ async def test_planner_uses_one_agent_for_scene_and_resolution(
     assert scene.scene_id == "scene_01"
     assert resolution.action_id == offered_choice.action_id
     assert planner.agent.model is shared_model
-
-
-@pytest.mark.asyncio
-async def test_writer_uses_same_model_instance(monkeypatch, shared_model, pack, state):
-    plan = valid_scene_plan()
-    ending = next(item for item in pack.source.endings if item.id == "ally_ending")
-
-    async def fake_run(agent, input):
-        payload = json.loads(input)
-        if payload["operation"] == "write_scene":
-            return SimpleNamespace(final_output=valid_writer_scene_output())
-        if payload["operation"] == "write_ending":
-            return SimpleNamespace(final_output=valid_writer_ending_output(ending.id))
-        raise AssertionError(f"unexpected operation: {payload['operation']}")
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    writer = SdkWriter(shared_model)
-    assert writer.agent.model is shared_model
-    draft = await writer.write_scene(pack, state, plan)
-    ending_draft = await writer.write_ending(pack, state, ending)
-    assert draft.scene_id == plan.scene_id
-    assert ending_draft.ending_id == ending.id
 
 
 @pytest.mark.asyncio

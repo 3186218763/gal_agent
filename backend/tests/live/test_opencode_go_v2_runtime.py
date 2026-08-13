@@ -12,13 +12,16 @@ from pathlib import Path
 import pytest
 from agents.models.openai_responses import OpenAIResponsesModel
 
+from src.story.runtime.completion_judge import CompletionJudge
 from src.story.runtime.config import OpenCodeGoSettings
 from src.story.runtime.contracts import ChoicePlan, ScenePlan
+from src.story.runtime.guard import Guard
 from src.story.runtime.model import build_model_bundle
 from src.story.runtime.planner import SdkPlanner
-from src.story.runtime.service import RuntimeService
+from src.story.runtime.segment_contracts import SegmentPlan
+from src.story.runtime.segment_writer import SdkSegmentWriter
+from src.story.runtime.turn_orchestrator import TurnOrchestrator
 from src.story.runtime.validator import validate_scene_plan
-from src.story.runtime.writer import SdkWriter
 from src.story.script_pack import compile_script_pack
 from src.story.state import initial_session_state
 from src.story.storage import StoryEventStore
@@ -35,7 +38,6 @@ async def test_deepseek_responses_runs_one_v2_choice_roundtrip(tmp_path):
     bundle = build_model_bundle(settings)
     assert isinstance(bundle.model, OpenAIResponsesModel)
     sdk_planner = SdkPlanner(bundle.model)
-    writer = SdkWriter(bundle.model)
     pack = compile_script_pack(Path("script_packs/cafe_mystery"))
     store = StoryEventStore(tmp_path / "live.db")
     state = initial_session_state(pack, "live-capability", 17)
@@ -45,7 +47,7 @@ async def test_deepseek_responses_runs_one_v2_choice_roundtrip(tmp_path):
     validate_scene_plan(pack, state, planner_probe)
 
     actions = sorted(pack.action_ids & set(pack.source.protagonist.capabilities))[:2]
-    deterministic_plan = ScenePlan(
+    deterministic_scene = ScenePlan(
         scene_id="live_decision_01",
         summary="The protagonist considers two safe ways to continue the cafe investigation.",
         location_id=state.world.location_id,
@@ -62,28 +64,52 @@ async def test_deepseek_responses_runs_one_v2_choice_roundtrip(tmp_path):
         ),
     )
 
-    class FixedScenePlanner:
-        async def plan_scene(self, pack, state):
-            return deterministic_plan
+    class FixedSegmentDirector:
+        async def plan_segment(self, pack, state, pacing):
+            return SegmentPlan(
+                segment_id="live_segment_01",
+                scenes=(deterministic_scene,),
+                terminal="decision",
+            )
 
-        async def resolve_action(self, pack, state, choice):
-            return await sdk_planner.resolve_action(pack, state, choice)
-
-    runtime = RuntimeService(store, FixedScenePlanner(), writer)
-    scene = await runtime.advance(
-        pack, state.session_id, state.revision, idempotency_key="live-advance-1"
+    orchestrator = TurnOrchestrator(
+        store,
+        FixedSegmentDirector(),
+        SdkSegmentWriter(bundle.model),
+        Guard(),
+        CompletionJudge(),
+        planner=sdk_planner,
     )
-    assert scene.blocks
-    assert len(scene.choices) == 2
 
-    selected = scene.choices[0]
-    result = await runtime.select_choice(
-        pack,
-        state.session_id,
-        selected.id,
-        expected_revision=scene.revision,
-        idempotency_key="live-capability-choice",
-    )
+    events: list[tuple[str, dict]] = []
+    async for event_type, data in orchestrator.execute_turn(
+        pack, state.session_id, state.revision, "live-opening-1", None
+    ):
+        events.append((event_type, data))
+    assert [t for t, _ in events if t == "error"] == []
+    ready = next(data for t, data in events if t == "segment_ready")
+    assert ready["terminal"] == "decision"
+    assert len(ready["choices"]) == 2
+    assert any(t == "block" for t, _ in events)
+
+    selected = ready["choices"][0]
+    followup: list[tuple[str, dict]] = []
+    async for event_type, data in orchestrator.execute_turn(
+        pack, state.session_id, ready["revision"], "live-capability-choice", selected["id"]
+    ):
+        followup.append((event_type, data))
+    assert [t for t, _ in followup if t == "error"] == []
+    ready2 = next(data for t, data in followup if t == "segment_ready")
+    assert ready2["revision"] > ready["revision"]
+
     replayed = store.load_session(state.session_id)
-    assert result.revision == replayed.revision
-    assert replayed.pending_decision is None
+    assert replayed.revision == ready2["revision"]
+    selected_events = [
+        e for e in store.load_events(state.session_id) if e.event.type == "player_action_selected"
+    ]
+    resolved_events = [
+        e for e in store.load_events(state.session_id) if e.event.type == "action_resolved"
+    ]
+    assert len(selected_events) == 1
+    assert len(resolved_events) == 1
+    assert resolved_events[0].event.source_choice_event_id == selected_events[0].event_id

@@ -1,0 +1,3 @@
+# Commit Player Choice Before Generating Its Consequence
+
+Selecting a Player Choice immediately and irreversibly commits its Choice Meaning, placing the Playthrough in Pending Consequence before any model-dependent consequence or prose is accepted. Failed or rejected generation leaves that choice intact and permits only recovery attempts for the same consequence; the first valid consequence and following segment commit atomically, after which retries replay it. This separates player agency from service reliability and prevents technical failure from silently undoing the player's only input, at the cost of supporting a durable intermediate state.

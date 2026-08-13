@@ -21,19 +21,23 @@ from src.story.state import (
     FactRevealed,
     GoalAdvanced,
     NarrativeThread,
+    ObligationCreated,
     PhaseAdvanced,
     PlayerActionSelected,
     PresentedChoice,
     RelationshipChanged,
+    RelationshipEventRecorded,
     SceneAcknowledged,
     SceneCommitted,
     SessionState,
+    StanceExpressed,
     StateTransitionError,
     ThreadAdvanced,
     ThreadClosed,
     ThreadOpened,
     ThreadStatus,
     apply_events,
+    derive_cost_incurred,
 )
 from src.story.state.events import StoryEvent
 
@@ -66,6 +70,11 @@ def scene_events(pack, state, plan, draft) -> tuple[StoryEvent, ...]:
             intent=item.intent,
             target_character_id=item.target_character_id,
             preview=written[item.option_id].preview,
+            stance_axis=item.stance_axis,
+            stance_value=item.stance_value,
+            accepted_risk=item.accepted_risk,
+            potential_obligation_kind=item.potential_obligation_kind,
+            conflict_axis_id=item.conflict_axis_id,
         )
         for item in plan.choices
     )
@@ -140,25 +149,158 @@ def resolution_effect_events(
     return tuple(events)
 
 
-def simulate_resolution(
+def choice_selection_event(
     state: SessionState,
     choice: PresentedChoice,
-    resolution: ActionResolution,
     idempotency_key: str,
-) -> tuple[StoryEvent, ...]:
+) -> PlayerActionSelected:
     if state.pending_decision is None:
         raise StateTransitionError("no decision is pending")
-    events: tuple[StoryEvent, ...] = (
-        PlayerActionSelected(
-            decision_id=state.pending_decision.decision_id,
-            option_id=choice.id,
-            idempotency_key=idempotency_key,
-        ),
-        ActionResolved(action_id=resolution.action_id, outcome=resolution.outcome),
-        *resolution_effect_events(state, resolution),
+    return PlayerActionSelected(
+        decision_id=state.pending_decision.decision_id,
+        option_id=choice.id,
+        action_id=choice.action_id,
+        intent=choice.intent,
+        target_character_id=choice.target_character_id,
+        idempotency_key=idempotency_key,
+        stance_axis=choice.stance_axis,
+        stance_value=choice.stance_value,
+        accepted_risk=choice.accepted_risk,
+        # Compatibility alias: the accepted risk is the committed cost
+        # category so derived costs match the committed Choice Meaning.
+        accepted_cost_category=choice.accepted_risk,
+        potential_obligation_kind=choice.potential_obligation_kind,
+        conflict_axis_id=choice.conflict_axis_id,
     )
-    simulate_events(state, events)
-    return events
+
+
+def simulate_consequence(
+    pack: CompiledScriptPack,
+    state: SessionState,
+    resolution: ActionResolution,
+) -> tuple[StoryEvent, ...]:
+    """Build the Story Consequence batch for the pending choice.
+
+    Emits the action resolution plus the semantic effects of the committed
+    Choice Meaning: relationship changes paired with relationship events
+    (visible in the following segment's first scene), stance establishment
+    or reinforcement, obligation creation, and derived costs.  Internal
+    event references (relationship event ids, scene anchors, cost effect
+    ids) are deterministic placeholders that the authoritative command flow
+    resolves against the actual committed envelope ids before commit.
+    """
+    pending = state.pending_consequence
+    if pending is None:
+        raise StateTransitionError("no consequence is pending")
+    choice_id = pending.choice_event_id
+
+    events: list[StoryEvent] = [
+        ActionResolved(
+            source_choice_event_id=choice_id,
+            action_id=resolution.action_id,
+            outcome=resolution.outcome,
+        )
+    ]
+
+    # Relationship changes paired with relationship events; the pair makes
+    # the change visible as dramatic development in the segment's first
+    # scene and grounds relationship turning-point evidence.
+    for index, item in enumerate(resolution.relationship_deltas):
+        events.append(
+            RelationshipChanged(
+                character_id=item.character_id,
+                axis=item.axis,
+                delta=item.delta,
+                source_choice_event_id=choice_id,
+                relationship_event_id=f"rel:{choice_id}:{index}",
+            )
+        )
+        events.append(
+            RelationshipEventRecorded(
+                character_id=item.character_id,
+                tag=f"relationship_changed_{item.axis}",
+                source_choice_event_id=choice_id,
+                scene_event_id="",
+            )
+        )
+
+    events.extend(
+        GoalAdvanced(goal_id=item.goal_id, delta=item.delta) for item in resolution.goal_deltas
+    )
+    events.extend(
+        FactEvidenced(
+            fact_id=fact_id,
+            evidence_event_id=f"action:{state.session_id}:{state.revision + 1}:{fact_id}",
+        )
+        for fact_id in resolution.evidence_fact_ids
+    )
+    events.extend(FactRevealed(fact_id=fact_id) for fact_id in resolution.reveal_fact_ids)
+    for entry in sorted(resolution.learned_facts, key=lambda item: item.character_id):
+        events.extend(
+            CharacterLearnedFact(character_id=entry.character_id, fact_id=fact_id)
+            for fact_id in sorted(entry.fact_ids)
+        )
+
+    # Choice Meaning semantic commitments — the player already chose these;
+    # the planner cannot veto them (ADR 0003 / 0013).
+    obligation_event: ObligationCreated | None = None
+    if pending.stance_axis is not None and pending.stance_value is not None:
+        key = f"{pending.stance_axis}:{pending.stance_value}"
+        relation = "established" if key not in state.drama.stances else "reinforced"
+        events.append(
+            StanceExpressed(
+                key=key,
+                axis=pending.stance_axis,
+                value=pending.stance_value,
+                relation=relation,
+                source_choice_event_id=choice_id,
+            )
+        )
+    if pending.potential_obligation_kind is not None:
+        obligation_event = ObligationCreated(
+            obligation_id=f"obligation:{choice_id}",
+            kind=pending.potential_obligation_kind,
+            burden=_obligation_burden(pack, pending.potential_obligation_kind),
+            source_choice_event_id=choice_id,
+        )
+        events.append(obligation_event)
+        if pending.accepted_risk is not None:
+            choice = _choice_event_from_pending(pending)
+            cost = derive_cost_incurred(
+                choice_id,
+                choice,
+                f"obligation:{choice_id}",
+                obligation_event,
+            )
+            if cost is not None:
+                events.append(cost)
+
+    simulate_events(state, tuple(events))
+    return tuple(events)
+
+
+def _obligation_burden(pack: CompiledScriptPack, kind: str) -> int:
+    definitions = getattr(pack.source, "obligation_kinds", ()) or ()
+    definition = next((item for item in definitions if item.id == kind), None)
+    return definition.burden if definition is not None else 1
+
+
+def _choice_event_from_pending(pending) -> PlayerActionSelected:
+    """Rebuild the committed Choice Meaning for deterministic derivation."""
+    return PlayerActionSelected(
+        decision_id=pending.decision_id,
+        option_id=pending.option_id,
+        action_id=pending.action_id,
+        intent=pending.intent,
+        target_character_id=pending.target_character_id,
+        idempotency_key="",
+        stance_axis=pending.stance_axis,
+        stance_value=pending.stance_value,
+        accepted_risk=pending.accepted_risk,
+        accepted_cost_category=pending.accepted_risk,
+        potential_obligation_kind=pending.potential_obligation_kind,
+        conflict_axis_id=pending.conflict_axis_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +416,11 @@ def segment_events(
                     intent=choice_plan.intent,
                     target_character_id=choice_plan.target_character_id,
                     preview=written_map[choice_plan.option_id].preview,
+                    stance_axis=choice_plan.stance_axis,
+                    stance_value=choice_plan.stance_value,
+                    accepted_risk=choice_plan.accepted_risk,
+                    potential_obligation_kind=choice_plan.potential_obligation_kind,
+                    conflict_axis_id=choice_plan.conflict_axis_id,
                 )
                 for choice_plan in last_scene.choices
             )

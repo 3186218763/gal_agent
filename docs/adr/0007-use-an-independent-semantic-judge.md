@@ -1,0 +1,3 @@
+# Use an Independent Semantic Judge
+
+Proposed story content is evaluated by a Semantic Judge that is separate from the generating Agent and has no authority to rewrite prose or mutate state. Canon contradiction, knowledge leakage, Choice Meaning reversal, Work Boundary violations, and Ending Integrity fail closed when safety cannot be established; softer concerns such as voice, style, and pacing inform quality evaluation without blocking every turn. This adds model cost and latency, but avoids letting a generator certify its own semantically risky output while keeping deterministic validation responsible for facts it can actually prove.

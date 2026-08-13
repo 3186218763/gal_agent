@@ -1,3 +1,10 @@
+"""CLI autoplay tests using the authoritative TurnOrchestrator command flow.
+
+The autoplay loop is exercised offline with deterministic fakes: opening,
+choice selection, Pending Consequence recovery, and the ending all go
+through the same ``execute_turn`` path as the HTTP ``/turns`` route.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -5,67 +12,38 @@ from pathlib import Path
 import pytest
 
 from src.story.cli import _parser, autoplay
-from src.story.runtime.contracts import (
-    ActionResolution,
-    ChoicePlan,
-    EndingDraft,
-    SceneDraft,
-    ScenePlan,
-    WrittenChoice,
-)
-from src.story.runtime.service import RuntimeService
+from src.story.runtime.completion_judge import CompletionJudge
+from src.story.runtime.contracts import RuntimeGenerationUnavailable
+from src.story.runtime.turn_orchestrator import TurnOrchestrator
 from src.story.script_pack import compile_source
-from src.story.state import NarrativeBlock, SessionStatus
+from src.story.state import SessionStatus
 from src.story.storage import StoryEventStore
-from tests.story_factories import minimal_script_pack_dict
+from tests.fakes import (
+    FakeDirector,
+    FakeGuard,
+    FakePlanner,
+    FakeSegmentWriter,
+    budget_test_pack_dict,
+)
 
 
 def live_test_pack():
-    return compile_source(minimal_script_pack_dict())
+    return compile_source(budget_test_pack_dict())
 
 
-class FakePlanner:
-    async def plan_scene(self, pack, state):
-        scene_id = f"scene_{state.world.scene_count + 1:02d}"
-        return ScenePlan(
-            scene_id=scene_id,
-            summary="Alice waits for the protagonist to choose.",
-            location_id="cafe",
-            present_character_ids=("alice",),
-            terminal="decision",
-            decision_id=f"decision_{state.world.scene_count + 1:02d}",
-            choices=(
-                ChoicePlan(option_id="ask", action_id="ask", intent="ask directly"),
-                ChoicePlan(option_id="observe", action_id="observe", intent="watch carefully"),
-            ),
-        )
-
-    async def resolve_action(self, pack, state, choice):
-        return ActionResolution(action_id=choice.action_id, outcome="success")
-
-
-class FakeWriter:
-    async def write_scene(self, pack, state, plan):
-        return SceneDraft(
-            scene_id=plan.scene_id,
-            blocks=(NarrativeBlock(kind="narration", text="The cafe hums quietly."),),
-            choices=tuple(
-                WrittenChoice(option_id=item.option_id, label=item.intent[:80])
-                for item in plan.choices
-            ),
-        )
-
-    async def write_ending(self, pack, state, ending):
-        return EndingDraft(
-            ending_id=ending.id,
-            title=ending.title,
-            blocks=(NarrativeBlock(kind="narration", text=f"Ending: {ending.title}"),),
-        )
-
-
-def fake_ending_runtime(tmp_path: Path) -> RuntimeService:
+def _build_autoplay_runtime(tmp_path: Path, planner=None) -> TurnOrchestrator:
     store = StoryEventStore(tmp_path / "story.db")
-    return RuntimeService(store, FakePlanner(), FakeWriter())
+    return (
+        store,
+        TurnOrchestrator(
+            store=store,
+            director=FakeDirector(),
+            writer=FakeSegmentWriter(),
+            guard=FakeGuard(),
+            completion_judge=CompletionJudge(),
+            planner=planner if planner is not None else FakePlanner(),
+        ),
+    )
 
 
 def test_play_live_parser_accepts_required_arguments():
@@ -94,10 +72,11 @@ def test_play_live_parser_accepts_required_arguments():
 
 @pytest.mark.asyncio
 async def test_autoplay_reaches_ended_state_with_fake_agents(tmp_path):
+    store, orchestrator = _build_autoplay_runtime(tmp_path)
     result = await autoplay(
         pack=live_test_pack(),
-        store=StoryEventStore(tmp_path / "story.db"),
-        runtime=fake_ending_runtime(tmp_path),
+        store=store,
+        orchestrator=orchestrator,
         session_id="auto-01",
         seed=17,
         choice_strategy="first",
@@ -105,3 +84,61 @@ async def test_autoplay_reaches_ended_state_with_fake_agents(tmp_path):
     )
     assert result.status == SessionStatus.ENDED
     assert result.ending is not None
+
+
+@pytest.mark.asyncio
+async def test_autoplay_recovers_pending_consequence_without_reoffering_choice(tmp_path):
+    """A transient generation failure leaves the committed choice pending;
+    the next loop iteration resumes it with choice_id=None and the same
+    idempotency key, and never commits the choice a second time."""
+
+    class FailsOncePlanner(FakePlanner):
+        def __init__(self):
+            self.failed = False
+
+        async def resolve_action(self, pack, state, choice):
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("transient model failure")
+            return await super().resolve_action(pack, state, choice)
+
+    store, orchestrator = _build_autoplay_runtime(tmp_path, planner=FailsOncePlanner())
+    result = await autoplay(
+        pack=live_test_pack(),
+        store=store,
+        orchestrator=orchestrator,
+        session_id="auto-02",
+        seed=17,
+        choice_strategy="first",
+        max_commands=50,
+    )
+    assert result.status == SessionStatus.ENDED
+
+    selected = [e for e in store.load_events("auto-02") if e.event.type == "player_action_selected"]
+    resolved = [e for e in store.load_events("auto-02") if e.event.type == "action_resolved"]
+    assert len(selected) == len(resolved)
+
+
+@pytest.mark.asyncio
+async def test_autoplay_exhausts_attempts_on_persistent_generation_failure(tmp_path):
+    class AlwaysFailingPlanner(FakePlanner):
+        async def resolve_action(self, pack, state, choice):
+            raise RuntimeError("persistent model failure")
+
+    store, orchestrator = _build_autoplay_runtime(tmp_path, planner=AlwaysFailingPlanner())
+    with pytest.raises(RuntimeGenerationUnavailable):
+        await autoplay(
+            pack=live_test_pack(),
+            store=store,
+            orchestrator=orchestrator,
+            session_id="auto-03",
+            seed=17,
+            choice_strategy="first",
+            max_commands=50,
+            max_attempts=2,
+        )
+
+    # The committed choice is preserved and durable after the loop gives up.
+    state = store.load_session("auto-03")
+    assert state.pending_consequence is not None
+    assert state.pending_decision is None

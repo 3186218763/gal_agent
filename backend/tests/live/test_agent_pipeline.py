@@ -81,9 +81,9 @@ async def test_segment_pipeline_director_writer_guard_roundtrip():
     )
     location_ids = {loc.id for loc in locations}
     for scene in plan.scenes:
-        assert (
-            scene.location_id in location_ids
-        ), f"Director proposed unknown location: {scene.location_id}"
+        assert scene.location_id in location_ids, (
+            f"Director proposed unknown location: {scene.location_id}"
+        )
 
     # Verify all present characters exist
     for scene in plan.scenes:
@@ -129,9 +129,9 @@ async def test_segment_pipeline_director_writer_guard_roundtrip():
     if plan.terminal == "decision":
         planned_ids = {c.option_id for c in plan.scenes[-1].choices}
         draft_ids = {c.option_id for c in draft.choices}
-        assert (
-            draft_ids == planned_ids
-        ), f"Writer choice IDs don't match plan: {draft_ids} vs {planned_ids}"
+        assert draft_ids == planned_ids, (
+            f"Writer choice IDs don't match plan: {draft_ids} vs {planned_ids}"
+        )
         # Labels must be unique
         labels = [c.label.strip().casefold() for c in draft.choices]
         assert len(labels) == len(set(labels)), "Choice labels must be unique"

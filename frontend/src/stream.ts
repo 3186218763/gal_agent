@@ -156,7 +156,3 @@ function parseSSEChunk(chunk: string): StreamEvent | null {
 
   return { event: eventType, data } as StreamEvent
 }
-
-// ── Legacy export (deprecated, will be removed after full migration) ──
-
-export { streamAdvance } from './streamLegacy'

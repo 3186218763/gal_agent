@@ -49,33 +49,22 @@ def test_validate_missing_pack_returns_nonzero(tmp_path: Path, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_init_pack_creates_cache_files(tmp_path: Path):
-    """_init_pack generates opening + pregen and saves to PackCache."""
+def test_init_pack_creates_opening_cache_files(tmp_path: Path):
+    """_init_pack generates only the opening segment and saves it to PackCache.
+
+    Offline cache tooling must not write pre-generated consequences or any
+    implicit-success result — the authoritative flow is the only way a
+    consequence can be committed.
+    """
     import asyncio
 
     from src.story.cli import _init_pack
     from src.story.runtime.pack_cache import PackCache
-
-    # Use FakeDirector/FakeSegmentWriter wrapped as unified agents.
-    # The unified agent interface is generate(pack, state, pacing) -> UnifiedSegmentOutput.
     from src.story.runtime.unified_segment import UnifiedSegmentOutput
     from src.story.script_pack import compile_script_pack
-    from tests.fakes import (
-        FakeDirector,
-        FakeGuard,
-        FakePlanner,
-        FakeSegmentWriter,
-    )
+    from tests.fakes import FakeDirector, FakeGuard, FakeSegmentWriter
 
     class FakeOpeningAgent:
-        async def generate(self, pack, state, pacing):
-            director = FakeDirector()
-            writer = FakeSegmentWriter()
-            plan = await director.plan_segment(pack, state, pacing)
-            draft = await writer.write_segment(pack, state, plan)
-            return UnifiedSegmentOutput(segment_plan=plan, segment_draft=draft)
-
-    class FakeUnifiedAgent:
         async def generate(self, pack, state, pacing):
             director = FakeDirector()
             writer = FakeSegmentWriter()
@@ -91,8 +80,6 @@ def test_init_pack_creates_cache_files(tmp_path: Path):
             pack=pack,
             cache_root=cache_root,
             opening_agent=FakeOpeningAgent(),
-            unified_agent=FakeUnifiedAgent(),
-            planner=FakePlanner(),
             guard=FakeGuard(),
         )
     )
@@ -100,28 +87,30 @@ def test_init_pack_creates_cache_files(tmp_path: Path):
     assert result["status"] == "initialized"
     assert result["pack_hash"] == pack.pack_hash
     assert result["opening_segment_id"]
-    assert len(result["choice_ids"]) >= 2
-    assert result["pregen_count"] >= 2
+    assert "pregen_count" not in result
 
-    # Verify files exist.
+    # Only the opening is cached — never a choice pregen.
     cache = PackCache(cache_root)
     assert cache.has_opening(pack.pack_hash)
-    for cid in result["choice_ids"]:
-        assert cache.load_pregen(pack.pack_hash, cid) is not None
+    assert cache.load_opening(pack.pack_hash) is not None
+    assert not list(cache_root.glob(f"{pack.pack_hash}/pregen/*"))
 
 
-def test_init_pack_idempotent(tmp_path: Path, capsys):
-    """Second init-pack run detects existing cache and skips."""
+def test_init_pack_idempotent_skips_existing_opening(tmp_path: Path):
+    """Second init-pack run detects the existing opening and skips."""
     import asyncio
 
     from src.story.cli import _init_pack
     from src.story.runtime.pack_cache import PackCache
     from src.story.runtime.unified_segment import UnifiedSegmentOutput
     from src.story.script_pack import compile_script_pack
-    from tests.fakes import FakeDirector, FakeGuard, FakePlanner, FakeSegmentWriter
+    from tests.fakes import FakeDirector, FakeGuard, FakeSegmentWriter
 
-    class FakeAgent:
+    calls = []
+
+    class FakeOpeningAgent:
         async def generate(self, pack, state, pacing):
+            calls.append(1)
             director = FakeDirector()
             writer = FakeSegmentWriter()
             plan = await director.plan_segment(pack, state, pacing)
@@ -131,26 +120,70 @@ def test_init_pack_idempotent(tmp_path: Path, capsys):
     pack = compile_script_pack(PACK_DIR)
     cache_root = tmp_path / "pack_cache"
 
-    # First run.
-    asyncio.run(
+    first = asyncio.run(
         _init_pack(
             pack=pack,
             cache_root=cache_root,
-            opening_agent=FakeAgent(),
-            unified_agent=FakeAgent(),
-            planner=FakePlanner(),
+            opening_agent=FakeOpeningAgent(),
+            guard=FakeGuard(),
+        )
+    )
+    second = asyncio.run(
+        _init_pack(
+            pack=pack,
+            cache_root=cache_root,
+            opening_agent=FakeOpeningAgent(),
             guard=FakeGuard(),
         )
     )
 
-    # Verify cache exists.
+    assert first["status"] == "initialized"
+    assert second["status"] == "already_initialized"
+    assert len(calls) == 1
     assert PackCache(cache_root).has_opening(pack.pack_hash)
 
-    # Second run via CLI main (without env vars — only checks existence).
-    # We test the idempotent path by calling main with the existing cache.
-    # Since init-pack without env vars will fail on OpenCodeGoSettings.from_env(),
-    # we test the cache check directly instead.
-    from src.story.runtime.pack_cache import PackCache as PC
 
-    cache = PC(cache_root)
-    assert cache.has_opening(pack.pack_hash)
+def test_init_pack_force_regenerates_opening(tmp_path: Path):
+    """--force regenerates the opening even when one is already cached."""
+    import asyncio
+
+    from src.story.cli import _init_pack
+    from src.story.runtime.pack_cache import PackCache
+    from src.story.runtime.unified_segment import UnifiedSegmentOutput
+    from src.story.script_pack import compile_script_pack
+    from tests.fakes import FakeDirector, FakeGuard, FakeSegmentWriter
+
+    calls = []
+
+    class FakeOpeningAgent:
+        async def generate(self, pack, state, pacing):
+            calls.append(1)
+            director = FakeDirector()
+            writer = FakeSegmentWriter()
+            plan = await director.plan_segment(pack, state, pacing)
+            draft = await writer.write_segment(pack, state, plan)
+            return UnifiedSegmentOutput(segment_plan=plan, segment_draft=draft)
+
+    pack = compile_script_pack(PACK_DIR)
+    cache_root = tmp_path / "pack_cache"
+
+    asyncio.run(
+        _init_pack(
+            pack=pack,
+            cache_root=cache_root,
+            opening_agent=FakeOpeningAgent(),
+            guard=FakeGuard(),
+        )
+    )
+    asyncio.run(
+        _init_pack(
+            pack=pack,
+            cache_root=cache_root,
+            opening_agent=FakeOpeningAgent(),
+            guard=FakeGuard(),
+            force=True,
+        )
+    )
+
+    assert len(calls) == 2
+    assert PackCache(cache_root).has_opening(pack.pack_hash)

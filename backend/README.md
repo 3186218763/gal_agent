@@ -6,9 +6,10 @@ V2-only FastAPI + CLI runtime. Script packs compile offline; live scene generati
 
 - Event-sourced sessions (`StoryEventStore`, revisioned append)
 - Idempotent mutations via atomic SQLite command receipts (events + result commit together)
-- Shared Planner / Writer model bundle (Responses API only)
-- Strict-schema Planner/Writer outputs; Validator + Simulator gate model proposals before reducer commits; invalid turns fail closed without committing
-- Safe public pack/session projections for a future browser player
+- One authoritative command flow (`TurnOrchestrator`, exposed as `POST /turns`) for opening, choice selection, Pending Consequence recovery, and endings
+- A selected Choice Meaning is committed before generation; a failed consequence leaves a durable Pending Consequence that only `choice_id: null` may resume
+- Strict-schema Planner/Writer outputs; Validator + deterministic Guard + Simulator gate model proposals before the reducer commits; invalid turns fail closed without committing
+- Safe public pack/session projections for the browser player (never expose fact truth, knowledge, seeds, or pack hashes)
 - Offline pack validation and session inspect without a model key
 - Opt-in live tests and `play-live` autoplay when a key is configured
 
@@ -52,6 +53,7 @@ uv run python -m src.story.cli play-live script_packs/cafe_mystery \
 | `inspect-session` | No |
 | API (`uvicorn` / `python -m src.main`) | Yes (settings loaded at process start) |
 | `play-live` | Yes |
+| `init-pack` | Yes |
 
 Offline helpers:
 
@@ -69,14 +71,21 @@ uv run python -m src.story.cli inspect-session local_demo --database data/story.
 | `POST` | `/api/v2/sessions` | `{ "pack_id", "session_seed" }` → 201, public session projection |
 | `GET` | `/api/v2/sessions/{session_id}` | public session projection |
 | `GET` | `/api/v2/packs/{pack_id}` | public pack metadata projection |
-| `POST` | `/api/v2/sessions/{session_id}/advance` | `{ "expected_revision", "idempotency_key" }` |
-| `POST` | `/api/v2/sessions/{session_id}/choices/{choice_id}` | `{ "expected_revision", "idempotency_key" }` |
+| `POST` | `/api/v2/sessions/{session_id}/turns` | `{ "expected_revision", "idempotency_key", "choice_id" }` — SSE |
 
-All mutations require an `idempotency_key`; replaying a completed command with the same key returns the stored result without new events. `GET` responses are safe public projections: internal state (fact truth values, character knowledge, beliefs, suspicions, goals, seeds, pack hashes) is never exposed.
+`/turns` is the **only** production mutation interface (the legacy `/advance` and `/choices/{id}` routes are removed). Every mutation requires an `idempotency_key`; replaying a completed command with the same key returns the stored result without new events. `choice_id` semantics:
+
+- `choice_id: null` on a fresh session — generate the opening segment;
+- `choice_id: <offered id>` — commit that Choice Meaning, then generate its consequence;
+- `choice_id: null` while a consequence is pending — resume exactly the one pending consequence (`pending_consequence_status: "awaiting_resolution"` in the projection), never re-offer the old choices.
+
+SSE event types: `segment_started`, `block`, `segment_ready`, `heartbeat`, `error`, `retry_after`. Only `segment_ready` marks an atomically committed, playable segment; failure emits an `error` frame (`generation_unavailable`, `revision_conflict`, `decision_required`, `invalid_choice`, …) and the durable GET projection shows exactly what happened: nothing committed, or a Pending Consequence awaiting recovery.
+
+`GET` responses are safe public projections: internal state (fact truth values, character knowledge, beliefs, suspicions, goals, seeds, pack hashes) is never exposed.
 
 Common error codes in `detail.code`: `pack_not_found`, `session_not_found`, `invalid_choice`, `command_conflict`, `invalid_script_pack`, `model_provider_unavailable`, `generation_unavailable`.
 
-`generation_unavailable` (503) means the real model could not produce a valid, committable turn; the session is left unmodified and the request is safe to retry with a new key. `model_provider_unavailable` (503) covers provider outages and is equally non-committing.
+`generation_unavailable` (503) means the real model could not produce a valid, committable segment; if the turn had already committed its Choice Meaning, the session now has a durable Pending Consequence and the request is safe to retry with `choice_id: null` (same or new key — a stable consequence command is shared across retries and appends at most once). `model_provider_unavailable` (503) covers provider outages and is equally non-committing. No default-success result, placeholder story, speculative block, or incomplete segment is ever committed or made playable.
 
 Swagger: `http://127.0.0.1:8000/docs`
 
@@ -87,11 +96,11 @@ backend/
 ├── src/
 │   ├── main.py                 # app = create_app()
 │   └── story/
-│       ├── api.py              # REST surface (idempotent mutations, projections)
-│       ├── cli.py
+│       ├── api.py              # REST surface (sessions, projections, POST /turns)
+│       ├── cli.py              # validate / init-session / inspect-session / play-live / init-pack
 │       ├── conditions.py
 │       ├── projection.py        # public pack/session projections
-│       ├── runtime/            # config, model, planner, writer, validator, …
+│       ├── runtime/            # config, model, planner, segment writer, validator, orchestrator, …
 │       ├── script_pack/
 │       ├── state/
 │       └── storage/
@@ -116,7 +125,9 @@ Validate:
 uv run python -m src.story.cli validate script_packs/cafe_mystery
 ```
 
-Expect JSON with `pack_id`, `pack_hash`, character/fact/goal counts, and ending tallies (`normal_endings` ≥ 3 and `fallback_endings` ≥ 1 for `cafe_mystery`).
+Expect JSON with `pack_id`, `pack_hash`, character/fact/goal counts, and `completion_requirements` (v2 packs).
+
+`init-pack script_packs/cafe_mystery` (model key required) generates and caches only the validated opening segment under `data/pack_cache/<pack_hash>/`; `play-live` and the HTTP server reuse it to start instantly. It never pre-generates choices or writes consequences — the authoritative `/turns` flow is the only way a consequence can be committed.
 
 ## Development
 

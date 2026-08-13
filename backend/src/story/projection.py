@@ -57,6 +57,7 @@ class SessionProjection(FrozenModel):
     phase: str
     scene_count: int
     pending_decision_id: str | None
+    pending_consequence_status: str | None = None
     scene_id: str | None
     blocks: tuple[NarrativeBlock, ...] = ()
     choices: tuple[PresentedChoice, ...] = ()
@@ -166,6 +167,9 @@ def project_session(
         scene_count=state.world.scene_count,
         pending_decision_id=(
             state.pending_decision.decision_id if state.pending_decision is not None else None
+        ),
+        pending_consequence_status=(
+            "awaiting_resolution" if state.pending_consequence is not None else None
         ),
         scene_id=scene_id,
         blocks=blocks,

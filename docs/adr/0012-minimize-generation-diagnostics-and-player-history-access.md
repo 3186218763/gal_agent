@@ -1,0 +1,3 @@
+# Minimize Generation Diagnostics and Player History Access
+
+The platform permanently retains Committed Segments and the structured audit metadata needed to replay and validate them, but not raw model requests, rejected drafts, or hidden provider reasoning as ordinary product data. Temporary encrypted diagnostics are minimized, access-controlled, and deleted on a short retention schedule. Authors receive aggregate quality data by default and may inspect a complete player Playthrough only with explicit player consent or a player-submitted report; operational access is audited. This limits debugging convenience to protect unpublished canon, character secrets, and player choices.

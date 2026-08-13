@@ -43,9 +43,14 @@ class PlayerActionSelected(FrozenModel):
     type: Literal["player_action_selected"] = "player_action_selected"
     decision_id: str
     option_id: str
+    action_id: str = ""
+    intent: str = ""
+    target_character_id: str | None = None
     idempotency_key: str
     stance_axis: str | None = None
     stance_value: str | None = None
+    accepted_risk: str | None = None
+    # Kept as a compatibility alias for existing semantic cost evidence.
     accepted_cost_category: str | None = None
     potential_obligation_kind: str | None = None
     conflict_axis_id: str | None = None
@@ -53,6 +58,7 @@ class PlayerActionSelected(FrozenModel):
 
 class ActionResolved(FrozenModel):
     type: Literal["action_resolved"] = "action_resolved"
+    source_choice_event_id: str | None = None
     action_id: str
     outcome: Literal["success", "partial", "resisted", "backfire"]
 

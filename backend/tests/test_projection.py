@@ -15,6 +15,7 @@ from src.story.state import (
     EndingGenerated,
     EventEnvelope,
     NarrativeBlock,
+    PlayerActionSelected,
     PresentedChoice,
     apply_events,
     initial_session_state,
@@ -82,6 +83,42 @@ def test_segment_choices_populated_from_decision():
     assert proj.segment_revision == 1
     assert len(proj.segment_choices) == 2
     assert proj.segment_choices[0].id == "c1"
+
+
+def test_pending_consequence_projection_exposes_only_recovery_status():
+    pack = compile_source(minimal_script_pack_dict())
+    state = initial_session_state(pack, "s1", session_seed=1)
+    choices = (
+        PresentedChoice(id="c1", action_id="ask", label="Ask", intent="ask directly"),
+        PresentedChoice(
+            id="c2",
+            action_id="observe",
+            label="Observe",
+            intent="watch carefully",
+        ),
+    )
+    state = apply_events(
+        state,
+        (
+            _envelope(DecisionPresented(decision_id="d1", choices=choices), 1),
+            _envelope(
+                PlayerActionSelected(
+                    decision_id="d1",
+                    option_id="c1",
+                    action_id="ask",
+                    intent="ask directly",
+                    idempotency_key="select-1",
+                ),
+                2,
+            ),
+        ),
+    )
+
+    projection = project_session(state)
+
+    assert projection.pending_consequence_status == "awaiting_resolution"
+    assert projection.pending_decision_id is None
+    assert projection.choices == ()
 
 
 def test_segment_ending_populated_from_ending_generated():

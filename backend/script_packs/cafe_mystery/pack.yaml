@@ -271,19 +271,28 @@ relationship_event_tags:
     description: "玩家让受影响的人参与决定，而不是替其决定。"
   - id: responsibility_shared
     description: "玩家与保护者共同承担决定造成的责任。"
+  # 运行时锚点：每次关系变化都会由引擎自动记录一条
+  # relationship_changed_<axis> 关系事件（见事件契约），转折点必须
+  # 引用这些可验证的锚点标签，而不能依赖生成文本中的措辞。
+  - id: relationship_changed_trust
+    description: "引擎锚点：一次信任轴关系变化。"
+  - id: relationship_changed_affection
+    description: "引擎锚点：一次好感轴关系变化。"
+  - id: relationship_changed_suspicion
+    description: "引擎锚点：一次怀疑轴关系变化。"
 
 relationship_turning_points:
   - id: alice_mutual_trust
     character_id: alice
-    all_of_event_tags: [public_trust, accepted_truth]
+    all_of_event_tags: [relationship_changed_trust]
     min_distinct_source_choices: 2
   - id: bob_earned_respect
     character_id: bob
-    all_of_event_tags: [evidence_respected, risk_shared]
+    all_of_event_tags: [relationship_changed_trust]
     min_distinct_source_choices: 2
   - id: mina_shared_responsibility
     character_id: mina
-    all_of_event_tags: [agency_respected, responsibility_shared]
+    all_of_event_tags: [relationship_changed_trust]
     min_distinct_source_choices: 2
 
 obligation_kinds:
@@ -314,10 +323,7 @@ completion_requirements:
       - relationship_turning_point: {turning_point_id: mina_shared_responsibility}
   - id: accepted_cost
     description: "玩家承担了自己立场带来的真实代价或责任。"
-    any:
-      - obligation_fulfilled: {min_burden: 1}
-      - cost_incurred: {min_severity: 1}
-      - stance_defended: {min_challenges: 1, min_cost_severity: 1}
+    cost_incurred: {min_severity: 1}
 
 interaction_rules:
   enabled_standard: [ask, observe, support, challenge, withhold, disclose, follow, leave]

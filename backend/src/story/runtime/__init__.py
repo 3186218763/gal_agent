@@ -38,7 +38,6 @@ from .segment_contracts import (
     ThreadOperation,
 )
 from .segment_writer import SdkSegmentWriter
-from .writer import SdkWriter
 
 __all__ = [
     "ActionResolution",
@@ -67,7 +66,6 @@ __all__ = [
     "SdkDirector",
     "SdkPlanner",
     "SdkSegmentWriter",
-    "SdkWriter",
     "SegmentDraft",
     "SegmentPlan",
     "SegmentWriterOutput",

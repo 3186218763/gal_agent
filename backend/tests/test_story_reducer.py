@@ -2,6 +2,7 @@ import pytest
 
 from src.story.script_pack import compile_source
 from src.story.state import (
+    ActionResolved,
     ArcPressureAdvanced,
     CharacterDramaticStateChanged,
     CharacterLearnedFact,
@@ -82,6 +83,10 @@ def _decision_choices() -> tuple[PresentedChoice, PresentedChoice]:
             action_id="ask",
             label="Ask Alice",
             intent="ask directly",
+            stance_axis="trust_vs_evidence",
+            stance_value="trust",
+            potential_obligation_kind="keep_secret",
+            conflict_axis_id="trust_vs_evidence",
         ),
         PresentedChoice(
             id="observe_alice",
@@ -1217,6 +1222,7 @@ def test_arc_pressure_advances_monotonically():
 
 def test_player_action_selection_increments_dramatic_decision_count():
     state = _decision_state()
+    offered = state.pending_decision.choices[0]
     result = apply_event(
         state,
         _envelope(
@@ -1224,10 +1230,12 @@ def test_player_action_selection_increments_dramatic_decision_count():
             PlayerActionSelected(
                 decision_id="decision_01",
                 option_id="ask_alice",
+                action_id=offered.action_id,
+                intent=offered.intent,
+                target_character_id=offered.target_character_id,
                 idempotency_key="request_01",
                 stance_axis="trust_vs_evidence",
                 stance_value="trust",
-                accepted_cost_category="loyalty",
                 potential_obligation_kind="keep_secret",
                 conflict_axis_id="trust_vs_evidence",
             ),
@@ -1235,3 +1243,79 @@ def test_player_action_selection_increments_dramatic_decision_count():
     )
 
     assert result.drama.decision_count == 1
+    assert result.pending_decision is None
+    assert result.pending_consequence is not None
+    assert result.pending_consequence.option_id == "ask_alice"
+    assert result.pending_consequence.choice_event_id
+
+
+def test_player_action_selection_rejects_reinterpreted_choice_meaning():
+    state = _decision_state()
+    offered = state.pending_decision.choices[0]
+
+    with pytest.raises(StateTransitionError, match="choice meaning"):
+        apply_event(
+            state,
+            _envelope(
+                state,
+                PlayerActionSelected(
+                    decision_id="decision_01",
+                    option_id=offered.id,
+                    action_id=offered.action_id,
+                    intent="Do the opposite of the offered action",
+                    target_character_id=offered.target_character_id,
+                    idempotency_key="request_02",
+                ),
+            ),
+        )
+
+
+def test_action_resolution_must_reference_pending_choice():
+    state = _decision_state()
+    offered = state.pending_decision.choices[0]
+    selected = apply_event(
+        state,
+        _envelope(
+            state,
+            PlayerActionSelected(
+                decision_id="decision_01",
+                option_id=offered.id,
+                action_id=offered.action_id,
+                intent=offered.intent,
+                target_character_id=offered.target_character_id,
+                stance_axis=offered.stance_axis,
+                stance_value=offered.stance_value,
+                accepted_risk=offered.accepted_risk,
+                potential_obligation_kind=offered.potential_obligation_kind,
+                conflict_axis_id=offered.conflict_axis_id,
+                idempotency_key="request_03",
+            ),
+        ),
+    )
+
+    with pytest.raises(StateTransitionError, match="pending choice"):
+        apply_event(
+            selected,
+            _envelope(
+                selected,
+                ActionResolved(
+                    source_choice_event_id="different-choice",
+                    action_id=offered.action_id,
+                    outcome="success",
+                ),
+            ),
+        )
+
+    resolved = apply_event(
+        selected,
+        _envelope(
+            selected,
+            ActionResolved(
+                source_choice_event_id=selected.pending_consequence.choice_event_id,
+                action_id=offered.action_id,
+                outcome="success",
+            ),
+        ),
+    )
+    assert resolved.pending_consequence is not None
+    assert resolved.pending_consequence.outcome == "success"

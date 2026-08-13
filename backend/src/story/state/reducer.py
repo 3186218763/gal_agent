@@ -49,6 +49,7 @@ from src.story.state.models import (
     FactVisibility,
     GoalStatus,
     ObligationRuntime,
+    PendingConsequenceReference,
     PendingDecisionReference,
     PendingSceneReference,
     PromiseRuntime,
@@ -189,21 +190,72 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
 
     elif isinstance(event, PlayerActionSelected):
         _require(next_state.pending_decision is not None, "no decision is pending")
+        _require(next_state.pending_consequence is None, "a consequence is already pending")
         _require(
             next_state.pending_decision.decision_id == event.decision_id,
             "player action does not match pending decision",
         )
-        offered_ids = {item.id for item in next_state.pending_decision.choices}
-        _require(event.option_id in offered_ids, "player choice was not offered")
+        offered = next(
+            (item for item in next_state.pending_decision.choices if item.id == event.option_id),
+            None,
+        )
+        _require(offered is not None, "player choice was not offered")
+        assert offered is not None
+        _require(
+            event.action_id == offered.action_id
+            and event.intent == offered.intent
+            and event.target_character_id == offered.target_character_id
+            and event.stance_axis == offered.stance_axis
+            and event.stance_value == offered.stance_value
+            and event.accepted_risk == offered.accepted_risk
+            and event.potential_obligation_kind == offered.potential_obligation_kind
+            and event.conflict_axis_id == offered.conflict_axis_id,
+            "selected choice meaning does not match the offered choice meaning",
+        )
+        pending_consequence = PendingConsequenceReference(
+            choice_event_id=envelope.event_id,
+            decision_id=event.decision_id,
+            option_id=event.option_id,
+            action_id=event.action_id,
+            intent=event.intent,
+            target_character_id=event.target_character_id,
+            stance_axis=event.stance_axis,
+            stance_value=event.stance_value,
+            accepted_risk=event.accepted_risk,
+            potential_obligation_kind=event.potential_obligation_kind,
+            conflict_axis_id=event.conflict_axis_id,
+        )
         drama = next_state.drama.model_copy(
             update={"decision_count": next_state.drama.decision_count + 1}
         )
         next_state = next_state.model_copy(
-            update={"pending_scene": None, "pending_decision": None, "drama": drama}
+            update={
+                "pending_scene": None,
+                "pending_decision": None,
+                "pending_consequence": pending_consequence,
+                "drama": drama,
+            }
         )
 
     elif isinstance(event, ActionResolved):
-        pass
+        if next_state.pending_consequence is not None:
+            pending = next_state.pending_consequence
+            _require(
+                event.source_choice_event_id == pending.choice_event_id,
+                "action resolution does not match the pending choice",
+            )
+            _require(event.action_id == pending.action_id, "resolved action does not match choice")
+            _require(pending.outcome is None, "pending choice is already resolved")
+            next_state = next_state.model_copy(
+                update={
+                    "pending_consequence": pending.model_copy(
+                        update={
+                            "outcome": event.outcome,
+                            "resolution_event_id": envelope.event_id,
+                        }
+                    )
+                }
+            )
 
     elif isinstance(event, FactCommitted):
         _require(event.fact_id in next_state.facts, "unknown fact")
@@ -675,6 +727,11 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
 
     elif isinstance(event, DecisionPresented):
         _require(next_state.pending_decision is None, "a decision is already pending")
+        if next_state.pending_consequence is not None:
+            _require(
+                next_state.pending_consequence.outcome is not None,
+                "cannot present a decision before resolving the pending consequence",
+            )
         choice_ids = [item.id for item in event.choices]
         _require(len(choice_ids) == len(set(choice_ids)), "choice ids must be unique")
         _require(2 <= len(event.choices) <= 4, "decision requires 2-4 choices")
@@ -686,11 +743,20 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
             choices=event.choices,
         )
         next_state = next_state.model_copy(
-            update={"pending_scene": None, "pending_decision": pending_decision}
+            update={
+                "pending_scene": None,
+                "pending_decision": pending_decision,
+                "pending_consequence": None,
+            }
         )
 
     elif isinstance(event, EndingGenerated):
         _require(next_state.ending is None, "ending already entered")
+        if next_state.pending_consequence is not None:
+            _require(
+                next_state.pending_consequence.outcome is not None,
+                "cannot generate an ending before resolving the pending consequence",
+            )
         ending = EndingRuntime(
             ending_id=event.ending_id,
             entered_at_revision=envelope.sequence,
@@ -701,7 +767,12 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         )
         world = next_state.world.model_copy(update={"phase": StoryPhase.RESOLUTION})
         next_state = next_state.model_copy(
-            update={"status": SessionStatus.RESOLVING, "world": world, "ending": ending}
+            update={
+                "status": SessionStatus.RESOLVING,
+                "world": world,
+                "ending": ending,
+                "pending_consequence": None,
+            }
         )
 
     elif isinstance(event, CompletionEvaluated):
@@ -723,6 +794,7 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
                 "status": SessionStatus.ENDED,
                 "pending_scene": None,
                 "pending_decision": None,
+                "pending_consequence": None,
             }
         )
 

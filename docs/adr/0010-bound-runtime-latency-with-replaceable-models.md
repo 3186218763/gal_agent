@@ -1,0 +1,3 @@
+# Bound Runtime Latency With Replaceable Models
+
+The runtime targets beginning playback of a fully accepted Committed Segment within 10 seconds after a Player Choice. Timeouts leave Committed History unchanged and are safely retryable; speculative generation is only an optimization within cost and validation budgets. Generating and judging models may be replaced without changing Script Pack semantics, while every Committed Segment records the exact generator and Semantic Judge versions used. This favors a stable product contract and auditability over dependence on one provider or exact regeneration across Playthroughs.

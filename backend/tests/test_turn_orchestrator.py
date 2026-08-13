@@ -8,6 +8,7 @@ import pytest
 from src.story.runtime.completion_judge import CompletionJudge
 from src.story.runtime.contracts import (
     NarrativeBlock,
+    RuntimeGenerationUnavailable,
     RuntimeRevisionConflict,
     SceneDraft,
     ScenePlan,
@@ -17,7 +18,11 @@ from src.story.runtime.contracts import (
 )
 from src.story.runtime.pacing import compute_pacing_envelope
 from src.story.runtime.pack_cache import CachedOpening, CachedPregen, PackCache
-from src.story.runtime.simulator import simulate_resolution, simulate_segment
+from src.story.runtime.simulator import (
+    choice_selection_event,
+    simulate_consequence,
+    simulate_segment,
+)
 from src.story.runtime.turn_orchestrator import TurnOrchestrator
 from src.story.runtime.validator import (
     validate_segment_draft,
@@ -195,42 +200,133 @@ def test_idempotent_replay_returns_same_segment(tmp_path: Path):
     assert ready1["segment_id"] == ready2["segment_id"]
 
 
-def test_failed_generation_uses_deterministic_fallback(tmp_path: Path):
-    """When the Director fails, the deterministic fallback produces a valid
-    segment so the player never hits a dead-end error screen."""
-
-    class FailingDirector(FakeDirector):
-        async def plan_segment(self, pack, state, pacing):
+def test_failed_consequence_generation_preserves_committed_choice(tmp_path: Path):
+    class FailingPlanner(FakePlanner):
+        async def resolve_action(self, pack, state, choice):
             raise RuntimeError("model failed")
 
     pack = compile_source(budget_test_pack_dict())
     store = StoryEventStore(tmp_path / "fail_test.db")
     state = initial_session_state(pack, "s1", session_seed=1)
     store.create_session(state)
-    orch = TurnOrchestrator(
+    opening_orchestrator = TurnOrchestrator(
         store=store,
-        director=FailingDirector(),
+        director=FakeDirector(),
         writer=FakeSegmentWriter(),
         guard=FakeGuard(),
         completion_judge=CompletionJudge(),
         planner=FakePlanner(),
     )
-    gen = orch.execute_turn(pack, "s1", 0, "cmd-fail", None)
-    events = _collect_events(gen)
+    opening = _collect_events(opening_orchestrator.execute_turn(pack, "s1", 0, "cmd-opening", None))
+    ready = next(data for event_type, data in opening if event_type == "segment_ready")
+    offered = ready["choices"][0]
+    decision_revision = ready["revision"]
 
-    # Fallback should produce a valid segment with blocks and choices.
-    types = [e[0] for e in events]
-    assert "segment_started" in types
-    assert "block" in types
-    assert "segment_ready" in types
+    failing_orchestrator = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=FailingPlanner(),
+    )
 
-    ready = next(data for t, data in events if t == "segment_ready")
-    assert ready["terminal"] == "decision"
-    assert len(ready["choices"]) >= 2
+    with pytest.raises(RuntimeGenerationUnavailable):
+        _collect_events(
+            failing_orchestrator.execute_turn(
+                pack,
+                "s1",
+                decision_revision,
+                "cmd-select",
+                offered["id"],
+            )
+        )
 
-    # Revision should advance — the fallback segment is committed normally.
     loaded = store.load_session("s1")
-    assert loaded.revision > 0
+    assert loaded.revision == decision_revision + 1
+    assert loaded.pending_decision is None
+    assert loaded.pending_consequence is not None
+    assert loaded.pending_consequence.option_id == offered["id"]
+    assert loaded.pending_consequence.action_id == offered["action_id"]
+    assert loaded.pending_consequence.intent == offered["intent"]
+    assert loaded.pending_consequence.outcome is None
+
+
+def test_pending_consequence_resumes_without_resubmitting_choice(tmp_path: Path):
+    class FailsOncePlanner(FakePlanner):
+        def __init__(self):
+            self.failed = False
+
+        async def resolve_action(self, pack, state, choice):
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("transient failure")
+            return await super().resolve_action(pack, state, choice)
+
+    pack = compile_source(budget_test_pack_dict())
+    store = StoryEventStore(tmp_path / "resume_test.db")
+    store.create_session(initial_session_state(pack, "s1", session_seed=1))
+    planner = FailsOncePlanner()
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=planner,
+    )
+    opening = _collect_events(orch.execute_turn(pack, "s1", 0, "opening", None))
+    ready = next(data for event_type, data in opening if event_type == "segment_ready")
+
+    with pytest.raises(RuntimeGenerationUnavailable):
+        _collect_events(
+            orch.execute_turn(
+                pack,
+                "s1",
+                ready["revision"],
+                "select-once",
+                ready["choices"][0]["id"],
+            )
+        )
+
+    pending_state = store.load_session("s1")
+    assert pending_state.pending_consequence is not None
+    choice_event_id = pending_state.pending_consequence.choice_event_id
+    pending_revision = pending_state.revision
+
+    recovered = _collect_events(
+        orch.execute_turn(pack, "s1", pending_revision, "resume-request", None)
+    )
+    recovered_ready = next(data for event_type, data in recovered if event_type == "segment_ready")
+    assert recovered_ready["revision"] > pending_revision
+
+    selected_events = [
+        envelope
+        for envelope in store.load_events("s1")
+        if envelope.event.type == "player_action_selected"
+    ]
+    resolved_events = [
+        envelope for envelope in store.load_events("s1") if envelope.event.type == "action_resolved"
+    ]
+    assert len(selected_events) == 1
+    assert len(resolved_events) == 1
+    assert resolved_events[0].event.source_choice_event_id == choice_event_id
+
+    replay = _collect_events(
+        orch.execute_turn(pack, "s1", pending_revision, "another-device", None)
+    )
+    replay_ready = next(data for event_type, data in replay if event_type == "segment_ready")
+    assert replay_ready == recovered_ready
+    assert (
+        len(
+            [
+                envelope
+                for envelope in store.load_events("s1")
+                if envelope.event.type == "action_resolved"
+            ]
+        )
+        == 1
+    )
 
 
 def test_revision_conflict_releases_command(tmp_path: Path):
@@ -298,6 +394,244 @@ def test_ending_turn_has_ending_terminal(tmp_path: Path):
     ready = next(data for t, data in events if t == "segment_ready")
     assert ready["terminal"] == "ending"
     assert "ending" in ready
+
+
+def test_committed_completion_citations_resolve_against_committed_history(
+    tmp_path: Path,
+):
+    """The committed CompletionEvaluated must cite the actual committed
+    envelope ids — never simulation-only ids — so the Causal Trace and any
+    later audit resolve against committed history."""
+
+    from tests.story_factories import minimal_pack_v2_dict
+
+    pack = compile_source(minimal_pack_v2_dict())
+    store = StoryEventStore(tmp_path / "citation_test.db")
+    state = initial_session_state(pack, "s1", session_seed=1)
+    state = state.model_copy(
+        update={"world": state.world.model_copy(update={"scene_count": state.world.max_scenes})}
+    )
+    store.create_session(state)
+    early_history = (
+        EventEnvelope(
+            event_id="early-evidence",
+            session_id="s1",
+            sequence=1,
+            event=ActionResolved(action_id="observe", outcome="success"),
+        ),
+        EventEnvelope(
+            event_id="early-commit",
+            session_id="s1",
+            sequence=2,
+            event=FactCommitted(
+                fact_id="who_took_notebook",
+                value="alice",
+                evidence_event_ids=("early-evidence",),
+            ),
+        ),
+        EventEnvelope(
+            event_id="early-reveal",
+            session_id="s1",
+            sequence=3,
+            event=FactRevealed(fact_id="who_took_notebook"),
+        ),
+    )
+    store.append_envelopes("s1", 0, early_history)
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+    )
+
+    _collect_events(orch.execute_turn(pack, "s1", 3, "cmd-ending", None))
+
+    committed = store.load_events("s1")
+    committed_ids = {envelope.event_id for envelope in committed}
+    completion_event = next(
+        envelope.event for envelope in committed if envelope.event.type == "completion_evaluated"
+    )
+    cited = {
+        event_id
+        for assessment in completion_event.assessments
+        for event_id in assessment.cited_event_ids
+    }
+    assert cited
+    assert cited.issubset(committed_ids)
+
+
+def test_ending_ready_payload_carries_causal_traces(tmp_path: Path):
+    """The ending segment_ready exposes the derived Causal Traces so player
+    impact on the ending is auditable through the SSE payload."""
+
+    from tests.story_factories import minimal_pack_v2_dict
+
+    pack = compile_source(minimal_pack_v2_dict())
+    store = StoryEventStore(tmp_path / "trace_payload_test.db")
+    state = initial_session_state(pack, "s1", session_seed=1)
+    state = state.model_copy(
+        update={"world": state.world.model_copy(update={"scene_count": state.world.max_scenes})}
+    )
+    store.create_session(state)
+    early_history = (
+        EventEnvelope(
+            event_id="early-evidence",
+            session_id="s1",
+            sequence=1,
+            event=ActionResolved(action_id="observe", outcome="success"),
+        ),
+        EventEnvelope(
+            event_id="early-commit",
+            session_id="s1",
+            sequence=2,
+            event=FactCommitted(
+                fact_id="who_took_notebook",
+                value="alice",
+                evidence_event_ids=("early-evidence",),
+            ),
+        ),
+        EventEnvelope(
+            event_id="early-reveal",
+            session_id="s1",
+            sequence=3,
+            event=FactRevealed(fact_id="who_took_notebook"),
+        ),
+    )
+    store.append_envelopes("s1", 0, early_history)
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+    )
+
+    events = _collect_events(orch.execute_turn(pack, "s1", 3, "cmd-ending", None))
+    ready = next(data for t, data in events if t == "segment_ready")
+
+    # The completion payload lives on segment_ready next to `ending`
+    # (the frontend protocol reads `cleared` at this level).
+    assert "causal_traces" in ready
+    traces = ready["causal_traces"]
+    # The trace references real committed event ids only.
+    committed_ids = {envelope.event_id for envelope in store.load_events("s1")}
+    for trace in traces:
+        referenced = {
+            *trace["direct_consequence_event_ids"],
+            *trace["development_event_ids"],
+            *trace["ending_contribution_event_ids"],
+        }
+        assert referenced.issubset(committed_ids)
+
+
+def test_cafe_mystery_completion_review_evaluates_real_derived_evidence(
+    tmp_path: Path,
+):
+    """End-to-end with the real pack: a playthrough that builds trust with
+    Alice and repeatedly takes an obligation-typed risk produces derived
+    turning-point and cost evidence that the completion review actually
+    evaluates — meaningful_bond and accepted_cost are satisfied from
+    committed history, not prose."""
+
+    from src.story.runtime.contracts import (
+        ActionResolution,
+        ChoicePlan,
+        RelationshipDelta,
+    )
+    from src.story.script_pack import compile_script_pack
+
+    PACK_DIR = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+    pack = compile_script_pack(PACK_DIR)
+
+    class TrustingPlanner(FakePlanner):
+        async def resolve_action(self, pack, state, choice):
+            return ActionResolution(
+                action_id=choice.action_id,
+                outcome="success",
+                relationship_deltas=(
+                    RelationshipDelta(character_id="alice", axis="trust", delta=10),
+                ),
+            )
+
+    class ObligationDirector(FakeDirector):
+        """Attach obligation/risk Choice Meaning to the first offered choice."""
+
+        async def plan_segment(self, pack, state, pacing):
+            plan = await super().plan_segment(pack, state, pacing)
+            if plan.terminal != "decision":
+                return plan
+            scenes = list(plan.scenes)
+            last_scene = scenes[-1]
+            choices = list(last_scene.choices)
+            choices[0] = ChoicePlan(
+                option_id=choices[0].option_id,
+                action_id=choices[0].action_id,
+                intent=choices[0].intent,
+                accepted_risk="keep_secret",
+                potential_obligation_kind="keep_secret",
+            )
+            scenes[-1] = last_scene.model_copy(update={"choices": tuple(choices)})
+            return plan.model_copy(update={"scenes": tuple(scenes)})
+
+    store = StoryEventStore(tmp_path / "cafe_completion.db")
+    store.create_session(initial_session_state(pack, "s1", session_seed=11))
+    orch = TurnOrchestrator(
+        store=store,
+        director=ObligationDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=TrustingPlanner(),
+    )
+
+    def run_turn(revision, key, choice_id=None):
+        return _collect_events(orch.execute_turn(pack, "s1", revision, key, choice_id))
+
+    opening = next(data for t, data in run_turn(0, "cmd-open") if t == "segment_ready")
+    revision = opening["revision"]
+    ready = opening
+    turn = 0
+    while ready["terminal"] != "ending":
+        # Always take the obligation-typed first choice.
+        choice_id = ready["choices"][0]["id"]
+        followup = run_turn(revision, f"cmd-{turn}", choice_id)
+        ready = next(data for t, data in followup if t == "segment_ready")
+        revision = ready["revision"]
+        turn += 1
+
+    assert ready["terminal"] == "ending"
+    assessments = {item["requirement_id"]: item for item in ready["assessments"]}
+    assert assessments["meaningful_bond"]["satisfied"] is True
+    assert assessments["accepted_cost"]["satisfied"] is True
+
+    # The turning point was derived at the ending and committed with the
+    # actual envelope ids of the relationship events it cites.
+    committed = store.load_events("s1")
+    committed_ids = {envelope.event_id for envelope in committed}
+    turning_points = [
+        envelope.event
+        for envelope in committed
+        if envelope.event.type == "relationship_turning_point_reached"
+    ]
+    assert turning_points
+    for turning_point in turning_points:
+        assert set(turning_point.relationship_event_ids).issubset(committed_ids)
+    relationship_events = [
+        envelope.event
+        for envelope in committed
+        if envelope.event.type == "relationship_event_recorded"
+    ]
+    assert len(relationship_events) >= 2
+    for event in relationship_events:
+        assert event.scene_event_id in committed_ids
+        assert event.source_choice_event_id in committed_ids
+
+    # Derived costs cite the committed obligation they were derived from.
+    costs = [envelope.event for envelope in committed if envelope.event.type == "cost_incurred"]
+    assert costs
+    for cost in costs:
+        assert set(cost.effect_event_ids).issubset(committed_ids)
 
 
 def test_ending_completion_judge_receives_persisted_and_terminal_history(tmp_path: Path):
@@ -468,17 +802,23 @@ def test_cached_opening_idempotent_replay(tmp_path: Path):
     assert ready1["segment_id"] == ready2["segment_id"]
 
 
-def test_pack_cache_hit_skips_planner_and_agent(tmp_path: Path):
-    """When PackCache has a pregen for a choice_id, the orchestrator uses it
-    directly — planner.resolve_action and director.plan_segment are never called."""
+def test_legacy_choice_cache_cannot_bypass_authoritative_flow(tmp_path: Path):
+    """Legacy choice cache entries are ignored until their keys and validation
+    contract can identify the exact committed choice and session revision."""
 
-    class FailingPlanner(FakePlanner):
+    class RecordingPlanner(FakePlanner):
+        called = False
+
         async def resolve_action(self, pack, state, choice):
-            raise AssertionError("Planner should not be called on cache hit")
+            self.called = True
+            return await super().resolve_action(pack, state, choice)
 
-    class FailingDirector(FakeDirector):
+    class RecordingDirector(FakeDirector):
+        called = False
+
         async def plan_segment(self, pack, state, pacing):
-            raise AssertionError("Director should not be called on cache hit")
+            self.called = True
+            return await super().plan_segment(pack, state, pacing)
 
     pack = compile_source(budget_test_pack_dict())
     store = StoryEventStore(tmp_path / "choice_cache.db")
@@ -506,15 +846,28 @@ def test_pack_cache_hit_skips_planner_and_agent(tmp_path: Path):
 
     # Resolve to get pre_events.
     resolution = asyncio.run(FakePlanner().resolve_action(pack, post_state, choice))
-    pre_events = simulate_resolution(post_state, choice, resolution, "pregen-key")
+    selection = choice_selection_event(post_state, choice, "pregen-key")
 
     from src.story.state import EventEnvelope, apply_events
 
-    pre_envelopes = tuple(
-        EventEnvelope(session_id="s1", sequence=post_state.revision + i, event=e)
-        for i, e in enumerate(pre_events, start=1)
+    choice_envelope = EventEnvelope(
+        event_id="pregen-choice",
+        session_id="s1",
+        sequence=post_state.revision + 1,
+        event=selection,
     )
-    hypo_state = apply_events(post_state, pre_envelopes)
+    selected_state = apply_events(post_state, (choice_envelope,))
+    consequence_events = simulate_consequence(pack, selected_state, resolution)
+    pre_events = (selection, *consequence_events)
+    consequence_envelopes = tuple(
+        EventEnvelope(
+            session_id="s1",
+            sequence=selected_state.revision + i,
+            event=e,
+        )
+        for i, e in enumerate(consequence_events, start=1)
+    )
+    hypo_state = apply_events(selected_state, consequence_envelopes)
     pacing = compute_pacing_envelope(hypo_state, pack)
 
     director = FakeDirector()
@@ -539,14 +892,15 @@ def test_pack_cache_hit_skips_planner_and_agent(tmp_path: Path):
         ),
     )
 
-    # Now run choice turn with cache — should skip planner and director.
+    planner = RecordingPlanner()
+    director = RecordingDirector()
     choice_orch = TurnOrchestrator(
         store=store,
-        director=FailingDirector(),
+        director=director,
         writer=FakeSegmentWriter(),
         guard=FakeGuard(),
         completion_judge=CompletionJudge(),
-        planner=FailingPlanner(),
+        planner=planner,
         pack_cache=cache,
     )
 
@@ -560,6 +914,8 @@ def test_pack_cache_hit_skips_planner_and_agent(tmp_path: Path):
 
     ready1 = next(data for t, data in events1 if t == "segment_ready")
     assert ready1["revision"] > rev
+    assert planner.called
+    assert director.called
 
 
 def test_cache_miss_falls_through_to_normal_generation(tmp_path: Path):
@@ -593,48 +949,16 @@ def test_cache_miss_falls_through_to_normal_generation(tmp_path: Path):
     assert ready["terminal"] == "decision"
 
 
-def test_pregeneration_triggered_after_decision_commit(tmp_path: Path):
-    """After committing a decision segment, pregeneration_manager is called."""
+def test_pregen_manager_no_longer_exists_as_a_consumption_path(tmp_path: Path):
+    """The legacy PreGenerationManager was removed with its implicit-success
+    path.  No orchestrator surface accepts it anymore: choice cache entries
+    (see ``test_legacy_choice_cache_cannot_bypass_authoritative_flow``) are
+    never consumed, so consequences can only be committed by the
+    authoritative command flow."""
 
-    class RecordingPregenManager:
-        def __init__(self):
-            self.calls = []
+    import importlib
+    import inspect
 
-        async def pregenerate_choices(self, session_id, state, choices, pack):
-            self.calls.append(
-                {
-                    "session_id": session_id,
-                    "choices": list(choices),
-                }
-            )
-
-    pack = compile_source(budget_test_pack_dict())
-    store = StoryEventStore(tmp_path / "pregen_trigger.db")
-    state = initial_session_state(pack, "s1", session_seed=42)
-    store.create_session(state)
-
-    mock_pregen = RecordingPregenManager()
-
-    orch = TurnOrchestrator(
-        store=store,
-        director=FakeDirector(),
-        writer=FakeSegmentWriter(),
-        guard=FakeGuard(),
-        completion_judge=CompletionJudge(),
-        planner=FakePlanner(),
-        pregen_manager=mock_pregen,
-    )
-
-    gen = orch.execute_turn(pack, "s1", 0, "cmd-pregen", None)
-    _collect_events(gen)
-
-    # The background task fires asyncio.create_task which may not have
-    # completed yet.  Run the event loop briefly to let it schedule.
-    async def _drain():
-        await asyncio.sleep(0.1)
-
-    asyncio.run(_drain())
-
-    assert len(mock_pregen.calls) == 1
-    assert mock_pregen.calls[0]["session_id"] == "s1"
-    assert len(mock_pregen.calls[0]["choices"]) >= 2
+    assert "pregen_manager" not in inspect.signature(TurnOrchestrator.__init__).parameters
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("src.story.runtime.pregeneration")

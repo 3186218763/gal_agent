@@ -60,6 +60,7 @@ from .models import (
     NarrativeBlock,
     NarrativeThread,
     ObligationRuntime,
+    PendingConsequenceReference,
     PendingDecisionReference,
     PendingSceneReference,
     PresentedChoice,
@@ -75,7 +76,12 @@ from .models import (
     initial_session_state,
 )
 from .reducer import StateTransitionError, apply_event, apply_events
-from .semantic_derivation import derive_cost_incurred, derive_relationship_turning_points
+from .semantic_derivation import (
+    ChoiceCausalTrace,
+    derive_causal_traces,
+    derive_cost_incurred,
+    derive_relationship_turning_points,
+)
 
 __all__ = [
     "ActionResolved",
@@ -85,6 +91,7 @@ __all__ = [
     "CharacterDramaticStateChanged",
     "CharacterLearnedFact",
     "CharacterRuntime",
+    "ChoiceCausalTrace",
     "CompletionAssessmentRecord",
     "CompletionEvaluated",
     "CompletionState",
@@ -116,6 +123,7 @@ __all__ = [
     "ObligationCreated",
     "ObligationResolved",
     "ObligationRuntime",
+    "PendingConsequenceReference",
     "PendingDecisionReference",
     "PendingSceneReference",
     "PhaseAdvanced",
@@ -147,6 +155,7 @@ __all__ = [
     "WorldSnapshot",
     "apply_event",
     "apply_events",
+    "derive_causal_traces",
     "derive_cost_incurred",
     "derive_relationship_turning_points",
     "initial_session_state",

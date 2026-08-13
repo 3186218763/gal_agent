@@ -27,6 +27,11 @@ class ChoicePlan(RuntimeModel):
     action_id: str
     intent: str
     target_character_id: str | None = None
+    stance_axis: str | None = None
+    stance_value: str | None = None
+    accepted_risk: str | None = Field(default=None, max_length=240)
+    potential_obligation_kind: str | None = None
+    conflict_axis_id: str | None = None
 
 
 class FactCommitPlan(RuntimeModel):

@@ -7,7 +7,7 @@ React + TypeScript + Vite 段式播放器（segment-aware player）。
 - 🎮 基于 `POST /api/v2/sessions/{id}/turns` SSE 流的段式演出播放
 - ⏳ 段内积压缓冲：`segment_ready` 前的内容按 provisional 缓冲，解锁后才播放
 - ⌨️ 点击 / Enter 打字机推进，本地队列排空后才展示选项或结局
-- 🔄 刷新后从公开投影回放已提交段落，绝不重复发起 turn
+- 🔄 刷新后从公开投影回放已提交段落；Pending Consequence 仅通过 `/turns` 恢复一次
 - 🎨 优雅的深色主题、响应式设计
 
 ## 安装
@@ -39,7 +39,6 @@ frontend/
 ├── src/
 │   ├── segmentPlayer.ts    # 纯状态机：provisional 缓冲、解锁、排空、终局迁移
 │   ├── stream.ts           # SSE 消费：streamTurn（segment_started/block/segment_ready/heartbeat/retry_after/error）
-│   ├── streamLegacy.ts     # 旧 streamAdvance（deprecated，迁移期保留）
 │   ├── api.ts              # REST 客户端 + SessionProjection 段字段
 │   ├── Playback.tsx        # 段式播放组件（typewriter、buffering overlay、replay）
 │   ├── App.tsx             # 屏幕状态机（booting/start/play/choices/ending/error）

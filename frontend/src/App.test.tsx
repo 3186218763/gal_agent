@@ -163,14 +163,6 @@ beforeEach(() => {
       })}`)
       return sseResponse(events)
     }
-    if (url.includes('/choices/') && method === 'POST') {
-      return jsonResponse({
-        session_id: 's1',
-        revision: currentDoneRevision + 1,
-        action_id: 'ask',
-        outcome: 'success',
-      })
-    }
     return jsonResponse({ detail: { code: 'not_found' } }, 404)
   })
   vi.stubGlobal('fetch', fetchMock)

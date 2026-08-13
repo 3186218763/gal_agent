@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from src.story.script_pack import compile_source
+from src.story.script_pack.models import CompiledScriptPack
 from src.story.state.events import EventEnvelope, StoryEvent
 from src.story.state.models import SessionState, utc_now
 from src.story.state.reducer import apply_events
@@ -68,6 +71,12 @@ class StoryEventStore:
                     snapshot_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS script_pack_versions (
+                    pack_hash TEXT PRIMARY KEY,
+                    pack_id TEXT NOT NULL,
+                    source_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS story_events (
                     session_id TEXT NOT NULL,
                     sequence INTEGER NOT NULL,
@@ -92,11 +101,44 @@ class StoryEventStore:
                 );
                 """)
 
-    def create_session(self, state: SessionState) -> None:
+    def create_session(
+        self,
+        state: SessionState,
+        *,
+        pack: CompiledScriptPack | None = None,
+    ) -> None:
         if state.revision != 0:
             raise StoryStoreError("new session state must have revision 0")
+        if pack is not None and (
+            pack.pack_hash != state.pack_hash or pack.source.identity.id != state.pack_id
+        ):
+            raise StoryStoreError("session pack version does not match the supplied pack")
         try:
             with self._connect() as connection:
+                if pack is not None:
+                    source_json = pack.source.model_dump_json()
+                    existing = connection.execute(
+                        "SELECT pack_id, source_json FROM script_pack_versions WHERE pack_hash = ?",
+                        (pack.pack_hash,),
+                    ).fetchone()
+                    if existing is not None and (
+                        existing["pack_id"] != pack.source.identity.id
+                        or json.loads(existing["source_json"]) != json.loads(source_json)
+                    ):
+                        raise StoryStoreError("pack version hash is already bound differently")
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO script_pack_versions (
+                            pack_hash, pack_id, source_json, created_at
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            pack.pack_hash,
+                            pack.source.identity.id,
+                            source_json,
+                            utc_now().isoformat(),
+                        ),
+                    )
                 connection.execute(
                     """
                     INSERT INTO story_sessions (
@@ -114,6 +156,19 @@ class StoryEventStore:
                 )
         except sqlite3.IntegrityError as exc:
             raise SessionAlreadyExists(state.session_id) from exc
+
+    def load_pack_version(self, pack_hash: str) -> CompiledScriptPack:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT source_json FROM script_pack_versions WHERE pack_hash = ?",
+                (pack_hash,),
+            ).fetchone()
+        if row is None:
+            raise StoryStoreError(f"script pack version not found: {pack_hash}")
+        pack = compile_source(json.loads(row["source_json"]))
+        if pack.pack_hash != pack_hash:
+            raise StoryStoreError("stored script pack version hash does not match its content")
+        return pack
 
     def _load_with_connection(
         self, connection: sqlite3.Connection, session_id: str
@@ -347,11 +402,25 @@ class StoryEventStore:
         result_factory: Callable[[SessionState, tuple[EventEnvelope, ...]], str],
         *,
         now: datetime | None = None,
+        event_ids: Iterable[str] | None = None,
     ) -> tuple[SessionState, tuple[EventEnvelope, ...], str]:
+        """Atomically append ``events`` under a claimed command receipt.
+
+        ``event_ids`` optionally pins the committed envelope IDs (must be
+        unique and exactly one per event).  This lets semantic citations —
+        e.g. CompletionEvaluated evidence chains — reference the actual
+        committed IDs.  Without it, envelope IDs are generated randomly.
+        """
         now = now or utc_now()
         event_list = tuple(events)
         if not event_list:
             raise StoryStoreError("commit_command requires at least one event")
+        if event_ids is not None:
+            provided = tuple(event_ids)
+            if len(provided) != len(event_list):
+                raise StoryStoreError("event_ids must match the event count")
+            if len(set(provided)) != len(provided):
+                raise StoryStoreError("event_ids must be unique")
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -375,14 +444,27 @@ class StoryEventStore:
                 raise CommandRequestMismatch(
                     f"command {session_id}/{command_id} receipt does not match request"
                 )
-            envelopes = tuple(
-                EventEnvelope(
-                    session_id=session_id,
-                    sequence=state.revision + index,
-                    event=event,
+            if event_ids is None:
+                envelopes = tuple(
+                    EventEnvelope(
+                        session_id=session_id,
+                        sequence=state.revision + index,
+                        event=event,
+                    )
+                    for index, event in enumerate(event_list, start=1)
                 )
-                for index, event in enumerate(event_list, start=1)
-            )
+            else:
+                envelopes = tuple(
+                    EventEnvelope(
+                        event_id=event_id,
+                        session_id=session_id,
+                        sequence=state.revision + index,
+                        event=event,
+                    )
+                    for index, (event, event_id) in enumerate(
+                        zip(event_list, provided, strict=True), start=1
+                    )
+                )
             updated = apply_events(state, envelopes)
             connection.executemany(
                 """

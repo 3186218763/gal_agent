@@ -1,0 +1,3 @@
+# Commit Complete Replayable Segments
+
+Players see only a Committed Segment after generation, deterministic validation, semantic judgment, and atomic persistence all succeed. Each segment permanently binds final prose and Performance Cues to its structured events, Choice Meaning, causal references, and Script Pack Version; refresh and replay use that artifact rather than regenerating prior content. Technical failures and rejected drafts remain outside Committed History, preventing the player-visible story from diverging from authoritative state at the cost of delaying playback until the whole segment is accepted.

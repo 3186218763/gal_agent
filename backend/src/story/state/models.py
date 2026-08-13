@@ -152,6 +152,11 @@ class PresentedChoice(FrozenModel):
     intent: str = Field(min_length=1, max_length=240)
     target_character_id: str | None = None
     preview: str | None = Field(default=None, max_length=160)
+    stance_axis: str | None = None
+    stance_value: str | None = None
+    accepted_risk: str | None = Field(default=None, max_length=240)
+    potential_obligation_kind: str | None = None
+    conflict_axis_id: str | None = None
 
 
 class PendingSceneReference(FrozenModel):
@@ -166,6 +171,22 @@ class PendingDecisionReference(FrozenModel):
     scene_id: str
     revision: int = Field(ge=1)
     choices: tuple[PresentedChoice, ...] = Field(min_length=2, max_length=4)
+
+
+class PendingConsequenceReference(FrozenModel):
+    choice_event_id: str
+    decision_id: str
+    option_id: str
+    action_id: str
+    intent: str
+    target_character_id: str | None = None
+    stance_axis: str | None = None
+    stance_value: str | None = None
+    accepted_risk: str | None = None
+    potential_obligation_kind: str | None = None
+    conflict_axis_id: str | None = None
+    outcome: Literal["success", "partial", "resisted", "backfire"] | None = None
+    resolution_event_id: str | None = None
 
 
 class EndingRuntime(FrozenModel):
@@ -283,6 +304,7 @@ class SessionState(FrozenModel):
     threads: dict[str, NarrativeThread] = Field(default_factory=dict)
     pending_scene: PendingSceneReference | None = None
     pending_decision: PendingDecisionReference | None = None
+    pending_consequence: PendingConsequenceReference | None = None
     ending: EndingRuntime | None = None
     completion: CompletionState | None = None
 

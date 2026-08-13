@@ -81,6 +81,14 @@ export default function App() {
           } else {
             setScreen({ kind: 'start', pack })
           }
+        } else if (session.pending_consequence_status === 'awaiting_resolution') {
+          setScreen({
+            kind: 'play',
+            pack,
+            sessionId: storedId,
+            revision: session.revision,
+            choiceId: null,
+          })
         } else if (session.choices.length > 0 || (session.segment_choices && session.segment_choices.length > 0)) {
           // Has unplayed choices — replay segment blocks then show choices
           const choices = session.segment_choices.length > 0 ? session.segment_choices : session.choices

@@ -141,6 +141,78 @@ describe('App screen transitions', () => {
     expect(turnCalls).toHaveLength(0)
   })
 
+  it('recovers a committed choice once after refresh without replaying provisional content', async () => {
+    saveSessionId('s1')
+    let projection: SessionProjection = sessionBody({
+      segment_blocks: [],
+      segment_choices: [CHOICE, SECOND_CHOICE],
+    })
+    const turnBodies: Array<{
+      choice_id: string | null
+      expected_revision: number
+      idempotency_key: string
+    }> = []
+
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/packs/') && method === 'GET') return jsonResponse(PACK)
+      if (url.match(/\/sessions\/[^/]+$/) && method === 'GET') return jsonResponse(projection)
+      if (url.endsWith('/turns') && method === 'POST') {
+        const body = JSON.parse(init?.body as string) as (typeof turnBodies)[number]
+        turnBodies.push(body)
+        if (body.choice_id === CHOICE.id) {
+          return sseResponse([
+            'event: segment_started\ndata: {"segment_id":"failed-segment","expected_revision":1}',
+            'event: block\ndata: {"segment_id":"failed-segment","index":0,"kind":"narration","text":"未提交的失败文本。"}',
+            'event: error\ndata: {"code":"generation_failed"}',
+          ])
+        }
+        return sseResponse([
+          'event: segment_started\ndata: {"segment_id":"recovered-segment","expected_revision":2}',
+          'event: block\ndata: {"segment_id":"recovered-segment","index":0,"kind":"narration","text":"恢复后的已提交结果。"}',
+          'event: segment_ready\ndata: ' + JSON.stringify({
+            segment_id: 'recovered-segment',
+            revision: 3,
+            terminal: 'decision',
+            choices: [SECOND_CHOICE],
+          }),
+        ], 50)
+      }
+      return jsonResponse({ detail: { code: 'not_found' } }, 404)
+    })
+
+    const firstMount = render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /A 询问/ }, { timeout: 3000 }))
+
+    expect(await screen.findByText('生成失败，请重试', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByText('未提交的失败文本。')).not.toBeInTheDocument()
+
+    firstMount.unmount()
+    projection = sessionBody({
+      revision: 2,
+      pending_consequence_status: 'awaiting_resolution',
+      // Even if a stale client-facing choice list is present, recovery takes precedence.
+      choices: [CHOICE],
+      segment_choices: [CHOICE],
+    })
+    render(<App />)
+
+    expect(await screen.findByText('正在生成…', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByText('未提交的失败文本。')).not.toBeInTheDocument()
+    expect(screen.queryByText('恢复后的已提交结果。')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /询问/ })).not.toBeInTheDocument()
+
+    expect(await screen.findByText('恢复后的已提交结果。', {}, { timeout: 3000 })).toBeInTheDocument()
+    const recoveryTurns = turnBodies.filter((body) => body.choice_id === null)
+    expect(recoveryTurns).toHaveLength(1)
+    expect(recoveryTurns[0].expected_revision).toBe(2)
+    expect(typeof recoveryTurns[0].idempotency_key).toBe('string')
+    expect(recoveryTurns[0].idempotency_key.length).toBeGreaterThan(0)
+    expect(turnBodies.filter((body) => body.choice_id === CHOICE.id)).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: /A 询问/ })).not.toBeInTheDocument()
+  })
+
   it('clears a stale stored session and returns to start on session_not_found', async () => {
     saveSessionId('s1')
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

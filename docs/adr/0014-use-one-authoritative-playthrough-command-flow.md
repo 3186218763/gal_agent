@@ -1,0 +1,3 @@
+# Use One Authoritative Playthrough Command Flow
+
+All production transports invoke one authoritative Playthrough command flow: generate the opening, commit a presented Player Choice, then resolve its Pending Consequence into the next Committed Segment or Dynamic Ending. HTTP streaming, future sockets, workers, and speculative generation are adapters or optimizations and cannot define alternate state transitions or skip validation. At Required Convergence the same flow permits only a valid ending; repeated generation or Semantic Judge failure remains recoverable and never falls through to placeholder fiction. This removes compatibility with parallel legacy mutation paths in exchange for one enforceable reliability contract.
