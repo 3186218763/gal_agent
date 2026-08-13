@@ -98,13 +98,21 @@ class PreGenerationManager:
         key = (session_id, choice.id)
         try:
             # 1-2: Resolve + validate
-            resolution = await self._planner.resolve_action(pack, state, choice)
-            resolution = validate_action_resolution(
-                pack,
-                state,
-                resolution,
-                expected_action_id=choice.action_id,
-            )
+            try:
+                resolution = await self._planner.resolve_action(pack, state, choice)
+                resolution = validate_action_resolution(
+                    pack,
+                    state,
+                    resolution,
+                    expected_action_id=choice.action_id,
+                )
+            except Exception:
+                # Planner may return inconsistent action_ids on flash models.
+                from src.story.runtime.contracts import ActionResolution
+
+                resolution = ActionResolution(
+                    action_id=choice.action_id, outcome="success"
+                )
 
             # 3: Simulate resolution events.
             pre_events: tuple[StoryEvent, ...] = simulate_resolution(

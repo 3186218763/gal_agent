@@ -19,6 +19,7 @@ from src.story.runtime.contracts import (
     RuntimeModel,
     SegmentDraft,
     SegmentPlan,
+    WrittenChoice,
 )
 from src.story.runtime.model import ProviderStrictOutputSchema, run_with_contract_retry
 from src.story.runtime.segment_context import (
@@ -253,7 +254,7 @@ same segment_id, same scene_ids in the same order.
 
 ═══ OPENING-SPECIFIC RULES ═══
 
-1. Generate 8-15 scenes (target 30-50 narrative blocks total).
+1. Generate 3-5 scenes (target 10-20 narrative blocks total).
 2. The opening must world-build: establish the setting, character relationships,
    and the initial conflict or mystery.
 3. Do NOT rush to a decision — let the player immerse in the opening atmosphere.
@@ -341,15 +342,30 @@ class SdkUnifiedSegmentAgent:
             ensure_ascii=False,
         )
         output = await run_with_contract_retry(self.agent, prompt, UnifiedSegmentOutput)
-        # Extra validation: draft choices must match plan choices
+        # Extra validation: draft choices must match plan choices.
+        # If the model forgot to put choices in the draft, auto-repair
+        # by deriving WrittenChoice entries from the plan's ChoicePlan list.
         if output.segment_plan.terminal == "decision":
             plan_scene = output.segment_plan.scenes[-1]
-            plan_option_ids = (
-                {c.option_id for c in plan_scene.choices} if plan_scene.choices else set()
-            )
-            draft_option_ids = {c.option_id for c in output.segment_draft.choices}
-            if plan_option_ids and not plan_option_ids.issubset(draft_option_ids):
-                raise ModelContractError(
-                    f"draft choices {draft_option_ids} do not cover plan choices {plan_option_ids}"
+            plan_choices = plan_scene.choices if plan_scene.choices else ()
+            plan_option_ids = {c.option_id for c in plan_choices}
+            draft_map = {c.option_id: c for c in output.segment_draft.choices}
+            missing_ids = plan_option_ids - set(draft_map)
+            if missing_ids:
+                repaired = list(output.segment_draft.choices)
+                for pc in plan_choices:
+                    if pc.option_id in missing_ids:
+                        repaired.append(
+                            WrittenChoice(
+                                option_id=pc.option_id,
+                                label=pc.intent[:80],
+                            )
+                        )
+                output = output.model_copy(
+                    update={
+                        "segment_draft": output.segment_draft.model_copy(
+                            update={"choices": tuple(repaired)}
+                        )
+                    }
                 )
         return output

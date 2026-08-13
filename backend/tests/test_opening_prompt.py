@@ -18,7 +18,7 @@ def test_opening_instructions_mention_long_scene_target():
     lowered = OPENING_INSTRUCTIONS.lower()
     assert "opening" in lowered
     # Should mention either a scene count target or block count target
-    assert "8-15" in OPENING_INSTRUCTIONS or "30" in OPENING_INSTRUCTIONS
+    assert "3-5" in OPENING_INSTRUCTIONS or "10-20" in OPENING_INSTRUCTIONS
 
 
 def test_unified_instructions_have_length_guidance():
