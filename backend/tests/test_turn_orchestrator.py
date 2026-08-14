@@ -24,6 +24,7 @@ from src.story.runtime.simulator import (
     simulate_segment,
 )
 from src.story.runtime.turn_orchestrator import TurnOrchestrator
+from src.story.runtime.unified_segment import UnifiedSegmentOutput
 from src.story.runtime.validator import (
     validate_segment_draft,
     validate_segment_plan,
@@ -89,6 +90,238 @@ def test_opening_turn_streams_segment_started_blocks_ready(tmp_path: Path):
     ready = next(data for t, data in events if t == "segment_ready")
     assert ready["terminal"] == "decision"
     assert len(ready["choices"]) == 2
+
+
+def test_turn_streams_progress_stages_before_segment_events(tmp_path: Path):
+    pack, _store, orch = _build_orchestrator(tmp_path)
+    events = _collect_events(orch.execute_turn(pack, "s1", 0, "cmd-progress", None))
+
+    stages = [data["stage"] for t, data in events if t == "progress"]
+    assert stages == ["generating", "validating", "committing"]
+    for _t, data in events:
+        if "elapsed_ms" in data:
+            assert data["elapsed_ms"] >= 0
+    # every progress event precedes the committed segment stream
+    first_segment = next(
+        i for i, (t, _data) in enumerate(events) if t == "segment_started"
+    )
+    last_progress = max(i for i, (t, _data) in enumerate(events) if t == "progress")
+    assert last_progress < first_segment
+
+
+def test_choice_turn_streams_planning_stage(tmp_path: Path):
+    pack, _store, orch = _build_orchestrator(tmp_path)
+    opening = _collect_events(orch.execute_turn(pack, "s1", 0, "cmd-open", None))
+    ready = next(data for t, data in opening if t == "segment_ready")
+    choice_id = ready["choices"][0]["id"]
+    revision = ready["revision"]
+
+    events = _collect_events(
+        orch.execute_turn(pack, "s1", revision, f"cmd-choice-{choice_id}", choice_id)
+    )
+    stages = [data["stage"] for t, data in events if t == "progress"]
+    assert stages == ["planning", "generating", "validating", "committing"]
+
+
+def test_slow_generation_emits_heartbeats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "src.story.runtime.turn_orchestrator._HEARTBEAT_INTERVAL_SECONDS", 0.01
+    )
+
+    class SlowDirector(FakeDirector):
+        async def plan_segment(self, pack, state, pacing):
+            await asyncio.sleep(0.05)
+            return await super().plan_segment(pack, state, pacing)
+
+    pack = compile_source(budget_test_pack_dict())
+    store = StoryEventStore(tmp_path / "turn_heartbeat.db")
+    state = initial_session_state(pack, "s1", session_seed=42)
+    store.create_session(state)
+    orch = TurnOrchestrator(
+        store=store,
+        director=SlowDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=FakePlanner(),
+    )
+
+    events = _collect_events(orch.execute_turn(pack, "s1", 0, "cmd-slow", None))
+    heartbeats = [data for t, data in events if t == "heartbeat"]
+    assert heartbeats, "a slow model call must emit heartbeats"
+    assert all("elapsed_ms" in data for data in heartbeats)
+    # the turn still completes normally despite the slow call
+    assert any(t == "segment_ready" for t, _data in events)
+
+
+async def _valid_unified_output(pack, state, pacing):
+    """Produce a validator-clean UnifiedSegmentOutput via the fakes."""
+    director = FakeDirector()
+    writer = FakeSegmentWriter()
+    plan = await director.plan_segment(pack, state, pacing)
+    plan = validate_segment_plan(pack, state, plan, pacing)
+    draft = await writer.write_segment(pack, state, plan)
+    draft = validate_segment_draft(plan, draft)
+    return UnifiedSegmentOutput(segment_plan=plan, segment_draft=draft)
+
+
+def test_judge_rejection_regenerates_once_with_notes(tmp_path: Path):
+    """A judge-rejected proposal gets one regeneration carrying the blocking
+    findings; the turn commits only when the revision passes."""
+    from src.story.runtime.semantic_judge import JudgeFinding, JudgeFindings
+
+    pack = compile_source(budget_test_pack_dict())
+
+    class RecordingUnifiedAgent:
+        def __init__(self) -> None:
+            self.notes: list[tuple[str, ...]] = []
+
+        async def generate(self, pack, state, pacing, *, rejection_notes=()):
+            self.notes.append(rejection_notes)
+            return await _valid_unified_output(pack, state, pacing)
+
+    class RejectOnceJudge:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def judge_segment(self, pack, state, plan, draft, pending_choice=None):
+            self.calls += 1
+            if self.calls == 1:
+                return JudgeFindings(
+                    findings=(
+                        JudgeFinding(
+                            kind="choice_reversal",
+                            severity="blocking",
+                            detail="the segment ignores the player's committed stance",
+                        ),
+                    )
+                )
+            return JudgeFindings()
+
+    agent = RecordingUnifiedAgent()
+    judge = RejectOnceJudge()
+    store = StoryEventStore(tmp_path / "turn_retry.db")
+    store.create_session(initial_session_state(pack, "s1", session_seed=42))
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=FakePlanner(),
+        unified_agent=agent,
+        semantic_judge=judge,
+    )
+
+    events = _collect_events(orch.execute_turn(pack, "s1", 0, "cmd-retry", None))
+
+    assert any(t == "segment_ready" for t, _data in events)
+    stages = [data["stage"] for t, data in events if t == "progress"]
+    assert "regenerating" in stages
+    assert judge.calls == 2
+    assert len(agent.notes) == 2
+    assert agent.notes[0] == ()
+    assert agent.notes[1] and "choice_reversal" in agent.notes[1][0]
+
+
+def test_second_judge_rejection_fails_closed(tmp_path: Path):
+    """Two rejected proposals commit nothing and fail closed."""
+    from src.story.runtime.semantic_judge import JudgeFinding, JudgeFindings
+
+    pack = compile_source(budget_test_pack_dict())
+
+    class AlwaysRejectJudge:
+        async def judge_segment(self, pack, state, plan, draft, pending_choice=None):
+            return JudgeFindings(
+                findings=(
+                    JudgeFinding(
+                        kind="canon_contradiction",
+                        severity="blocking",
+                        detail="contradicts a committed fact",
+                    ),
+                )
+            )
+
+    class AlwaysGenerateAgent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate(self, pack, state, pacing, *, rejection_notes=()):
+            self.calls += 1
+            return await _valid_unified_output(pack, state, pacing)
+
+    agent = AlwaysGenerateAgent()
+    store = StoryEventStore(tmp_path / "turn_failclosed.db")
+    store.create_session(initial_session_state(pack, "s1", session_seed=42))
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=FakePlanner(),
+        unified_agent=agent,
+        semantic_judge=AlwaysRejectJudge(),
+    )
+
+    with pytest.raises(RuntimeGenerationUnavailable) as exc_info:
+        _collect_events(orch.execute_turn(pack, "s1", 0, "cmd-fail", None))
+
+    assert "semantic judge rejected segment" in str(exc_info.value)
+    assert agent.calls == 2
+    assert store.load_events("s1") == ()
+
+
+def test_preapproved_cached_opening_skips_runtime_judge(tmp_path: Path):
+    """A cache stamped judge_preapproved is not re-judged at runtime."""
+    from src.story.runtime.pacing import compute_pacing_envelope
+    from src.story.runtime.pack_cache import CachedOpening, PackCache
+    from src.story.runtime.simulator import simulate_segment
+
+    pack = compile_source(budget_test_pack_dict())
+    state = initial_session_state(pack, "cache_builder", session_seed=1)
+    pacing = compute_pacing_envelope(state, pack)
+    # build a valid plan/draft through the fakes
+    plan = validate_segment_plan(
+        pack,
+        state,
+        asyncio.run(FakeDirector().plan_segment(pack, state, pacing)),
+        pacing,
+    )
+    draft = validate_segment_draft(
+        plan, asyncio.run(FakeSegmentWriter().write_segment(pack, state, plan))
+    )
+    cache = PackCache(tmp_path / "pack_cache")
+    cache.save_opening(
+        pack.pack_hash,
+        CachedOpening(
+            segment_plan=plan,
+            segment_draft=draft,
+            seg_events=simulate_segment(pack, state, plan, draft),
+            pacing=pacing,
+            judge_preapproved=True,
+        ),
+    )
+
+    class FailIfCalledJudge:
+        async def judge_segment(self, *args, **kwargs):
+            raise AssertionError("runtime must not re-judge a pre-approved opening")
+
+    store = StoryEventStore(tmp_path / "turn_preapproved.db")
+    store.create_session(initial_session_state(pack, "s1", session_seed=3))
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=FakePlanner(),
+        pack_cache=cache,
+        semantic_judge=FailIfCalledJudge(),
+    )
+
+    events = _collect_events(orch.execute_turn(pack, "s1", 0, "cmd-pre", None))
+    assert any(t == "segment_ready" for t, _data in events)
 
 
 def test_segment_ready_choices_come_from_draft_when_plan_scene_has_none(

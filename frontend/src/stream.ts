@@ -24,7 +24,18 @@ export interface StreamSegmentReady {
 
 export interface StreamHeartbeat {
   event: 'heartbeat'
-  data: Record<string, never>
+  data: { elapsed_ms?: number }
+}
+
+export interface StreamProgress {
+  event: 'progress'
+  data: ProgressData
+}
+
+export interface ProgressData {
+  /** Pipeline stage: planning | generating | validating | committing */
+  stage: string
+  elapsed_ms: number
 }
 
 export interface StreamError {
@@ -42,6 +53,7 @@ export type StreamEvent =
   | StreamBlock
   | StreamSegmentReady
   | StreamHeartbeat
+  | StreamProgress
   | StreamError
   | StreamRetryAfter
 
@@ -149,6 +161,7 @@ function parseSSEChunk(chunk: string): StreamEvent | null {
     'block',
     'segment_ready',
     'heartbeat',
+    'progress',
     'error',
     'retry_after',
   ]

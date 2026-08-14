@@ -22,7 +22,7 @@ class OpenCodeGoSettings(BaseModel):
     base_url: str = "https://opencode.ai/zen/go/v1"
     model: str = "deepseek-v4-flash"
     api: Literal["responses"] = "responses"
-    timeout_seconds: float = Field(default=45, gt=0, le=300)
+    timeout_seconds: float | None = Field(default=45, gt=0, le=3600)
     max_retries: int = Field(default=1, ge=0, le=2)
 
     @field_validator("base_url")
@@ -58,6 +58,14 @@ class OpenCodeGoSettings(BaseModel):
             base_url=env.get("OPENCODE_GO_BASE_URL", "https://opencode.ai/zen/go/v1").rstrip("/"),
             model=env.get("GAL_LLM_MODEL", "deepseek-v4-flash"),
             api=api,
-            timeout_seconds=float(env.get("GAL_LLM_TIMEOUT_SECONDS", "45")),
+            timeout_seconds=_parse_timeout(env.get("GAL_LLM_TIMEOUT_SECONDS") or "45"),
             max_retries=int(env.get("GAL_LLM_MAX_RETRIES", "1")),
         )
+
+
+def _parse_timeout(raw: str) -> float | None:
+    """Parse ``GAL_LLM_TIMEOUT_SECONDS``; ``0`` (or ``none``) means no timeout."""
+    value = raw.strip().lower()
+    if value in {"0", "0.0", "none"}:
+        return None
+    return float(value)

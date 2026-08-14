@@ -9,6 +9,24 @@ import { SegmentPlayer, type EndingMeta, type SegmentPlayerState } from './segme
 const PLACEHOLDER_COLORS = ['#d96c5f', '#5f9bd9', '#d9b45f', '#7fbf7f', '#b08fd9', '#5fd0c4']
 const TYPEWRITER_MS = 33
 
+// Pipeline stages streamed by the backend /turns endpoint, in order.
+// 'regenerating' arrives out of order (after a rejected proposal) and is
+// rendered as a single step instead of part of the ordered stepper.
+const STAGE_ORDER = ['planning', 'generating', 'validating', 'committing'] as const
+const STAGE_LABELS: Record<string, string> = {
+  planning: '推演选择后果',
+  generating: '撰写故事段落',
+  validating: '校验一致性',
+  committing: '提交回合',
+  regenerating: '校验未过，重新撰写',
+}
+
+function formatElapsed(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
 function placeholderColor(characterId: string): string {
   let hash = 0
   for (const ch of characterId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
@@ -54,6 +72,8 @@ export default function Playback({
   const [typing, setTyping] = useState(false)
   const [waiting, setWaiting] = useState(false)
   const [isBuffering, setIsBuffering] = useState(!replayBlocks)
+  const [stage, setStage] = useState<string | null>(null)
+  const [elapsedSec, setElapsedSec] = useState(0)
 
   // Lazy-init: SegmentPlayer is a class instance, so creating it in the
   // useRef initializer would allocate a new player on every render.
@@ -66,6 +86,7 @@ export default function Playback({
     keyRef.current = newCommandId()
   }
   const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isMountedRef = useRef(true)
   const logRef = useRef<HTMLDivElement>(null)
   const drainedNotifiedRef = useRef(false)
@@ -134,7 +155,12 @@ export default function Playback({
     async function startStream() {
       setWaiting(true)
       setIsBuffering(true)
+      setStage(null)
+      setElapsedSec(0)
       player.start()
+      elapsedTimerRef.current = setInterval(() => {
+        if (isMountedRef.current) setElapsedSec((s) => s + 1)
+      }, 1000)
 
       try {
         for await (const evt of streamTurn(sessionId, choiceId, expectedRevision, key, controller.signal)) {
@@ -149,6 +175,11 @@ export default function Playback({
             // Blocks are now unlocked in SegmentPlayer; start dequeuing
             setIsBuffering(false)
             setWaiting(false)
+            setStage(null)
+            if (elapsedTimerRef.current) {
+              clearInterval(elapsedTimerRef.current)
+              elapsedTimerRef.current = null
+            }
             // Auto-start first block
             const playable = player.playableBlocks
             if (playable.length > 0 && !currentBlockRef.current) {
@@ -164,6 +195,9 @@ export default function Playback({
             }
           } else if (evt.event === 'heartbeat') {
             // Keep-alive, no state change
+          } else if (evt.event === 'progress') {
+            // Pipeline stage transition from the backend
+            setStage(evt.data.stage)
           } else if (evt.event === 'retry_after') {
             // Command lease still active — show fixed retry text, keep old revision
             onError('正在处理中，请稍后重试')
@@ -212,6 +246,7 @@ export default function Playback({
       isMountedRef.current = false
       controller.abort()
       if (typingTimerRef.current) clearInterval(typingTimerRef.current)
+      if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, expectedRevision, choiceId])
@@ -257,7 +292,7 @@ export default function Playback({
     <>
       {isBuffering && (
         <div className="buffering-overlay" role="status">
-          <p className="busy-hint">正在生成…</p>
+          <TurnProgress stage={stage} elapsedSec={elapsedSec} />
         </div>
       )}
       <div
@@ -284,6 +319,32 @@ export default function Playback({
         {typing ? '点击跳过' : waiting ? '' : '▼ 点击继续 / Enter'}
       </div>
     </>
+  )
+}
+
+function TurnProgress({ stage, elapsedSec }: { stage: string | null; elapsedSec: number }) {
+  const currentIdx = stage != null ? STAGE_ORDER.indexOf(stage as (typeof STAGE_ORDER)[number]) : -1
+  const steps = currentIdx >= 0 ? STAGE_ORDER.slice(0, currentIdx + 1) : stage ? [stage] : []
+  return (
+    <div className="turn-progress">
+      <p className="busy-hint">正在生成…</p>
+      <div className="progress-track" aria-hidden="true">
+        <div className="progress-runner" />
+      </div>
+      {steps.length > 0 && (
+        <ol className="progress-steps">
+          {steps.map((s, i) => (
+            <li
+              key={s}
+              className={i === steps.length - 1 ? 'progress-step current' : 'progress-step done'}
+            >
+              {STAGE_LABELS[s] ?? '处理中'}
+            </li>
+          ))}
+        </ol>
+      )}
+      <p className="progress-elapsed">已用时 {formatElapsed(elapsedSec)}</p>
+    </div>
   )
 }
 

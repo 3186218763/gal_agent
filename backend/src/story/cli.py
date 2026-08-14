@@ -123,15 +123,18 @@ async def ensure_opening_cache(
     cache: PackCache,
     opening_agent,
     guard,
+    semantic_judge=None,
     force: bool = False,
 ) -> dict:
     """Generate the Opening Segment and persist it to *cache* if missing.
 
     Shared by ``init-pack`` (CLI) and API startup warmup.  The cached
     opening passes the same deterministic validation and guard chain the
-    authoritative flow uses, and may only seed an opening generation.  It
-    never defines production state transitions — no pre-generated
-    consequences and no implicit success result are ever written.
+    authoritative flow uses, and — when a semantic judge is configured —
+    the judge too, once at cache-build time.  It may only seed an opening
+    generation.  It never defines production state transitions — no
+    pre-generated consequences and no implicit success result are ever
+    written.
     """
     from src.story.runtime.pacing import compute_pacing_envelope
     from src.story.runtime.pack_cache import CachedOpening
@@ -158,6 +161,16 @@ async def ensure_opening_cache(
     if not guard_result.passed:
         raise RuntimeError("guard rejected opening segment")
 
+    judge_preapproved = False
+    if semantic_judge is not None:
+        findings = await semantic_judge.judge_segment(pack, state, plan, draft)
+        if not findings.passed:
+            reasons = " | ".join(
+                f"{f.kind}: {f.detail}" for f in findings.blocking
+            )
+            raise RuntimeError(f"semantic judge rejected opening segment: {reasons}")
+        judge_preapproved = True
+
     seg_events = simulate_segment(pack, state, plan, draft)
 
     cache.save_opening(
@@ -167,6 +180,7 @@ async def ensure_opening_cache(
             segment_draft=draft,
             seg_events=seg_events,
             pacing=pacing,
+            judge_preapproved=judge_preapproved,
         ),
     )
     return {
@@ -182,6 +196,7 @@ async def _init_pack(
     cache_root: Path,
     opening_agent,
     guard,
+    semantic_judge=None,
     force: bool = False,
 ) -> dict:
     """CLI wrapper around :func:`ensure_opening_cache`."""
@@ -192,6 +207,7 @@ async def _init_pack(
         cache=PackCache(cache_root),
         opening_agent=opening_agent,
         guard=guard,
+        semantic_judge=semantic_judge,
         force=force,
     )
 

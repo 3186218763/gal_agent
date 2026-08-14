@@ -71,6 +71,8 @@ class UnifiedSegmentPort(Protocol):
         pack: CompiledScriptPack,
         state: SessionState,
         pacing: PacingEnvelope,
+        *,
+        rejection_notes: tuple[str, ...] = (),
     ) -> UnifiedSegmentOutput: ...
 
 
@@ -332,14 +334,18 @@ class SdkUnifiedSegmentAgent:
         pack: CompiledScriptPack,
         state: SessionState,
         pacing: PacingEnvelope,
+        *,
+        rejection_notes: tuple[str, ...] = (),
     ) -> UnifiedSegmentOutput:
-        prompt = json.dumps(
-            {
-                "operation": "plan_and_write_segment",
-                "context": build_unified_context(pack, state, pacing),
-            },
-            ensure_ascii=False,
-        )
+        payload: dict[str, Any] = {
+            "operation": "plan_and_write_segment",
+            "context": build_unified_context(pack, state, pacing),
+        }
+        if rejection_notes:
+            # Guard/judge reasons from a rejected attempt: the writer must
+            # fix these while keeping every other contract rule.
+            payload["fix_these_rejection_reasons"] = list(rejection_notes)
+        prompt = json.dumps(payload, ensure_ascii=False)
         output = await run_with_contract_retry(self.agent, prompt, UnifiedSegmentOutput)
         # Extra validation: draft choices must match plan choices.
         # If the model forgot to put choices in the draft, auto-repair

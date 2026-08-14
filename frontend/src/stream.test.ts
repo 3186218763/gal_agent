@@ -68,6 +68,33 @@ describe('streamTurn', () => {
     expect(events).toEqual(['segment_started', 'heartbeat', 'block', 'heartbeat', 'segment_ready'])
   })
 
+  it('yields progress events with stage and elapsed_ms', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeSSEResponse([
+        'event: progress\ndata: {"stage":"generating","elapsed_ms":12}',
+        'event: progress\ndata: {"stage":"validating","elapsed_ms":3400}',
+        'event: heartbeat\ndata: {"elapsed_ms":15000}',
+        'event: segment_ready\ndata: {"segment_id":"seg-1","revision":1,"terminal":"decision","choices":[]}',
+      ]),
+    )
+
+    const events: StreamEvent[] = []
+    for await (const evt of streamTurn('s1', null, 0, 'key-1')) {
+      events.push(evt)
+    }
+
+    expect(events.map((e) => e.event)).toEqual([
+      'progress',
+      'progress',
+      'heartbeat',
+      'segment_ready',
+    ])
+    expect(events[0]).toEqual({
+      event: 'progress',
+      data: { stage: 'generating', elapsed_ms: 12 },
+    })
+  })
+
   it('yields error events', async () => {
     fetchMock.mockResolvedValueOnce(
       makeSSEResponse([

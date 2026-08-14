@@ -105,12 +105,13 @@ OPENCODE_GO_API_KEY=
 OPENCODE_GO_BASE_URL=https://opencode.ai/zen/go/v1
 GAL_LLM_MODEL=deepseek-v4-flash
 GAL_LLM_API=responses
-GAL_LLM_TIMEOUT_SECONDS=45
+GAL_LLM_TIMEOUT_SECONDS=0
 GAL_LLM_MAX_RETRIES=1
 ```
 
 Notes:
 
+- `GAL_LLM_TIMEOUT_SECONDS=0` (or `none`) disables the per-call timeout for slow providers; a positive value (max 3600) caps each call in seconds.
 - Only `GAL_LLM_API=responses` is accepted. There is no Chat Completions path.
 - `OPENAI_API_KEY` may alias `OPENCODE_GO_API_KEY` if both are equal; mismatched values fail startup.
 - Any key previously exposed in chat must be **revoked**. Do not put secrets in `.env.example` or the repo.
@@ -208,7 +209,7 @@ gal_agent/
 
 `/turns` is the one production mutation interface; the legacy `/advance` and `/choices/{id}` routes are removed and return 404. Every mutation requires an `idempotency_key`; retrying a completed command with the same key replays its stored result and appends no new events. Reads return safe public projections — internal state (fact truth values, character knowledge, beliefs, suspicions, goals, seeds, pack hashes) never crosses the API boundary.
 
-The `/turns` endpoint streams `segment_started`, `block`, `segment_ready`, `heartbeat`, `retry_after`, and `error` SSE events; `segment_ready` carries `terminal`, `revision`, committed `blocks`, and `choices` or `ending` (one null). The frontend treats blocks as provisional until `segment_ready`.
+The `/turns` endpoint streams `progress` (pipeline stage: `planning`/`generating`/`validating`/`committing`, with `elapsed_ms`), `segment_started`, `block`, `segment_ready`, `heartbeat` (periodic during long model calls), `retry_after`, and `error` SSE events; `segment_ready` carries `terminal`, `revision`, committed `blocks`, and `choices` or `ending` (one null). The frontend treats blocks as provisional until `segment_ready`.
 
 `choice_id` semantics: `null` on a fresh session generates the opening; an offered `id` commits that choice and generates its consequence; `null` while `pending_consequence_status: "awaiting_resolution"` resumes exactly the pending consequence (the old choices are not re-offered). A failed generation yields an `error` frame (`generation_unavailable`); the durable GET projection then shows either an unmodified session or a Pending Consequence to recover — never a placeholder success.
 

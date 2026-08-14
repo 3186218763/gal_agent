@@ -35,12 +35,18 @@ class CachedOpening(RuntimeModel):
     Contains the fully validated plan, draft, simulated events, and the
     pacing envelope used during generation.  At runtime the orchestrator
     loads this and skips all LLM / pacing / simulation work.
+
+    ``judge_preapproved`` records that the semantic judge accepted this
+    exact content at cache-build time; only then may the runtime skip the
+    judge.  Caches built without a judge (offline ``init-pack``) carry
+    ``False`` and are judged on first use like any fresh proposal.
     """
 
     segment_plan: SegmentPlan
     segment_draft: SegmentDraft
     seg_events: tuple[StoryEvent, ...]
     pacing: PacingEnvelope
+    judge_preapproved: bool = False
 
 
 class CachedPregen(RuntimeModel):

@@ -187,3 +187,94 @@ def test_init_pack_force_regenerates_opening(tmp_path: Path):
 
     assert len(calls) == 2
     assert PackCache(cache_root).has_opening(pack.pack_hash)
+
+
+def test_init_pack_judge_approval_is_stamped_into_cache(tmp_path: Path):
+    """A judge-approved opening is persisted with judge_preapproved=True."""
+    import asyncio
+
+    from src.story.cli import _init_pack
+    from src.story.runtime.pack_cache import PackCache
+    from src.story.runtime.semantic_judge import JudgeFindings
+    from src.story.runtime.unified_segment import UnifiedSegmentOutput
+    from src.story.script_pack import compile_script_pack
+    from tests.fakes import FakeDirector, FakeGuard, FakeSegmentWriter
+
+    class FakeOpeningAgent:
+        async def generate(self, pack, state, pacing):
+            director = FakeDirector()
+            writer = FakeSegmentWriter()
+            plan = await director.plan_segment(pack, state, pacing)
+            draft = await writer.write_segment(pack, state, plan)
+            return UnifiedSegmentOutput(segment_plan=plan, segment_draft=draft)
+
+    class PassingJudge:
+        async def judge_segment(self, pack, state, plan, draft, pending_choice=None):
+            return JudgeFindings()
+
+    pack = compile_script_pack(PACK_DIR)
+    cache_root = tmp_path / "pack_cache"
+
+    result = asyncio.run(
+        _init_pack(
+            pack=pack,
+            cache_root=cache_root,
+            opening_agent=FakeOpeningAgent(),
+            guard=FakeGuard(),
+            semantic_judge=PassingJudge(),
+        )
+    )
+
+    assert result["status"] == "initialized"
+    cached = PackCache(cache_root).load_opening(pack.pack_hash)
+    assert cached is not None and cached.judge_preapproved is True
+
+
+def test_init_pack_rejected_by_judge_writes_no_cache(tmp_path: Path):
+    """A judge-rejected opening is never cached."""
+    import asyncio
+
+    import pytest
+
+    from src.story.cli import _init_pack
+    from src.story.runtime.pack_cache import PackCache
+    from src.story.runtime.semantic_judge import JudgeFinding, JudgeFindings
+    from src.story.runtime.unified_segment import UnifiedSegmentOutput
+    from src.story.script_pack import compile_script_pack
+    from tests.fakes import FakeDirector, FakeGuard, FakeSegmentWriter
+
+    class FakeOpeningAgent:
+        async def generate(self, pack, state, pacing):
+            director = FakeDirector()
+            writer = FakeSegmentWriter()
+            plan = await director.plan_segment(pack, state, pacing)
+            draft = await writer.write_segment(pack, state, plan)
+            return UnifiedSegmentOutput(segment_plan=plan, segment_draft=draft)
+
+    class RejectingJudge:
+        async def judge_segment(self, pack, state, plan, draft, pending_choice=None):
+            return JudgeFindings(
+                findings=(
+                    JudgeFinding(
+                        kind="canon_contradiction",
+                        severity="blocking",
+                        detail="opening contradicts pack canon",
+                    ),
+                )
+            )
+
+    pack = compile_script_pack(PACK_DIR)
+    cache_root = tmp_path / "pack_cache"
+
+    with pytest.raises(RuntimeError, match="semantic judge rejected opening segment"):
+        asyncio.run(
+            _init_pack(
+                pack=pack,
+                cache_root=cache_root,
+                opening_agent=FakeOpeningAgent(),
+                guard=FakeGuard(),
+                semantic_judge=RejectingJudge(),
+            )
+        )
+
+    assert not PackCache(cache_root).has_opening(pack.pack_hash)

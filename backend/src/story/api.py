@@ -182,6 +182,7 @@ async def _warmup_opening_caches(deps: AppDependencies) -> None:
                 cache=deps.pack_cache,
                 opening_agent=deps.unified_agent_factory(),
                 guard=deps.guard or _NoopGuard(),
+                semantic_judge=deps.semantic_judge,
             )
             logger.info("opening cache ready for pack=%s", pack_id)
         except Exception:
@@ -314,7 +315,7 @@ def create_app(dependencies: AppDependencies | None = None) -> FastAPI:
             except PackMismatch:
                 yield _sse_error("pack_mismatch")
             except (OpenAIError, RuntimeGenerationUnavailable) as exc:
-                logger.warning("turn stream failed: %s", exc)
+                logger.warning("turn stream failed: %s", exc, exc_info=exc)
                 yield _sse_error("generation_unavailable")
             except Exception:
                 logger.exception("turn stream unexpected error")

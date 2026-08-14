@@ -117,6 +117,39 @@ describe('Playback streaming integration', () => {
     })
   })
 
+  it('shows pipeline stages and elapsed time in the buffering overlay', async () => {
+    setStreamEvents([
+      { event: 'progress', data: { stage: 'generating', elapsed_ms: 5 } },
+      { event: 'progress', data: { stage: 'validating', elapsed_ms: 900 } },
+      { event: 'segment_started', data: { segment_id: 'seg-1', expected_revision: 0 } },
+      { event: 'block', data: { segment_id: 'seg-1', index: 0, kind: 'narration', text: 'Scene.' } },
+      { event: 'segment_ready', data: { segment_id: 'seg-1', revision: 1, terminal: 'decision', choices: TWO_CHOICES } },
+    ])
+
+    render(
+      <Playback
+        pack={MOCK_PACK}
+        sessionId="s1"
+        expectedRevision={0}
+        choiceId={null}
+        onChoices={vi.fn()}
+        onEnding={vi.fn()}
+        onError={vi.fn()}
+      />
+    )
+
+    // Stage labels appear as the backend reports transitions; the first
+    // stage stays visible as a completed step.
+    expect(await screen.findByText('撰写故事段落')).toBeInTheDocument()
+    expect(await screen.findByText('校验一致性')).toBeInTheDocument()
+    expect(screen.getByText(/已用时/)).toBeInTheDocument()
+
+    // Overlay clears once the segment is ready.
+    await waitFor(() => {
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    })
+  })
+
   it('maps error events to zh-CN messages via onError', async () => {
     const onError = vi.fn()
     setStreamEvents([
