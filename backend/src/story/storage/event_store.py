@@ -99,6 +99,18 @@ class StoryEventStore:
                     PRIMARY KEY (session_id, command_id),
                     FOREIGN KEY (session_id) REFERENCES story_sessions(session_id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS story_turn_diagnostics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    command_id TEXT NOT NULL,
+                    command_kind TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK (outcome IN ('committed', 'failed')),
+                    recorded_at TEXT NOT NULL,
+                    diagnostics_json TEXT NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES story_sessions(session_id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_turn_diagnostics_session
+                    ON story_turn_diagnostics (session_id, id);
                 """)
 
     def create_session(
@@ -511,6 +523,52 @@ class StoryEventStore:
             raise
         finally:
             connection.close()
+
+    def append_turn_diagnostics(self, session_id: str, record: dict) -> None:
+        """Persist one turn's diagnostics (stage timings, judge findings).
+
+        Author/developer-side only: a dedicated table next to the event
+        stream, deliberately outside it — every event in ``story_events``
+        advances ``state.revision``, which players mirror with
+        ``expected_revision``, so diagnostics must never shift the stream.
+        """
+        connection = self._connect()
+        try:
+            exists = connection.execute(
+                "SELECT 1 FROM story_sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if exists is None:
+                raise SessionNotFound(session_id)
+            connection.execute(
+                """
+                INSERT INTO story_turn_diagnostics
+                    (session_id, command_id, command_kind, outcome, recorded_at, diagnostics_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    record["command_id"],
+                    record["command_kind"],
+                    record["outcome"],
+                    utc_now().isoformat(),
+                    json.dumps(record, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def load_turn_diagnostics(self, session_id: str) -> list[dict]:
+        """Return a session's diagnostics records in recording order."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT diagnostics_json FROM story_turn_diagnostics
+                WHERE session_id = ? ORDER BY id
+                """,
+                (session_id,),
+            ).fetchall()
+        return [json.loads(row["diagnostics_json"]) for row in rows]
 
     def list_sessions(self) -> list[str]:
         with self._connect() as connection:

@@ -8,16 +8,17 @@ a violation is repaired once with the validation error re-sent.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from typing import Any, TypeVar
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 
 from .config import LLMSettings
-from .contracts import ModelContractError
+from .contracts import ModelContractError, ModelTimeoutError
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -121,6 +122,11 @@ class LLMClient:
         )
         self._api = settings.api
         self.model = settings.model
+        # Hard per-call deadline.  The client timeout bounds one HTTP attempt
+        # (and provider retries can stack several attempts), so the client
+        # enforces its own wall-clock bound per model call: a hung provider
+        # fails the turn fast instead of stalling the player forever.
+        self._deadline_seconds = settings.timeout_seconds
 
     @property
     def api(self) -> str:
@@ -196,7 +202,25 @@ class LLMClient:
                     yield delta
 
     async def _ask(self, instructions: str, user: str, schema: dict[str, Any]) -> str:
-        """One non-streaming request in the configured API flavor."""
+        """One non-streaming request in the configured API flavor.
+
+        Each request runs under the hard per-call deadline; exceeding it
+        raises ModelTimeoutError (a RuntimeGenerationUnavailable) so the
+        turn fails fast with a message that names the timeout.
+        """
+        return await self._ask_with_deadline(self._ask_once(instructions, user, schema))
+
+    async def _ask_with_deadline(self, awaitable: Awaitable[str]) -> str:
+        if self._deadline_seconds is None:
+            return await awaitable
+        try:
+            return await asyncio.wait_for(awaitable, self._deadline_seconds)
+        except TimeoutError as exc:
+            raise ModelTimeoutError(
+                f"model call exceeded the {self._deadline_seconds:.0f}s deadline"
+            ) from exc
+
+    async def _ask_once(self, instructions: str, user: str, schema: dict[str, Any]) -> str:
         if self._api == "chat_completions":
             # response_format is deliberately omitted: this project's providers
             # treat json_schema as guidance at best, and some proxies corrupt

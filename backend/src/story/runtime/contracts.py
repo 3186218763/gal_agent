@@ -22,6 +22,15 @@ class RuntimeGenerationUnavailable(RuntimeError):
     """The real model could not produce a valid, committable turn."""
 
 
+class ModelTimeoutError(RuntimeGenerationUnavailable):
+    """A model call exceeded its deadline; the turn fails fast.
+
+    Subclasses RuntimeGenerationUnavailable so every existing mapping
+    (503 / SSE generation_unavailable) keeps working while the message
+    still names the timeout as the cause.
+    """
+
+
 class ChoicePlan(RuntimeModel):
     option_id: str
     action_id: str

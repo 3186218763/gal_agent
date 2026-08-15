@@ -15,13 +15,14 @@ import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import suppress
-from typing import Any
+from typing import Any, Self
 
 from src.story.runtime.completion_judge import CompletionJudge
 from src.story.runtime.contracts import (
     DecisionRequired,
     InvalidChoice,
     ModelContractError,
+    ModelTimeoutError,
     PackMismatch,
     PlannerPort,
     RuntimeGenerationUnavailable,
@@ -122,6 +123,97 @@ def _elapsed_ms(started: float) -> int:
 
 def _progress_event(stage: str, started: float) -> tuple[str, dict[str, Any]]:
     return ("progress", {"stage": stage, "elapsed_ms": _elapsed_ms(started)})
+
+
+# Stage names recorded in turn diagnostics (author/developer-side only).
+_STAGE_ORDER = ("planning", "generating", "validating", "committing")
+
+
+class _TurnDiagnostics:
+    """Collects one generation command's stage timings and rejection evidence.
+
+    Persisted via ``StoryEventStore.append_turn_diagnostics`` when the
+    command finishes (committed or failed); never surfaced through the
+    player API.
+    """
+
+    def __init__(self, command_id: str, command_kind: str) -> None:
+        self.command_id = command_id
+        self.command_kind = command_kind
+        self.outcome: str | None = None
+        self.error: str | None = None
+        self._stage_ms: dict[str, int] = {}
+        self._stage_attempts: dict[str, int] = {}
+        self.judge_findings: list[dict[str, Any]] = []
+        self.guard_violations: list[dict[str, Any]] = []
+        self.regenerations = 0
+
+    def stage(self, name: str) -> _StageTimer:
+        self._stage_attempts[name] = self._stage_attempts.get(name, 0) + 1
+        return _StageTimer(self, name)
+
+    def record(self, name: str, duration_ms: int) -> None:
+        self._stage_ms[name] = self._stage_ms.get(name, 0) + duration_ms
+
+    def note_judge_findings(self, findings: Any) -> None:
+        for finding in findings.blocking:
+            self.judge_findings.append(
+                {
+                    "kind": finding.kind,
+                    "detail": finding.detail,
+                    "block_index": finding.block_index,
+                }
+            )
+
+    def note_guard_violations(self, guard_result: Any) -> None:
+        for violation in guard_result.violations:
+            self.guard_violations.append(
+                {
+                    "kind": violation.kind,
+                    "block_index": violation.block_index,
+                    "detail": violation.detail,
+                }
+            )
+
+    def finish(self, outcome: str, error: str | None = None) -> None:
+        self.outcome = outcome
+        self.error = error
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "command_id": self.command_id,
+            "command_kind": self.command_kind,
+            "outcome": self.outcome or "failed",
+            "error": self.error,
+            "regenerations": self.regenerations,
+            "stages": [
+                {
+                    "name": name,
+                    "duration_ms": self._stage_ms.get(name, 0),
+                    "attempts": self._stage_attempts.get(name, 0),
+                }
+                for name in _STAGE_ORDER
+                if name in self._stage_ms
+            ],
+            "judge_findings": self.judge_findings,
+            "guard_violations": self.guard_violations,
+        }
+
+
+class _StageTimer:
+    """Context manager feeding a stage's wall time into the collector."""
+
+    def __init__(self, diagnostics: _TurnDiagnostics, name: str) -> None:
+        self._diagnostics = diagnostics
+        self._name = name
+        self._started = 0.0
+
+    def __enter__(self) -> Self:
+        self._started = time.monotonic()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._diagnostics.record(self._name, int((time.monotonic() - self._started) * 1000))
 
 
 class TurnOrchestrator:
@@ -429,6 +521,7 @@ class TurnOrchestrator:
                 await emit(event)
             return
 
+        diagnostics: _TurnDiagnostics | None = None
         try:
             state = self._load_compatible_session(pack, session_id)
             if state.revision != expected_revision:
@@ -440,16 +533,26 @@ class TurnOrchestrator:
             if state.pending_decision is not None:
                 raise DecisionRequired(state.pending_decision.decision_id)
 
-            result = await self._generate_and_commit_segment(
-                pack,
-                state,
-                (),
-                command_id,
-                "generate_opening",
-                fingerprint,
-                emit,
-                started,
-            )
+            diagnostics = _TurnDiagnostics(command_id, "generate_opening")
+            try:
+                result = await self._generate_and_commit_segment(
+                    pack,
+                    state,
+                    (),
+                    command_id,
+                    "generate_opening",
+                    fingerprint,
+                    emit,
+                    started,
+                    diagnostics=diagnostics,
+                )
+            except Exception as exc:
+                diagnostics.finish(
+                    "failed",
+                    error=f"{type(exc).__name__}: {exc}"[:500],
+                )
+                raise
+            diagnostics.finish("committed")
         except Exception:
             self.store.release_command(
                 session_id,
@@ -458,6 +561,9 @@ class TurnOrchestrator:
                 fingerprint,
             )
             raise
+        finally:
+            if diagnostics is not None:
+                self._flush_diagnostics(session_id, diagnostics)
 
         for event in self._committed_segment_events(result):
             await emit(event)
@@ -494,62 +600,79 @@ class TurnOrchestrator:
         # validator reasons fed back to the planner — same shape as the
         # segment regeneration loop, and nothing commits unless the revised
         # resolution passes the deterministic validator.
+        diagnostics = _TurnDiagnostics(command_id, "resolve_consequence")
         rejection_notes: list[str] = []
         regeneration_left = 1
-        while True:
-            try:
-                resolution = await self._await_with_heartbeats(
-                    self.planner.resolve_action(
-                        pack, state, choice, rejection_notes=tuple(rejection_notes)
-                    ),
-                    emit,
-                    started,
-                )
-                resolution = validate_action_resolution(
-                    pack,
-                    state,
-                    resolution,
-                    expected_action_id=pending.action_id,
-                )
-            except (ModelContractError, ProposalRejected) as exc:
-                detail = getattr(exc, "errors", None) or str(exc)
-                if regeneration_left <= 0:
+        try:
+            while True:
+                try:
+                    with diagnostics.stage("planning"):
+                        resolution = await self._await_with_heartbeats(
+                            self.planner.resolve_action(
+                                pack, state, choice, rejection_notes=tuple(rejection_notes)
+                            ),
+                            emit,
+                            started,
+                        )
+                        resolution = validate_action_resolution(
+                            pack,
+                            state,
+                            resolution,
+                            expected_action_id=pending.action_id,
+                        )
+                except (ModelContractError, ProposalRejected) as exc:
+                    detail = getattr(exc, "errors", None) or str(exc)
+                    if regeneration_left <= 0:
+                        raise RuntimeGenerationUnavailable(
+                            "planner failed to resolve the consequence"
+                        ) from exc
+                    regeneration_left -= 1
+                    diagnostics.regenerations += 1
+                    rejection_notes = [str(detail)]
+                    logger.warning("resolution rejected: %s", detail)
+                    await emit(_progress_event("regenerating", started))
+                    continue
+                except ModelTimeoutError:
+                    raise
+                except Exception as exc:
                     raise RuntimeGenerationUnavailable(
                         "planner failed to resolve the consequence"
                     ) from exc
-                regeneration_left -= 1
-                rejection_notes = [str(detail)]
-                logger.warning("resolution rejected: %s", detail)
-                await emit(_progress_event("regenerating", started))
-                continue
-            except Exception as exc:
-                raise RuntimeGenerationUnavailable(
-                    "planner failed to resolve the consequence"
-                ) from exc
-            break
+                break
 
-        consequence_events = simulate_consequence(pack, state, resolution)
-        consequence_envelopes = tuple(
-            EventEnvelope(
-                session_id=state.session_id,
-                sequence=state.revision + index,
-                event=event,
+            consequence_events = simulate_consequence(pack, state, resolution)
+            consequence_envelopes = tuple(
+                EventEnvelope(
+                    session_id=state.session_id,
+                    sequence=state.revision + index,
+                    event=event,
+                )
+                for index, event in enumerate(consequence_events, start=1)
             )
-            for index, event in enumerate(consequence_events, start=1)
-        )
-        resolved_state = apply_events(state, consequence_envelopes)
-        return await self._generate_and_commit_segment(
-            pack,
-            resolved_state,
-            consequence_events,
-            command_id,
-            "resolve_consequence",
-            fingerprint,
-            emit,
-            started,
-            commit_revision=state.revision,
-            pending_choice=choice,
-        )
+            resolved_state = apply_events(state, consequence_envelopes)
+            result = await self._generate_and_commit_segment(
+                pack,
+                resolved_state,
+                consequence_events,
+                command_id,
+                "resolve_consequence",
+                fingerprint,
+                emit,
+                started,
+                commit_revision=state.revision,
+                pending_choice=choice,
+                diagnostics=diagnostics,
+            )
+        except Exception as exc:
+            diagnostics.finish(
+                "failed",
+                error=f"{type(exc).__name__}: {exc}"[:500],
+            )
+            self._flush_diagnostics(state.session_id, diagnostics)
+            raise
+        diagnostics.finish("committed")
+        self._flush_diagnostics(state.session_id, diagnostics)
+        return result
 
     async def _generate_and_commit_segment(
         self,
@@ -564,6 +687,7 @@ class TurnOrchestrator:
         *,
         commit_revision: int | None = None,
         pending_choice: PresentedChoice | None = None,
+        diagnostics: _TurnDiagnostics | None = None,
     ) -> dict[str, Any]:
         commit_revision = generation_state.revision if commit_revision is None else commit_revision
         state = generation_state
@@ -583,6 +707,10 @@ class TurnOrchestrator:
             )
 
         pacing = compute_pacing_envelope(state, pack)
+        # A throwaway collector keeps this method branch-free when no caller
+        # wants diagnostics; only callers that pass one persist it.
+        if diagnostics is None:
+            diagnostics = _TurnDiagnostics(command_id, command_kind)
         await emit(_progress_event("generating", started))
         # A rejected proposal gets one regeneration attempt with the rejection
         # reasons fed back to the writer — cheaper than a player retry (which
@@ -591,39 +719,46 @@ class TurnOrchestrator:
         rejection_notes: list[str] = []
         regeneration_left = 1 if self.unified_agent is not None else 0
         while True:
-            plan, draft, judge_preapproved = await self._generate_segment(
-                pack,
-                state,
-                pacing,
-                emit,
-                started,
-                allow_opening_cache=command_kind == "generate_opening" and not rejection_notes,
-                rejection_notes=tuple(rejection_notes),
-            )
+            with diagnostics.stage("generating"):
+                plan, draft, judge_preapproved = await self._generate_segment(
+                    pack,
+                    state,
+                    pacing,
+                    emit,
+                    started,
+                    allow_opening_cache=command_kind == "generate_opening"
+                    and not rejection_notes,
+                    rejection_notes=tuple(rejection_notes),
+                )
 
             await emit(_progress_event("validating", started))
-            guard_result: GuardResult = self.guard.check_segment(pack, state, plan, draft)
             findings = None
-            if guard_result.passed and self.semantic_judge is not None and not judge_preapproved:
-                # Judge pre-approved cache content once at cache-build time;
-                # re-judging frozen content per session only adds a model
-                # call and a nondeterministic rejection risk.
-                try:
-                    findings = await self._await_with_heartbeats(
-                        self.semantic_judge.judge_segment(
-                            pack,
-                            state,
-                            plan,
-                            draft,
-                            pending_choice,
-                        ),
-                        emit,
-                        started,
-                    )
-                except Exception as exc:
-                    raise RuntimeGenerationUnavailable(
-                        "semantic judge failed to evaluate segment"
-                    ) from exc
+            with diagnostics.stage("validating"):
+                guard_result: GuardResult = self.guard.check_segment(pack, state, plan, draft)
+                diagnostics.note_guard_violations(guard_result)
+                if guard_result.passed and self.semantic_judge is not None and not judge_preapproved:
+                    # Judge pre-approved cache content once at cache-build time;
+                    # re-judging frozen content per session only adds a model
+                    # call and a nondeterministic rejection risk.
+                    try:
+                        findings = await self._await_with_heartbeats(
+                            self.semantic_judge.judge_segment(
+                                pack,
+                                state,
+                                plan,
+                                draft,
+                                pending_choice,
+                            ),
+                            emit,
+                            started,
+                        )
+                    except ModelTimeoutError:
+                        raise
+                    except Exception as exc:
+                        raise RuntimeGenerationUnavailable(
+                            "semantic judge failed to evaluate segment"
+                        ) from exc
+                    diagnostics.note_judge_findings(findings)
 
             if guard_result.passed and (findings is None or findings.passed):
                 break
@@ -643,6 +778,7 @@ class TurnOrchestrator:
             if regeneration_left <= 0:
                 raise RuntimeGenerationUnavailable(failure)
             regeneration_left -= 1
+            diagnostics.regenerations += 1
             rejection_notes = reasons
             await emit(_progress_event("regenerating", started))
 
@@ -717,16 +853,17 @@ class TurnOrchestrator:
             )
 
         await emit(_progress_event("committing", started))
-        _, _, result_json = self.store.commit_command(
-            state.session_id,
-            command_id,
-            command_kind,
-            fingerprint,
-            commit_revision,
-            all_story_events,
-            result_factory,
-            event_ids=event_ids,
-        )
+        with diagnostics.stage("committing"):
+            _, _, result_json = self.store.commit_command(
+                state.session_id,
+                command_id,
+                command_kind,
+                fingerprint,
+                commit_revision,
+                all_story_events,
+                result_factory,
+                event_ids=event_ids,
+            )
         return json.loads(result_json)
 
     def _build_ending_batch(
@@ -938,6 +1075,8 @@ class TurnOrchestrator:
             raise RuntimeGenerationUnavailable(
                 f"director produced an invalid segment plan: {detail}"
             ) from exc
+        except ModelTimeoutError:
+            raise
         except Exception as exc:
             raise RuntimeGenerationUnavailable("director failed to produce a segment plan") from exc
 
@@ -951,9 +1090,23 @@ class TurnOrchestrator:
             raise RuntimeGenerationUnavailable(
                 f"writer produced an invalid segment draft: {detail}"
             ) from exc
+        except ModelTimeoutError:
+            raise
         except Exception as exc:
             raise RuntimeGenerationUnavailable("writer failed to produce a segment draft") from exc
         return plan, draft, False
+
+    def _flush_diagnostics(self, session_id: str, diagnostics: _TurnDiagnostics) -> None:
+        """Persist one turn's diagnostics; never break a turn over them."""
+        try:
+            self.store.append_turn_diagnostics(session_id, diagnostics.as_dict())
+        except Exception:
+            logger.warning(
+                "failed to persist turn diagnostics for %s/%s",
+                session_id,
+                diagnostics.command_id,
+                exc_info=True,
+            )
 
     async def _await_with_heartbeats(
         self,

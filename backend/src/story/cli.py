@@ -43,6 +43,9 @@ def _parser() -> argparse.ArgumentParser:
     play.add_argument("--seed", type=int, required=True)
     play.add_argument("--choice-strategy", choices=("first", "last"), default="first")
     play.add_argument("--max-commands", type=int, default=200)
+    diagnostics = commands.add_parser("diagnostics")
+    diagnostics.add_argument("session_id")
+    diagnostics.add_argument("--database", type=Path, required=True)
     init_pack = commands.add_parser("init-pack")
     init_pack.add_argument("pack_path", type=Path)
     init_pack.add_argument("--force", action="store_true")
@@ -256,6 +259,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "status": state.status.value,
                 }
             )
+            return 0
+        if args.command == "diagnostics":
+            records = StoryEventStore(args.database).load_turn_diagnostics(args.session_id)
+            _print({"session_id": args.session_id, "count": len(records), "records": records})
             return 0
         if args.command == "play-live":
             from dotenv import load_dotenv
