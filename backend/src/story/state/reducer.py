@@ -41,6 +41,7 @@ from src.story.state.events import (
     ThreadOpened,
 )
 from src.story.state.models import (
+    RECENT_PROSE_BLOCK_CAP,
     CompletionState,
     DramaticArcPhase,
     DramaticQuestionRuntime,
@@ -54,6 +55,7 @@ from src.story.state.models import (
     PendingSceneReference,
     PromiseRuntime,
     PromiseStatus,
+    ProseBlockRecord,
     SceneSummaryRecord,
     ScheduledConsequenceRuntime,
     SessionState,
@@ -175,12 +177,28 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
                 *scene_summaries,
                 SceneSummaryRecord(scene_id=event.scene_id, summary=event.summary.strip()),
             )
+        # Bounded verbatim ring: the newest blocks survive, the oldest fall off.
+        recent_prose = (
+            *next_state.recent_prose_blocks,
+            *(
+                ProseBlockRecord(
+                    scene_id=event.scene_id,
+                    kind=block.kind,
+                    character_id=block.character_id,
+                    text=block.text,
+                )
+                for block in event.blocks
+            ),
+        )
+        if len(recent_prose) > RECENT_PROSE_BLOCK_CAP:
+            recent_prose = recent_prose[-RECENT_PROSE_BLOCK_CAP:]
         next_state = next_state.model_copy(
             update={
                 "world": world,
                 "pending_scene": pending_scene,
                 "pending_decision": pending_decision,
                 "scene_summaries": scene_summaries,
+                "recent_prose_blocks": recent_prose,
             }
         )
 

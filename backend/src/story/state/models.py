@@ -173,6 +173,23 @@ class SceneSummaryRecord(FrozenModel):
     summary: str = Field(min_length=1, max_length=200)
 
 
+class ProseBlockRecord(FrozenModel):
+    """One committed narrative block kept verbatim in the recent-prose ring.
+
+    The ring is derived state — rebuilt identically on replay — and only the
+    newest ``RECENT_PROSE_BLOCK_CAP`` blocks are kept, so long playthroughs
+    cannot grow it without bound.
+    """
+
+    scene_id: str
+    kind: Literal["narration", "dialogue"]
+    character_id: str | None = None
+    text: str = Field(min_length=1, max_length=4000)
+
+
+RECENT_PROSE_BLOCK_CAP = 60
+
+
 class PendingDecisionReference(FrozenModel):
     decision_id: str
     scene_id: str
@@ -315,6 +332,7 @@ class SessionState(FrozenModel):
     ending: EndingRuntime | None = None
     completion: CompletionState | None = None
     scene_summaries: tuple[SceneSummaryRecord, ...] = ()
+    recent_prose_blocks: tuple[ProseBlockRecord, ...] = ()
 
 
 def initial_session_state(

@@ -44,6 +44,7 @@ from .events import (
     ThreadOpened,
 )
 from .models import (
+    RECENT_PROSE_BLOCK_CAP,
     BeliefRecord,
     CharacterRuntime,
     CompletionAssessmentRecord,
@@ -66,6 +67,7 @@ from .models import (
     PresentedChoice,
     PromiseRuntime,
     PromiseStatus,
+    ProseBlockRecord,
     SceneSummaryRecord,
     ScheduledConsequenceRuntime,
     SessionState,
@@ -85,6 +87,7 @@ from .semantic_derivation import (
 )
 
 __all__ = [
+    "RECENT_PROSE_BLOCK_CAP",
     "ActionResolved",
     "ArcPressureAdvanced",
     "BeliefChanged",
@@ -135,6 +138,7 @@ __all__ = [
     "PromiseRuntime",
     "PromiseStatus",
     "ProposedEvent",
+    "ProseBlockRecord",
     "RelationshipChanged",
     "RelationshipEventRecorded",
     "RelationshipTurningPointReached",

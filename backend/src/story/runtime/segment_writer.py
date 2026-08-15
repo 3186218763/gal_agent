@@ -60,6 +60,12 @@ HARD RULES — the output is machine-validated and any violation is rejected:
    another character's dialogue.
 
 6. Write in the script pack language and prose style.
+
+7. RECENT PROSE (when the context has a "recent_prose" section):
+   These are the literal final prose blocks the player just read. Continue
+   seamlessly from the last block — never repeat or re-narrate them — and
+   match their quotation marks, punctuation, and formatting exactly so the
+   seam is invisible.
 - Return only the requested structured contract."""
 
 

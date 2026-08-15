@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from src.story.script_pack.models import CompiledScriptPack
@@ -12,6 +13,34 @@ from src.story.state import (
 )
 
 from .contracts import PacingEnvelope, SegmentPlan
+
+# ---------------------------------------------------------------------------
+# Per-layer budgets (issue 05)
+# ---------------------------------------------------------------------------
+
+
+def estimate_tokens(text: str) -> int:
+    """Cheap deterministic token proxy: CJK-heavy prose ~1 token per character,
+    latin text ~1 token per 4 characters."""
+    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
+    return cjk + (len(text) - cjk + 3) // 4
+
+
+@dataclass(frozen=True)
+class ContextBudgets:
+    """Independent quotas for the three history layers of writer context.
+
+    Each layer spends only its own budget: a huge digest never shrinks the
+    verbatim window and a long window never squeezes the summaries out.
+    """
+
+    scene_summary_max: int = 24
+    outstanding_obligation_max: int = 12
+    open_promise_max: int = 8
+    recent_prose_token_budget: int = 1000
+
+
+DEFAULT_CONTEXT_BUDGETS = ContextBudgets()
 
 
 def _get_world_setting(source):
@@ -174,13 +203,20 @@ def player_choice_view(
     }
 
 
-def _event_trace_digest(state: SessionState) -> dict[str, Any]:
+def _event_trace_digest(
+    state: SessionState,
+    budgets: ContextBudgets = DEFAULT_CONTEXT_BUDGETS,
+) -> dict[str, Any]:
     """Deterministically rebuild the story-so-far digest from replayed state.
 
     Same events in, same digest out — no model calls, no wall-clock, no
     randomness.  Carries the scene outline plus the open ledgers: choices
     register obligations automatically, and settled ones disappear from
     this view forever (the writer only ever sees outstanding work).
+
+    Each list lives under its own quota: the newest scene summaries are
+    kept, the oldest beyond ``scene_summary_max`` drop out with the drop
+    counted; ledgers keep the first entries of their deterministic sort.
     """
     outstanding_obligations = [
         {
@@ -193,6 +229,8 @@ def _event_trace_digest(state: SessionState) -> dict[str, Any]:
         for _oid, obligation in sorted(state.drama.obligations.items())
         if obligation.status == "open"
     ]
+    obligations_omitted = max(0, len(outstanding_obligations) - budgets.outstanding_obligation_max)
+    outstanding_obligations = outstanding_obligations[: budgets.outstanding_obligation_max]
     open_promises = [
         {
             "promise_id": promise.promise_id,
@@ -204,15 +242,22 @@ def _event_trace_digest(state: SessionState) -> dict[str, Any]:
         for _pid, promise in sorted(state.drama.promises.items())
         if promise.status.value in {"open", "escalated", "transformed"}
     ]
+    promises_omitted = max(0, len(open_promises) - budgets.open_promise_max)
+    open_promises = open_promises[: budgets.open_promise_max]
+    summaries = state.scene_summaries
+    summaries_omitted = max(0, len(summaries) - budgets.scene_summary_max)
     return {
         "scene_count": state.world.scene_count,
         "revision": state.revision,
         "scene_summaries": [
             {"scene_id": record.scene_id, "summary": record.summary}
-            for record in state.scene_summaries
+            for record in summaries[len(summaries) - budgets.scene_summary_max :]
         ],
+        "scene_summaries_omitted": summaries_omitted,
         "outstanding_obligations": outstanding_obligations,
+        "outstanding_obligations_omitted": obligations_omitted,
         "open_promises": open_promises,
+        "open_promises_omitted": promises_omitted,
         "resolved_thread_count": sum(
             1 for t in state.threads.values() if t.status.value == "resolved"
         ),
@@ -220,10 +265,51 @@ def _event_trace_digest(state: SessionState) -> dict[str, Any]:
     }
 
 
+def recent_prose_window(
+    state: SessionState,
+    budgets: ContextBudgets = DEFAULT_CONTEXT_BUDGETS,
+) -> dict[str, Any] | None:
+    """The verbatim tail of the committed prose (issue 05's window layer).
+
+    Fills from the newest block backwards until the layer's token budget is
+    spent — the writer always sees the seam it must continue from, in the
+    exact quotation style and formatting the player last read.  Returns
+    None when no prose has been committed yet.
+    """
+    ring = state.recent_prose_blocks
+    if not ring:
+        return None
+    kept: list[Any] = []
+    spent = 0
+    omitted = 0
+    for record in reversed(ring):
+        cost = estimate_tokens(record.text)
+        if kept and spent + cost > budgets.recent_prose_token_budget:
+            omitted = len(ring) - len(kept)
+            break
+        kept.append(record)
+        spent += cost
+    kept.reverse()  # reading order: oldest kept block first
+    return {
+        "token_budget": budgets.recent_prose_token_budget,
+        "blocks_omitted": omitted,
+        "blocks": [
+            {
+                "scene_id": record.scene_id,
+                "kind": record.kind,
+                "character_id": record.character_id,
+                "text": record.text,
+            }
+            for record in kept
+        ],
+    }
+
+
 def build_director_context(
     pack: CompiledScriptPack,
     state: SessionState,
     pacing: PacingEnvelope,
+    budgets: ContextBudgets = DEFAULT_CONTEXT_BUDGETS,
 ) -> dict[str, Any]:
     """Build the context for the Segment Director Agent.
 
@@ -274,7 +360,7 @@ def build_director_context(
         "characters": characters,
         "pacing": pacing.model_dump(mode="json"),
         "available_action_ids": sorted(pack.action_ids & set(source.protagonist.capabilities)),
-        "event_trace": _event_trace_digest(state),
+        "event_trace": _event_trace_digest(state, budgets),
     }
 
 
@@ -310,6 +396,7 @@ def build_segment_writer_context(
     plan: SegmentPlan,
     *,
     pending_choice: PresentedChoice | None = None,
+    budgets: ContextBudgets = DEFAULT_CONTEXT_BUDGETS,
 ) -> dict[str, Any]:
     """Build per-speaker-scoped context for the Segment Writer Agent.
 
@@ -371,8 +458,14 @@ def build_segment_writer_context(
         "approved_plan": plan.model_dump(mode="json"),
         "approved_narration_facts": narration_facts,
         "characters": characters,
-        "event_trace": _event_trace_digest(state),
+        "event_trace": _event_trace_digest(state, budgets),
     }
+
+    # Verbatim tail window: the literal prose blocks committed just before
+    # this segment, for seam/quotation-style continuity (issue 05).
+    window = recent_prose_window(state, budgets)
+    if window is not None:
+        ctx["recent_prose"] = window
 
     # The just-committed choice speaks loudest in the segment that directly
     # follows it; callers pass ``pending_choice`` for that segment only.

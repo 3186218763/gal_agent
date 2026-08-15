@@ -19,6 +19,8 @@ from src.story.runtime.contracts import (
 )
 from src.story.runtime.model import LLMClient
 from src.story.runtime.segment_context import (
+    DEFAULT_CONTEXT_BUDGETS,
+    ContextBudgets,
     _character_known_facts,
     _completion_requirement_views,
     _event_trace_digest,
@@ -28,6 +30,7 @@ from src.story.runtime.segment_context import (
     _get_world_setting,
     _thread_views,
     player_choice_view,
+    recent_prose_window,
 )
 from src.story.runtime.segment_contracts import PacingEnvelope
 from src.story.script_pack.models import CompiledScriptPack
@@ -86,6 +89,7 @@ def build_unified_context(
     pacing: PacingEnvelope,
     *,
     pending_choice: PresentedChoice | None = None,
+    budgets: ContextBudgets = DEFAULT_CONTEXT_BUDGETS,
 ) -> dict[str, Any]:
     """Combine Director and Writer contexts into a single prompt context.
 
@@ -164,7 +168,7 @@ def build_unified_context(
         "open_threads": _thread_views(state),
         "pacing": pacing.model_dump(mode="json"),
         "available_action_ids": sorted(pack.action_ids & set(source.protagonist.capabilities)),
-        "event_trace": _event_trace_digest(state),
+        "event_trace": _event_trace_digest(state, budgets),
         # Rendering section (per-character scoped knowledge)
         "characters": rendering_chars,
         # Planning-only characters (for reference — do NOT use for dialogue)
@@ -180,6 +184,12 @@ def build_unified_context(
     # the event digest, never as this fresh instruction again.
     if pending_choice is not None:
         ctx["player_choice"] = player_choice_view(pending_choice, pack)
+
+    # Verbatim tail window: the literal prose blocks committed just before
+    # this segment, for seam/quotation-style continuity (issue 05).
+    window = recent_prose_window(state, budgets)
+    if window is not None:
+        ctx["recent_prose"] = window
     return ctx
 
 
@@ -261,7 +271,13 @@ same segment_id, same scene_ids in the same order.
    Aim for at least 8 blocks of narration and dialogue between choices.
    Do not rush toward the decision point — let the player linger in each scene.
 
-8. Return only the requested structured contract."""
+8. RECENT PROSE (when the context has a "recent_prose" section):
+   These are the literal final prose blocks the player just read. Continue
+   seamlessly from the last block — never repeat or re-narrate them — and
+   match their quotation marks, punctuation, and formatting exactly so the
+   seam is invisible.
+
+9. Return only the requested structured contract."""
 
 
 OPENING_INSTRUCTIONS = """You are the Unified Segment Agent for a constrained visual novel.
@@ -347,7 +363,14 @@ same segment_id, same scene_ids in the same order.
    dialogue.
 
 6. Write in the script pack language and prose style.
-7. Return only the requested structured contract."""
+
+7. RECENT PROSE (when the context has a "recent_prose" section):
+   These are the literal final prose blocks the player just read. Continue
+   seamlessly from the last block — never repeat or re-narrate them — and
+   match their quotation marks, punctuation, and formatting exactly so the
+   seam is invisible.
+
+8. Return only the requested structured contract."""
 
 
 class LLMUnifiedSegmentAgent:
