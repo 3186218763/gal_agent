@@ -94,6 +94,7 @@ def default_dependencies() -> AppDependencies:
     from src.story.runtime.pack_cache import PackCache
     from src.story.runtime.segment_writer import LLMSegmentWriter
     from src.story.runtime.semantic_judge import LLMSemanticJudge
+    from src.story.runtime.transcript import TranscriptWriter
 
     director = LLMDirector(client)
     segment_writer = LLMSegmentWriter(client)
@@ -120,6 +121,9 @@ def default_dependencies() -> AppDependencies:
         unified_agent=unified_agent,
         pack_cache=pack_cache,
         semantic_judge=semantic_judge,
+        transcript_writer=TranscriptWriter(
+            Path(os.getenv("GAL_PLAYTHROUGH_ROOT", "data/playthroughs"))
+        ),
     )
     return AppDependencies(
         store=store,

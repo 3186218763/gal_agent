@@ -45,6 +45,7 @@ from src.story.runtime.simulator import (
     simulate_consequence,
     simulate_segment,
 )
+from src.story.runtime.transcript import TranscriptWriter
 from src.story.runtime.unified_segment import UnifiedSegmentPort
 from src.story.runtime.validator import (
     ProposalRejected,
@@ -242,6 +243,7 @@ class TurnOrchestrator:
         unified_agent: UnifiedSegmentPort | None = None,
         pack_cache: PackCache | None = None,
         semantic_judge: SemanticJudgePort | None = None,
+        transcript_writer: TranscriptWriter | None = None,
     ) -> None:
         self.store = store
         self.director = director
@@ -252,6 +254,7 @@ class TurnOrchestrator:
         self.unified_agent = unified_agent
         self.pack_cache = pack_cache
         self.semantic_judge = semantic_judge
+        self.transcript_writer = transcript_writer
 
     async def execute_turn(
         self,
@@ -487,6 +490,7 @@ class TurnOrchestrator:
                 (event,),
                 selection_result,
             )
+            self._append_transcript(session_id, (event,))
             return json.loads(result_json)
         except Exception:
             self.store.release_command(
@@ -883,6 +887,7 @@ class TurnOrchestrator:
                 result_factory,
                 event_ids=event_ids,
             )
+        self._append_transcript(state.session_id, all_story_events)
         return json.loads(result_json)
 
     def _build_ending_batch(
@@ -1151,6 +1156,21 @@ class TurnOrchestrator:
                 session_id,
                 diagnostics.command_id,
                 exc_info=True,
+            )
+
+    def _append_transcript(self, session_id: str, events: tuple[StoryEvent, ...]) -> None:
+        """Append committed events to the session's playthrough file.
+
+        The store is the source of truth — a failed append is logged and
+        the turn proceeds (the file can be rebuilt at any time).
+        """
+        if self.transcript_writer is None:
+            return
+        try:
+            self.transcript_writer.append_events(session_id, events)
+        except Exception:
+            logger.warning(
+                "failed to append playthrough transcript for %s", session_id, exc_info=True
             )
 
     async def _await_with_heartbeats(

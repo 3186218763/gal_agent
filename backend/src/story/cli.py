@@ -46,6 +46,21 @@ def _parser() -> argparse.ArgumentParser:
     diagnostics = commands.add_parser("diagnostics")
     diagnostics.add_argument("session_id")
     diagnostics.add_argument("--database", type=Path, required=True)
+    export = commands.add_parser("export-transcript")
+    export.add_argument("session_id")
+    export.add_argument("--database", type=Path, required=True)
+    export.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="write the transcript here instead of the playthroughs root",
+    )
+    export.add_argument(
+        "--root",
+        type=Path,
+        default=Path(os.getenv("GAL_PLAYTHROUGH_ROOT", "data/playthroughs")),
+        help="playthroughs root (default: $GAL_PLAYTHROUGH_ROOT or data/playthroughs)",
+    )
     init_pack = commands.add_parser("init-pack")
     init_pack.add_argument("pack_path", type=Path)
     init_pack.add_argument("--force", action="store_true")
@@ -269,6 +284,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             records = StoryEventStore(args.database).load_turn_diagnostics(args.session_id)
             _print({"session_id": args.session_id, "count": len(records), "records": records})
             return 0
+        if args.command == "export-transcript":
+            from src.story.runtime.transcript import TranscriptWriter
+
+            envelopes = StoryEventStore(args.database).load_events(args.session_id)
+            writer = TranscriptWriter(args.root)
+            path = writer.rebuild(args.session_id, envelopes, path=args.out)
+            _print({"session_id": args.session_id, "transcript_path": str(path)})
+            return 0
         if args.command == "play-live":
             from dotenv import load_dotenv
 
@@ -280,6 +303,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             from src.story.runtime.pack_cache import PackCache
             from src.story.runtime.planner import LLMPlanner
             from src.story.runtime.segment_writer import LLMSegmentWriter
+            from src.story.runtime.transcript import TranscriptWriter
             from src.story.runtime.turn_orchestrator import TurnOrchestrator
             from src.story.runtime.unified_segment import LLMUnifiedSegmentAgent
 
@@ -297,6 +321,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 planner=LLMPlanner(client),
                 unified_agent=LLMUnifiedSegmentAgent(client),
                 pack_cache=PackCache(Path(os.getenv("GAL_PACK_CACHE_ROOT", "data/pack_cache"))),
+                transcript_writer=TranscriptWriter(
+                    Path(os.getenv("GAL_PLAYTHROUGH_ROOT", "data/playthroughs"))
+                ),
             )
             asyncio.run(
                 autoplay(
