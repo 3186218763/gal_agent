@@ -275,9 +275,16 @@ class FakeDirector:
         )
 
 
+def _pacing_floor(state: Any, pack: Any) -> int:
+    """target_block_range lower bound — what the density validator enforces."""
+    from src.story.runtime.pacing import compute_pacing_envelope
+
+    pacing = compute_pacing_envelope(state, pack)
+    return pacing.target_block_range[0] if pacing.target_block_range else 1
+
+
 class FakeSegmentWriter:
     """Returns canned scene drafts and endings matching a SegmentPlan."""
-
     async def write_segment(
         self,
         pack: Any,
@@ -287,14 +294,22 @@ class FakeSegmentWriter:
         pending_choice: Any = None,
     ) -> SegmentDraft:
         self.last_pending_choice = pending_choice
+        # Meet the pacing block floor: the density validator rejects a
+        # decision segment shorter than target_block_range's lower bound.
+        floor = _pacing_floor(state, pack)
         scene_drafts = tuple(
             SceneDraft(
                 scene_id=scene.scene_id,
-                blocks=(
+                blocks=tuple(
                     NarrativeBlock(
                         kind="narration",
-                        text=f"The story continues in {scene.scene_id}.",
-                    ),
+                        text=(
+                            f"The story continues in {scene.scene_id}."
+                            if i == 0
+                            else f"Beat {i} develops {scene.scene_id}."
+                        ),
+                    )
+                    for i in range(max(1, floor))
                 ),
             )
             for scene in plan.scenes

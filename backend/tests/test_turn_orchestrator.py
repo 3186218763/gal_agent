@@ -43,6 +43,7 @@ from tests.fakes import (
     FakeGuard,
     FakePlanner,
     FakeSegmentWriter,
+    _pacing_floor,
     budget_test_pack_dict,
 )
 
@@ -352,16 +353,22 @@ def test_segment_ready_choices_come_from_draft_when_plan_scene_has_none(
         async def write_segment(self, pack, state, plan, *, pending_choice=None):
             if plan.terminal != "decision":
                 return await super().write_segment(pack, state, plan, pending_choice=pending_choice)
+            floor = _pacing_floor(state, pack)
             return SegmentDraft(
                 segment_id=plan.segment_id,
                 scene_drafts=(
                     SceneDraft(
                         scene_id=plan.scenes[-1].scene_id,
-                        blocks=(
+                        blocks=tuple(
                             NarrativeBlock(
                                 kind="narration",
-                                text="The cafe hums quietly.",
-                            ),
+                                text=(
+                                    "The cafe hums quietly."
+                                    if i == 0
+                                    else f"Quiet beat {i} passes."
+                                ),
+                            )
+                            for i in range(max(1, floor))
                         ),
                     ),
                 ),

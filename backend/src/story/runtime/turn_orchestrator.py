@@ -48,6 +48,7 @@ from src.story.runtime.simulator import (
 from src.story.runtime.unified_segment import UnifiedSegmentPort
 from src.story.runtime.validator import (
     ProposalRejected,
+    segment_density_errors,
     validate_action_resolution,
     validate_segment_draft,
     validate_segment_plan,
@@ -147,6 +148,7 @@ class _TurnDiagnostics:
         self._stage_attempts: dict[str, int] = {}
         self.judge_findings: list[dict[str, Any]] = []
         self.guard_violations: list[dict[str, Any]] = []
+        self.validator_violations: list[str] = []
         self.regenerations = 0
 
     def stage(self, name: str) -> _StageTimer:
@@ -176,6 +178,9 @@ class _TurnDiagnostics:
                 }
             )
 
+    def note_validator_violations(self, errors: Any) -> None:
+        self.validator_violations.extend(str(error) for error in errors)
+
     def finish(self, outcome: str, error: str | None = None) -> None:
         self.outcome = outcome
         self.error = error
@@ -198,6 +203,7 @@ class _TurnDiagnostics:
             ],
             "judge_findings": self.judge_findings,
             "guard_violations": self.guard_violations,
+            "validator_violations": self.validator_violations,
         }
 
 
@@ -738,7 +744,15 @@ class TurnOrchestrator:
             with diagnostics.stage("validating"):
                 guard_result: GuardResult = self.guard.check_segment(pack, state, plan, draft)
                 diagnostics.note_guard_violations(guard_result)
-                if guard_result.passed and self.semantic_judge is not None and not judge_preapproved:
+                density_errors = segment_density_errors(plan, draft, pacing)
+                if density_errors:
+                    diagnostics.note_validator_violations(density_errors)
+                if (
+                    guard_result.passed
+                    and not density_errors
+                    and self.semantic_judge is not None
+                    and not judge_preapproved
+                ):
                     # Judge pre-approved cache content once at cache-build time;
                     # re-judging frozen content per session only adds a model
                     # call and a nondeterministic rejection risk.
@@ -762,7 +776,7 @@ class TurnOrchestrator:
                         ) from exc
                     diagnostics.note_judge_findings(findings)
 
-            if guard_result.passed and (findings is None or findings.passed):
+            if guard_result.passed and not density_errors and (findings is None or findings.passed):
                 break
 
             if not guard_result.passed:
@@ -771,6 +785,9 @@ class TurnOrchestrator:
                     for v in guard_result.violations
                 ]
                 failure = "guard rejected segment"
+            elif density_errors:
+                reasons = [f"validator/density: {error}" for error in density_errors]
+                failure = "density validator rejected segment"
             else:
                 reasons = [
                     f"judge/{f.kind} (block {f.block_index}): {f.detail}" for f in findings.blocking

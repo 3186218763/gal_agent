@@ -217,6 +217,11 @@ same segment_id, same scene_ids in the same order.
     has not yet delivered. If this segment's prose visibly delivers one on screen,
     put its obligation_id in resolved_obligation_ids — only ids from that list are
     valid, and only when the delivery actually happens in the prose.
+13. CHOICE DENSITY: the last scene may present a decision ONLY when the story has
+    genuinely reached a fork — new dramatic development since the last choice, the
+    previous choice's consequence visibly digested, and a question the player must
+    answer now. If not, write more development first: the reader must get at least
+    pacing.target_block_range[0] blocks between choices (hard-validated).
 
 ═══ WRITING RULES ═══
 
@@ -273,7 +278,8 @@ same segment_id, same scene_ids in the same order.
 
 ═══ OPENING-SPECIFIC RULES ═══
 
-1. Generate 3-5 scenes (target 10-20 narrative blocks total).
+1. Generate 4-8 scenes (at least 30 narrative blocks total — the opening pacing
+   target_block_range floor; fewer is hard-rejected).
 2. The opening must world-build: establish the setting, character relationships,
    and the initial conflict or mystery.
 3. Do NOT rush to a decision — let the player immerse in the opening atmosphere.
@@ -302,6 +308,11 @@ same segment_id, same scene_ids in the same order.
     has not yet delivered. If this segment's prose visibly delivers one on screen,
     put its obligation_id in resolved_obligation_ids — only ids from that list are
     valid, and only when the delivery actually happens in the prose.
+13. CHOICE DENSITY: the last scene may present a decision ONLY when the story has
+    genuinely reached a fork — new dramatic development since the last choice, the
+    previous choice's consequence visibly digested, and a question the player must
+    answer now. If not, write more development first: the reader must get at least
+    pacing.target_block_range[0] blocks between choices (hard-validated).
 
 ═══ WRITING RULES ═══
 

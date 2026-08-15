@@ -222,6 +222,33 @@ def validate_scene_draft(plan: ScenePlan, draft: SceneDraft) -> SceneDraft:
     return draft
 
 
+def segment_density_errors(
+    plan: SegmentPlan,
+    draft: SegmentDraft,
+    pacing: PacingEnvelope,
+) -> list[str]:
+    """Block-count floor for decision segments (choice-density backstop).
+
+    The reader should get at least ``target_block_range``'s lower bound of
+    prose between decision points; a writer rushing to the next fork gets
+    bounced back with the floor named in the reason.  Endings are exempt
+    (``must_end`` can force them at any length).
+    """
+    floor = pacing.target_block_range[0] if pacing.target_block_range else 0
+    if plan.terminal != "decision" or floor <= 0:
+        return []
+    blocks = sum(len(scene.blocks) for scene in draft.scene_drafts)
+    if blocks < floor:
+        return [
+            (
+                f"decision segment has {blocks} blocks but pacing requires at least {floor} "
+                "(target_block_range lower bound) — write the development out before "
+                "presenting the next choice"
+            )
+        ]
+    return []
+
+
 def validate_segment_plan(
     pack: CompiledScriptPack,
     state: SessionState,

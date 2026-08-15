@@ -59,12 +59,16 @@ class _FakeOpeningAgent:
             ),
             terminal="decision",
         )
+        floor = pacing.target_block_range[0] if pacing.target_block_range else 1
         draft = SegmentDraft(
             segment_id=plan.segment_id,
             scene_drafts=(
                 SceneDraft(
                     scene_id="scene_warmup",
-                    blocks=(NarrativeBlock(kind="narration", text="Warmup."),),
+                    blocks=tuple(
+                        NarrativeBlock(kind="narration", text=f"Warmup beat {i}.")
+                        for i in range(max(1, floor))
+                    ),
                 ),
             ),
             choices=(

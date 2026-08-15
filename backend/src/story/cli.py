@@ -143,6 +143,7 @@ async def ensure_opening_cache(
     from src.story.runtime.pack_cache import CachedOpening
     from src.story.runtime.simulator import simulate_segment
     from src.story.runtime.validator import (
+        segment_density_errors,
         validate_segment_draft,
         validate_segment_plan,
     )
@@ -159,6 +160,10 @@ async def ensure_opening_cache(
     result = await opening_agent.generate(pack, state, pacing)
     plan = validate_segment_plan(pack, state, result.segment_plan, pacing)
     draft = validate_segment_draft(plan, result.segment_draft)
+
+    density = segment_density_errors(result.segment_plan, result.segment_draft, pacing)
+    if density:
+        raise RuntimeError(f"opening rejected by density floor: {density[0]}")
 
     guard_result = guard.check_segment(pack, state, plan, draft)
     if not guard_result.passed:
