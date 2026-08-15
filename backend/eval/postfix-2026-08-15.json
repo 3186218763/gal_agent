@@ -1,0 +1,201 @@
+{
+  "anchors": [
+    {
+      "expected_categories": [
+        "choice_continuation_miss",
+        "detail_contradiction",
+        "scene_time_regression",
+        "segment_repetition"
+      ],
+      "failures": [
+        {
+          "category": "segment_repetition",
+          "evidence_sequences": [
+            20
+          ],
+          "subkind": null
+        }
+      ],
+      "found_categories": [
+        "segment_repetition"
+      ],
+      "name": "S2-seq18-28",
+      "pass": false,
+      "sequence_range": [
+        18,
+        28
+      ],
+      "session_id": "eval-post-s2"
+    },
+    {
+      "expected_categories": [
+        "detail_contradiction"
+      ],
+      "failures": [],
+      "found_categories": [],
+      "name": "S1-seq6-18",
+      "pass": false,
+      "sequence_range": [
+        6,
+        18
+      ],
+      "session_id": "eval-post-s1"
+    }
+  ],
+  "failures": [
+    {
+      "category": "choice_continuation_miss",
+      "category_label": "① 选项后果未兑现",
+      "detail": "选择 opt_ask_alice 之后仍有角色把玩家当作无关路人劝退,玩家的既有介入被重置",
+      "evidence_sequences": [
+        10,
+        24
+      ],
+      "evidence_text": [
+        "label: 向艾丽丝询问笔记本的具体特征与细节",
+        "这位客人，打听别人的隐私往往伴随着代价。你对那本本子这么感兴趣，究竟是出于纯粹的好心，还是另有…"
+      ],
+      "session_id": "eval-post-s1",
+      "subkind": "engagement_reset"
+    },
+    {
+      "category": "choice_continuation_miss",
+      "category_label": "① 选项后果未兑现",
+      "detail": "选择 opt_support_alice 承诺了具体行动,但后继段落的叙述中没有任何执行迹象(仅台词提及不算)",
+      "evidence_sequences": [
+        27,
+        42
+      ],
+      "evidence_text": [
+        "label: 表态愿意协助艾丽丝在店内寻找线索"
+      ],
+      "session_id": "eval-post-s1",
+      "subkind": "pledge_unexecuted"
+    },
+    {
+      "category": "segment_repetition",
+      "category_label": "④ 整段复读",
+      "detail": "段2 起复现前文特征短语(下意识, 低沉而, 在店里, 带着一种);全会话共 9 个段落命中",
+      "evidence_sequences": [
+        24
+      ],
+      "evidence_text": [
+        "repeated phrase: 下意识",
+        "repeated phrase: 低沉而",
+        "repeated phrase: 在店里",
+        "repeated phrase: 带着一种"
+      ],
+      "session_id": "eval-post-s1"
+    },
+    {
+      "category": "segment_repetition",
+      "category_label": "④ 整段复读",
+      "detail": "段2 起复现前文特征短语(他说话时, 任何一方, 侧过身, 发出了一声);全会话共 10 个段落命中",
+      "evidence_sequences": [
+        20
+      ],
+      "evidence_text": [
+        "repeated phrase: 他说话时",
+        "repeated phrase: 任何一方",
+        "repeated phrase: 侧过身",
+        "repeated phrase: 发出了一声"
+      ],
+      "session_id": "eval-post-s2"
+    }
+  ],
+  "metrics": {
+    "block_count": 277,
+    "blocks_per_decision": {
+      "max": 33.0,
+      "mean": 13.19,
+      "min": 8.0,
+      "values": [
+        33.0,
+        12.0,
+        8.0,
+        11.0,
+        10.0,
+        10.0,
+        11.0,
+        13.0,
+        10.0,
+        13.0,
+        33.0,
+        12.0,
+        12.0,
+        12.0,
+        12.0,
+        11.0,
+        11.0,
+        11.0,
+        12.0,
+        11.0,
+        9.0
+      ]
+    },
+    "category_counts": {
+      "choice_continuation_miss": 2,
+      "detail_contradiction": 0,
+      "quote_style_break": 0,
+      "scene_time_regression": 0,
+      "segment_repetition": 2
+    },
+    "choice_continuation_rate": 0.8947,
+    "failures_per_block": 0.0144,
+    "repetition_flagged_segments": 19,
+    "repetition_segment_rate": 0.9048,
+    "segment_count": 21,
+    "selections_total": 21,
+    "selections_with_outcome": 19,
+    "total_failures": 4,
+    "turn_latency_seconds": {
+      "max": 131.5,
+      "mean": 44.56,
+      "min": 18.5,
+      "values": [
+        48.7,
+        58.6,
+        27.2,
+        51.7,
+        61.3,
+        21.9,
+        28.1,
+        131.5,
+        57.4,
+        18.6,
+        22.0,
+        20.7,
+        22.3,
+        20.5,
+        23.2,
+        60.7,
+        18.5,
+        85.7,
+        68.1
+      ]
+    }
+  },
+  "schema": "story-eval-report/1",
+  "sessions": [
+    {
+      "block_count": 131,
+      "decisions": 10,
+      "label": "S1",
+      "pack_id": "cafe_mystery",
+      "scene_count": 13,
+      "segment_count": 10,
+      "selections": 10,
+      "session_id": "eval-post-s1"
+    },
+    {
+      "block_count": 146,
+      "decisions": 11,
+      "label": "S2",
+      "pack_id": "cafe_mystery",
+      "scene_count": 14,
+      "segment_count": 11,
+      "selections": 11,
+      "session_id": "eval-post-s2"
+    }
+  ]
+}
