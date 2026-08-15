@@ -1,0 +1,301 @@
+{
+  "anchors": [
+    {
+      "expected_categories": [
+        "choice_continuation_miss",
+        "detail_contradiction",
+        "scene_time_regression",
+        "segment_repetition"
+      ],
+      "failures": [
+        {
+          "category": "choice_continuation_miss",
+          "evidence_sequences": [
+            20,
+            28
+          ],
+          "subkind": "engagement_reset"
+        },
+        {
+          "category": "scene_time_regression",
+          "evidence_sequences": [
+            18,
+            28
+          ],
+          "subkind": null
+        },
+        {
+          "category": "segment_repetition",
+          "evidence_sequences": [
+            18
+          ],
+          "subkind": null
+        },
+        {
+          "category": "detail_contradiction",
+          "evidence_sequences": [
+            4,
+            18,
+            28
+          ],
+          "subkind": "last_seen_location"
+        }
+      ],
+      "found_categories": [
+        "choice_continuation_miss",
+        "detail_contradiction",
+        "scene_time_regression",
+        "segment_repetition"
+      ],
+      "name": "S2-seq18-28",
+      "pass": true,
+      "sequence_range": [
+        18,
+        28
+      ],
+      "session_id": "2162bea7-a9ec-48ac-b410-67bed4575dac"
+    },
+    {
+      "expected_categories": [
+        "detail_contradiction"
+      ],
+      "failures": [
+        {
+          "category": "quote_style_break",
+          "evidence_sequences": [
+            6,
+            18
+          ],
+          "subkind": null
+        },
+        {
+          "category": "segment_repetition",
+          "evidence_sequences": [
+            18
+          ],
+          "subkind": null
+        },
+        {
+          "category": "detail_contradiction",
+          "evidence_sequences": [
+            4,
+            6,
+            18
+          ],
+          "subkind": "notebook_color"
+        }
+      ],
+      "found_categories": [
+        "detail_contradiction",
+        "quote_style_break",
+        "segment_repetition"
+      ],
+      "name": "S1-seq6-18",
+      "pass": true,
+      "sequence_range": [
+        6,
+        18
+      ],
+      "session_id": "000bb565-7340-4b55-b519-0597e88404e5"
+    }
+  ],
+  "failures": [
+    {
+      "category": "quote_style_break",
+      "category_label": "③ 语气断裂(排版漂移)",
+      "detail": "会话内引号排版漂移:段1(none) → 段2(curly),共 1 处变化",
+      "evidence_sequences": [
+        6,
+        18
+      ],
+      "evidence_text": [
+        "segment 1 style: none",
+        "segment 2 style: curly"
+      ],
+      "session_id": "000bb565-7340-4b55-b519-0597e88404e5"
+    },
+    {
+      "category": "segment_repetition",
+      "category_label": "④ 整段复读",
+      "detail": "段2 起复现前文特征短语(人捡到, 冷淡的, 我们傍晚六点, 我真的);全会话共 1 个段落命中",
+      "evidence_sequences": [
+        18
+      ],
+      "evidence_text": [
+        "repeated phrase: 人捡到",
+        "repeated phrase: 冷淡的",
+        "repeated phrase: 我们傍晚六点",
+        "repeated phrase: 我真的"
+      ],
+      "session_id": "000bb565-7340-4b55-b519-0597e88404e5"
+    },
+    {
+      "category": "detail_contradiction",
+      "category_label": "⑤ 细节自相矛盾",
+      "detail": "笔记本封皮颜色前后不一:黑 → 深蓝",
+      "evidence_sequences": [
+        4,
+        6,
+        18
+      ],
+      "evidence_text": [
+        "黑: seq4",
+        "深蓝: seq18"
+      ],
+      "session_id": "000bb565-7340-4b55-b519-0597e88404e5",
+      "subkind": "notebook_color"
+    },
+    {
+      "category": "choice_continuation_miss",
+      "category_label": "① 选项后果未兑现",
+      "detail": "选择 opt_help_alice 承诺了具体行动,但后继段落的叙述中没有任何执行迹象(仅台词提及不算)",
+      "evidence_sequences": [
+        8,
+        18
+      ],
+      "evidence_text": [
+        "label: “我和你一起找找看吧，也许只是掉在哪个死角了。”"
+      ],
+      "session_id": "2162bea7-a9ec-48ac-b410-67bed4575dac",
+      "subkind": "pledge_unexecuted"
+    },
+    {
+      "category": "choice_continuation_miss",
+      "category_label": "① 选项后果未兑现",
+      "detail": "选择 opt_observe_mina 之后仍有角色把玩家当作无关路人劝退,玩家的既有介入被重置",
+      "evidence_sequences": [
+        20,
+        28
+      ],
+      "evidence_text": [
+        "label: 转向店长美奈，试探她对店内核实情况的看法",
+        "这位朋友，你如果只是碰巧坐在这里喝咖啡，我建议你最好不要卷入不该打听的事情里。"
+      ],
+      "session_id": "2162bea7-a9ec-48ac-b410-67bed4575dac",
+      "subkind": "engagement_reset"
+    },
+    {
+      "category": "scene_time_regression",
+      "category_label": "② 场景跳变(时间倒流)",
+      "detail": "上一步故事时间已到 5 级,下一场开场却回到 3 级(时间倒流无过渡)",
+      "evidence_sequences": [
+        18,
+        28
+      ],
+      "evidence_text": [
+        "暖气在街角咖啡馆里低低地鸣响着，将玻璃窗上的白雾一层层晕开。窗外天色渐暗，距离傍晚六点打烊的时…",
+        "午后的阳光透过街角咖啡馆的磨砂玻璃窗洒在木质桌面上，空气里弥漫着研磨咖啡豆的醇苦香气。"
+      ],
+      "session_id": "2162bea7-a9ec-48ac-b410-67bed4575dac"
+    },
+    {
+      "category": "quote_style_break",
+      "category_label": "③ 语气断裂(排版漂移)",
+      "detail": "会话内引号排版漂移:段1(none) → 段2(corner),共 2 处变化",
+      "evidence_sequences": [
+        6,
+        18
+      ],
+      "evidence_text": [
+        "segment 1 style: none",
+        "segment 2 style: corner"
+      ],
+      "session_id": "2162bea7-a9ec-48ac-b410-67bed4575dac"
+    },
+    {
+      "category": "segment_repetition",
+      "category_label": "④ 整段复读",
+      "detail": "段2 起复现前文特征短语(下意识地, 位客人, 带着掩饰不住的慌乱, 带着明);全会话共 2 个段落命中",
+      "evidence_sequences": [
+        18
+      ],
+      "evidence_text": [
+        "repeated phrase: 下意识地",
+        "repeated phrase: 位客人",
+        "repeated phrase: 带着掩饰不住的慌乱",
+        "repeated phrase: 带着明"
+      ],
+      "session_id": "2162bea7-a9ec-48ac-b410-67bed4575dac"
+    },
+    {
+      "category": "detail_contradiction",
+      "category_label": "⑤ 细节自相矛盾",
+      "detail": "笔记本最后目击地点前后不一:手边 → 背包侧袋 → 提包",
+      "evidence_sequences": [
+        4,
+        18,
+        28
+      ],
+      "evidence_text": [
+        "手边: seq4",
+        "背包侧袋: seq18",
+        "提包: seq28"
+      ],
+      "session_id": "2162bea7-a9ec-48ac-b410-67bed4575dac",
+      "subkind": "last_seen_location"
+    }
+  ],
+  "metrics": {
+    "block_count": 69,
+    "blocks_per_decision": {
+      "max": 18.0,
+      "mean": 13.8,
+      "min": 12.0,
+      "values": [
+        15.0,
+        12.0,
+        18.0,
+        12.0,
+        12.0
+      ]
+    },
+    "category_counts": {
+      "choice_continuation_miss": 2,
+      "detail_contradiction": 2,
+      "quote_style_break": 2,
+      "scene_time_regression": 1,
+      "segment_repetition": 2
+    },
+    "choice_continuation_rate": 0.3333,
+    "failures_per_block": 0.1304,
+    "repetition_flagged_segments": 3,
+    "repetition_segment_rate": 0.6,
+    "segment_count": 5,
+    "selections_total": 3,
+    "selections_with_outcome": 3,
+    "total_failures": 9,
+    "turn_latency_seconds": {
+      "max": 33.9,
+      "mean": 26.67,
+      "min": 20.5,
+      "values": [
+        25.6,
+        20.5,
+        33.9
+      ]
+    }
+  },
+  "schema": "story-eval-report/1",
+  "sessions": [
+    {
+      "block_count": 27,
+      "decisions": 2,
+      "label": "S1",
+      "pack_id": "cafe_mystery",
+      "scene_count": 4,
+      "segment_count": 2,
+      "selections": 1,
+      "session_id": "000bb565-7340-4b55-b519-0597e88404e5"
+    },
+    {
+      "block_count": 42,
+      "decisions": 3,
+      "label": "S2",
+      "pack_id": "cafe_mystery",
+      "scene_count": 5,
+      "segment_count": 3,
+      "selections": 2,
+      "session_id": "2162bea7-a9ec-48ac-b410-67bed4575dac"
+    }
+  ]
+}
