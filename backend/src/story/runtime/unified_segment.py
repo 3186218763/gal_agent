@@ -213,6 +213,10 @@ same segment_id, same scene_ids in the same order.
     list. The protagonist is the player character, not part of that list — never put
     "protagonist" in present_character_ids.
 11. Write all summaries in the script pack language.
+12. event_trace.outstanding_obligations lists choice-created obligations the story
+    has not yet delivered. If this segment's prose visibly delivers one on screen,
+    put its obligation_id in resolved_obligation_ids — only ids from that list are
+    valid, and only when the delivery actually happens in the prose.
 
 ═══ WRITING RULES ═══
 
@@ -294,6 +298,10 @@ same segment_id, same scene_ids in the same order.
     list. The protagonist is the player character, not part of that list — never put
     "protagonist" in present_character_ids.
 11. Write all summaries in the script pack language.
+12. event_trace.outstanding_obligations lists choice-created obligations the story
+    has not yet delivered. If this segment's prose visibly delivers one on screen,
+    put its obligation_id in resolved_obligation_ids — only ids from that list are
+    valid, and only when the delivery actually happens in the prose.
 
 ═══ WRITING RULES ═══
 

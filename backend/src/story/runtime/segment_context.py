@@ -69,10 +69,14 @@ def _fact_summary_views(pack: CompiledScriptPack, state: SessionState) -> list[d
         if runtime.truth_status == FactTruthStatus.COMMITTED:
             view["value"] = runtime.value
         else:
+            # Mutual-exclusion group: exactly one candidate value can ever
+            # become the committed truth; prose may never present two of
+            # them as simultaneously true.
             view["candidates"] = [
                 {"value": item.value, "requirements": item.requirements}
                 for item in question.candidates
             ]
+            view["mutually_exclusive"] = True
         views.append(view)
     return views
 
@@ -171,12 +175,35 @@ def player_choice_view(
 
 
 def _event_trace_digest(state: SessionState) -> dict[str, Any]:
-    """Build a summary of the story so far for the generation context.
+    """Deterministically rebuild the story-so-far digest from replayed state.
 
-    ``scene_summaries`` carries every committed scene's one-line summary —
-    replayed deterministically from the event stream, so later segments
-    (and the opening) always know the story outline so far.
+    Same events in, same digest out — no model calls, no wall-clock, no
+    randomness.  Carries the scene outline plus the open ledgers: choices
+    register obligations automatically, and settled ones disappear from
+    this view forever (the writer only ever sees outstanding work).
     """
+    outstanding_obligations = [
+        {
+            "obligation_id": obligation.obligation_id,
+            "kind": obligation.kind,
+            "burden": obligation.burden,
+            "character_id": obligation.character_id,
+            "source_choice_event_id": obligation.source_choice_event_id,
+        }
+        for _oid, obligation in sorted(state.drama.obligations.items())
+        if obligation.status == "open"
+    ]
+    open_promises = [
+        {
+            "promise_id": promise.promise_id,
+            "expectation": promise.expectation,
+            "status": promise.status.value,
+            "soft_deadline_decision": promise.soft_deadline_decision,
+            "hard_deadline_decision": promise.hard_deadline_decision,
+        }
+        for _pid, promise in sorted(state.drama.promises.items())
+        if promise.status.value in {"open", "escalated", "transformed"}
+    ]
     return {
         "scene_count": state.world.scene_count,
         "revision": state.revision,
@@ -184,6 +211,8 @@ def _event_trace_digest(state: SessionState) -> dict[str, Any]:
             {"scene_id": record.scene_id, "summary": record.summary}
             for record in state.scene_summaries
         ],
+        "outstanding_obligations": outstanding_obligations,
+        "open_promises": open_promises,
         "resolved_thread_count": sum(
             1 for t in state.threads.values() if t.status.value == "resolved"
         ),

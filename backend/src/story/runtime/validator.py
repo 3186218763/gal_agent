@@ -303,6 +303,15 @@ def validate_segment_plan(
         if op.kind in ("advance", "close") and op.thread_id not in existing_thread_ids:
             errors.append(f"unknown thread for {op.kind}: {op.thread_id}")
 
+    # Obligation settlement referential integrity: only open obligations the
+    # event-sourced ledger actually holds may be resolved by a segment.
+    for obligation_id in plan.resolved_obligation_ids:
+        obligation = state.drama.obligations.get(obligation_id)
+        if obligation is None:
+            errors.append(f"resolved_obligation_ids references unknown obligation: {obligation_id}")
+        elif obligation.status != "open":
+            errors.append(f"obligation is already resolved: {obligation_id}")
+
     if errors:
         raise ProposalRejected(errors)
     return plan

@@ -22,6 +22,7 @@ from src.story.state import (
     GoalAdvanced,
     NarrativeThread,
     ObligationCreated,
+    ObligationResolved,
     PhaseAdvanced,
     PlayerActionSelected,
     PresentedChoice,
@@ -402,6 +403,18 @@ def segment_events(
                 present_character_ids=scene_plan.present_character_ids,
                 blocks=scene_draft.blocks,
                 summary=scene_plan.summary,
+            )
+        )
+
+    # Obligation settlement: the writer marks which outstanding obligations
+    # this segment visibly delivers.  The settling scene is cited through a
+    # placeholder the authoritative flow rewrites to the committed event id.
+    for obligation_id in plan.resolved_obligation_ids:
+        events.append(
+            ObligationResolved(
+                obligation_id=obligation_id,
+                outcome="fulfilled",
+                resolution_scene_event_id=f"scene_ref:{plan.scenes[-1].scene_id}",
             )
         )
 

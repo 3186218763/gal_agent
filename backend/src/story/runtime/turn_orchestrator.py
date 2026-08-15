@@ -60,6 +60,7 @@ from src.story.state import (
     EndingGenerated,
     EventEnvelope,
     ObligationCreated,
+    ObligationResolved,
     PresentedChoice,
     RelationshipChanged,
     RelationshipEventRecorded,
@@ -991,6 +992,23 @@ class TurnOrchestrator:
                 ):
                     resolved[index] = event.model_copy(
                         update={"relationship_event_id": event_ids[index + 1]}
+                    )
+            elif isinstance(event, ObligationResolved) and event.resolution_scene_event_id.startswith(
+                "scene_ref:"
+            ):
+                # Simulator placeholder -> the committed id of that scene.
+                scene_id = event.resolution_scene_event_id[len("scene_ref:") :]
+                target = next(
+                    (
+                        j
+                        for j, item in enumerate(resolved)
+                        if isinstance(item, SceneCommitted) and item.scene_id == scene_id
+                    ),
+                    None,
+                )
+                if target is not None:
+                    resolved[index] = event.model_copy(
+                        update={"resolution_scene_event_id": event_ids[target]}
                     )
             elif isinstance(event, CostIncurred):
                 actual: list[str] = []

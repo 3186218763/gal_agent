@@ -56,6 +56,9 @@ class SegmentPlan(RuntimeModel):
     thread_ops: tuple[ThreadOperation, ...] = ()
     new_facts: tuple[FactCommitPlan, ...] = ()
     phase_after: StoryPhase | None = None
+    # Outstanding obligations this segment's prose visibly settles.  Ids
+    # must be open in the event-sourced ledger; validated before simulate.
+    resolved_obligation_ids: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_segment(self) -> SegmentPlan:
