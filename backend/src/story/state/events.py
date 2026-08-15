@@ -32,6 +32,9 @@ class SceneCommitted(FrozenModel):
     blocks: tuple[NarrativeBlock, ...] = Field(min_length=1)
     decision_id: str | None = None
     choices: tuple[PresentedChoice, ...] = ()
+    # One-line scene summary authored with the segment (None in events
+    # recorded before summaries existed).
+    summary: str | None = None
 
 
 class SceneAcknowledged(FrozenModel):

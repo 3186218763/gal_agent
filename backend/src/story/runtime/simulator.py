@@ -87,6 +87,7 @@ def scene_events(pack, state, plan, draft) -> tuple[StoryEvent, ...]:
             blocks=draft.blocks,
             decision_id=plan.decision_id,
             choices=choices,
+            summary=plan.summary,
         )
     )
     return tuple(events)
@@ -400,6 +401,7 @@ def segment_events(
                 location_id=scene_plan.location_id,
                 present_character_ids=scene_plan.present_character_ids,
                 blocks=scene_draft.blocks,
+                summary=scene_plan.summary,
             )
         )
 

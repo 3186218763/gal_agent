@@ -54,6 +54,7 @@ from src.story.state.models import (
     PendingSceneReference,
     PromiseRuntime,
     PromiseStatus,
+    SceneSummaryRecord,
     ScheduledConsequenceRuntime,
     SessionState,
     SessionStatus,
@@ -168,11 +169,18 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
             if is_decision
             else None
         )
+        scene_summaries = next_state.scene_summaries
+        if event.summary:
+            scene_summaries = (
+                *scene_summaries,
+                SceneSummaryRecord(scene_id=event.scene_id, summary=event.summary.strip()),
+            )
         next_state = next_state.model_copy(
             update={
                 "world": world,
                 "pending_scene": pending_scene,
                 "pending_decision": pending_decision,
+                "scene_summaries": scene_summaries,
             }
         )
 

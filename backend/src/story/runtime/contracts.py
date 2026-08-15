@@ -56,7 +56,9 @@ class FactCommitPlan(RuntimeModel):
 
 class ScenePlan(RuntimeModel):
     scene_id: str
-    summary: str
+    # One line, non-empty: the writer produces it with the segment and it
+    # rides the committed scene into every later segment's context.
+    summary: str = Field(min_length=1, max_length=200)
     location_id: str
     present_character_ids: tuple[str, ...]
     focus_goal_ids: tuple[str, ...] = ()
@@ -68,6 +70,8 @@ class ScenePlan(RuntimeModel):
 
     @model_validator(mode="after")
     def validate_terminal(self) -> ScenePlan:
+        if "\n" in self.summary:
+            raise ValueError("scene summary must be a single line")
         if self.terminal == "decision":
             if self.decision_id is None or not 2 <= len(self.choices) <= 4:
                 raise ValueError("decision scenes require decision_id and 2-4 choices")

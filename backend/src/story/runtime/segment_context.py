@@ -171,11 +171,19 @@ def player_choice_view(
 
 
 def _event_trace_digest(state: SessionState) -> dict[str, Any]:
-    """Build a summary of recent events for the Director context."""
+    """Build a summary of the story so far for the generation context.
+
+    ``scene_summaries`` carries every committed scene's one-line summary —
+    replayed deterministically from the event stream, so later segments
+    (and the opening) always know the story outline so far.
+    """
     return {
         "scene_count": state.world.scene_count,
         "revision": state.revision,
-        "recent_scene_summaries": [],  # Would be populated from event store in full implementation
+        "scene_summaries": [
+            {"scene_id": record.scene_id, "summary": record.summary}
+            for record in state.scene_summaries
+        ],
         "resolved_thread_count": sum(
             1 for t in state.threads.values() if t.status.value == "resolved"
         ),
@@ -334,6 +342,7 @@ def build_segment_writer_context(
         "approved_plan": plan.model_dump(mode="json"),
         "approved_narration_facts": narration_facts,
         "characters": characters,
+        "event_trace": _event_trace_digest(state),
     }
 
     # The just-committed choice speaks loudest in the segment that directly

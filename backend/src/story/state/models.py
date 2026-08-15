@@ -166,6 +166,13 @@ class PendingSceneReference(FrozenModel):
     blocks: tuple[NarrativeBlock, ...] = ()
 
 
+class SceneSummaryRecord(FrozenModel):
+    """One committed scene's one-line summary, replayed from the event stream."""
+
+    scene_id: str
+    summary: str = Field(min_length=1, max_length=200)
+
+
 class PendingDecisionReference(FrozenModel):
     decision_id: str
     scene_id: str
@@ -307,6 +314,7 @@ class SessionState(FrozenModel):
     pending_consequence: PendingConsequenceReference | None = None
     ending: EndingRuntime | None = None
     completion: CompletionState | None = None
+    scene_summaries: tuple[SceneSummaryRecord, ...] = ()
 
 
 def initial_session_state(
