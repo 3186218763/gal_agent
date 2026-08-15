@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from src.story.runtime.model import LLMClient
 from src.story.script_pack.models import CompiledScriptPack
-from src.story.state import SessionState
+from src.story.state import PresentedChoice, SessionState
 
 from .contracts import (
     ModelContractError,
@@ -19,6 +19,13 @@ Render ONLY the approved SegmentPlan as narration and dialogue blocks. You canno
 effect, character, location, choice ID, thread, or ending obligation that is not in the plan.
 
 HARD RULES — the output is machine-validated and any violation is rejected:
+
+0. PLAYER CHOICE (when the context has a "player_choice" section):
+   This segment DIRECTLY follows that choice. The chosen action must visibly
+   happen in the prose, and its intent, stance, accepted risk, and possible
+   obligation must shape how characters react. Never undo, ignore, or
+   contradict it. The section appears for this segment only — when absent,
+   do not invent or resurrect an earlier choice.
 
 1. KNOWLEDGE SCOPING (most important):
    A character's dialogue may reference ONLY facts listed in that character's own
@@ -67,12 +74,16 @@ class LLMSegmentWriter:
         pack: CompiledScriptPack,
         state: SessionState,
         plan: SegmentPlan,
+        *,
+        pending_choice: PresentedChoice | None = None,
     ) -> SegmentDraft:
         output = await self.client.complete_structured(
             instructions=SEGMENT_WRITER_INSTRUCTIONS,
             payload={
                 "operation": "write_segment",
-                "context": build_segment_writer_context(pack, state, plan),
+                "context": build_segment_writer_context(
+                    pack, state, plan, pending_choice=pending_choice
+                ),
             },
             output_type=SegmentWriterOutput,
         )

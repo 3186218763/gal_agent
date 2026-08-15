@@ -15,7 +15,7 @@ from src.story.runtime.contracts import (
     WrittenChoice,
 )
 from src.story.script_pack.models import CompiledScriptPack
-from src.story.state import SessionState, StoryPhase
+from src.story.state import PresentedChoice, SessionState, StoryPhase
 
 # ---------------------------------------------------------------------------
 # Ending proposal (Director's plan for a dynamic ending)
@@ -156,6 +156,8 @@ class SegmentWriterPort(Protocol):
         pack: CompiledScriptPack,
         state: SessionState,
         plan: SegmentPlan,
+        *,
+        pending_choice: PresentedChoice | None = None,
     ) -> SegmentDraft: ...
 
 

@@ -82,7 +82,7 @@ async def test_none_deadline_disables_the_wrapper(monkeypatch):
 
 
 class TimeoutUnifiedAgent:
-    async def generate(self, pack, state, pacing, *, rejection_notes=()):
+    async def generate(self, pack, state, pacing, *, rejection_notes=(), pending_choice=None):
         raise ModelTimeoutError("model call exceeded the 180s deadline")
 
 
@@ -198,7 +198,7 @@ def test_judge_rejection_persists_findings_and_regeneration(tmp_path: Path):
 class _RecordingAgent:
     """Unified agent producing a validator-clean proposal every time."""
 
-    async def generate(self, pack, state, pacing, *, rejection_notes=()):
+    async def generate(self, pack, state, pacing, *, rejection_notes=(), pending_choice=None):
         return await _valid_unified_output(pack, state, pacing)
 
 

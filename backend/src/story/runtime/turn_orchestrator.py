@@ -729,6 +729,7 @@ class TurnOrchestrator:
                     allow_opening_cache=command_kind == "generate_opening"
                     and not rejection_notes,
                     rejection_notes=tuple(rejection_notes),
+                    pending_choice=pending_choice,
                 )
 
             await emit(_progress_event("validating", started))
@@ -1018,6 +1019,7 @@ class TurnOrchestrator:
         *,
         allow_opening_cache: bool,
         rejection_notes: tuple[str, ...] = (),
+        pending_choice: PresentedChoice | None = None,
     ) -> tuple[SegmentPlan, SegmentDraft, bool]:
         """Return ``(plan, draft, judge_preapproved)`` for the next proposal.
 
@@ -1026,7 +1028,9 @@ class TurnOrchestrator:
         re-judging that frozen content.  ``rejection_notes`` carries the
         guard/judge reasons from a rejected attempt so the writer can fix
         them; a retry never reads the opening cache (the cached content was
-        just rejected).
+        just rejected).  ``pending_choice`` reaches the writer (unified or
+        split) for this one proposal only — the segment directly following
+        a selection.
         """
         if allow_opening_cache and self.pack_cache is not None:
             cached = self.pack_cache.load_opening(pack.pack_hash)
@@ -1045,7 +1049,11 @@ class TurnOrchestrator:
             try:
                 result = await self._await_with_heartbeats(
                     self.unified_agent.generate(
-                        pack, state, pacing, rejection_notes=rejection_notes
+                        pack,
+                        state,
+                        pacing,
+                        rejection_notes=rejection_notes,
+                        pending_choice=pending_choice,
                     ),
                     emit,
                     started,
@@ -1082,7 +1090,9 @@ class TurnOrchestrator:
 
         try:
             draft = await self._await_with_heartbeats(
-                self.writer.write_segment(pack, state, plan), emit, started
+                self.writer.write_segment(pack, state, plan, pending_choice=pending_choice),
+                emit,
+                started,
             )
             draft = validate_segment_draft(plan, draft)
         except (ModelContractError, ProposalRejected) as exc:

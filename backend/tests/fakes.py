@@ -283,7 +283,10 @@ class FakeSegmentWriter:
         pack: Any,
         state: Any,
         plan: SegmentPlan,
+        *,
+        pending_choice: Any = None,
     ) -> SegmentDraft:
+        self.last_pending_choice = pending_choice
         scene_drafts = tuple(
             SceneDraft(
                 scene_id=scene.scene_id,

@@ -27,10 +27,11 @@ from src.story.runtime.segment_context import (
     _get_immutable_rules,
     _get_world_setting,
     _thread_views,
+    player_choice_view,
 )
 from src.story.runtime.segment_contracts import PacingEnvelope
 from src.story.script_pack.models import CompiledScriptPack
-from src.story.state import SessionState
+from src.story.state import PresentedChoice, SessionState
 
 # ---------------------------------------------------------------------------
 # Output contract
@@ -70,6 +71,7 @@ class UnifiedSegmentPort(Protocol):
         pacing: PacingEnvelope,
         *,
         rejection_notes: tuple[str, ...] = (),
+        pending_choice: PresentedChoice | None = None,
     ) -> UnifiedSegmentOutput: ...
 
 
@@ -82,6 +84,8 @@ def build_unified_context(
     pack: CompiledScriptPack,
     state: SessionState,
     pacing: PacingEnvelope,
+    *,
+    pending_choice: PresentedChoice | None = None,
 ) -> dict[str, Any]:
     """Combine Director and Writer contexts into a single prompt context.
 
@@ -131,7 +135,7 @@ def build_unified_context(
             }
         )
 
-    return {
+    ctx: dict[str, Any] = {
         # Planning section
         "pack": {
             "id": source.identity.id,
@@ -171,6 +175,12 @@ def build_unified_context(
             for loc in world_setting.locations
         ],
     }
+    # The player's just-committed choice is present only for the segment
+    # directly following the selection; later segments see it only through
+    # the event digest, never as this fresh instruction again.
+    if pending_choice is not None:
+        ctx["player_choice"] = player_choice_view(pending_choice, pack)
+    return ctx
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +215,13 @@ same segment_id, same scene_ids in the same order.
 11. Write all summaries in the script pack language.
 
 ═══ WRITING RULES ═══
+
+0. PLAYER CHOICE (when the context has a "player_choice" section):
+   This segment DIRECTLY follows that choice. The chosen action must visibly
+   happen in the prose, and its intent, stance, accepted risk, and possible
+   obligation must shape how characters react. Never undo, ignore, or
+   contradict it. The section appears for this segment only — when absent,
+   do not invent or resurrect an earlier choice.
 
 1. KNOWLEDGE SCOPING (most important):
    A character's dialogue may reference ONLY facts listed in that character's own
@@ -280,6 +297,13 @@ same segment_id, same scene_ids in the same order.
 
 ═══ WRITING RULES ═══
 
+0. PLAYER CHOICE (when the context has a "player_choice" section):
+   This segment DIRECTLY follows that choice. The chosen action must visibly
+   happen in the prose, and its intent, stance, accepted risk, and possible
+   obligation must shape how characters react. Never undo, ignore, or
+   contradict it. The section appears for this segment only — when absent,
+   do not invent or resurrect an earlier choice.
+
 1. KNOWLEDGE SCOPING (most important):
    A character's dialogue may reference ONLY facts listed in that character's own
    "known_facts" section in the "characters" array. A character must never state, hint at,
@@ -329,10 +353,11 @@ class LLMUnifiedSegmentAgent:
         pacing: PacingEnvelope,
         *,
         rejection_notes: tuple[str, ...] = (),
+        pending_choice: PresentedChoice | None = None,
     ) -> UnifiedSegmentOutput:
         payload: dict[str, Any] = {
             "operation": "plan_and_write_segment",
-            "context": build_unified_context(pack, state, pacing),
+            "context": build_unified_context(pack, state, pacing, pending_choice=pending_choice),
         }
         if rejection_notes:
             # Guard/judge reasons from a rejected attempt: the writer must

@@ -7,6 +7,7 @@ from typing import Any
 from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import (
     FactTruthStatus,
+    PresentedChoice,
     SessionState,
 )
 
@@ -114,6 +115,61 @@ def _completion_requirement_views(
     return views
 
 
+def player_choice_view(
+    pending_choice: PresentedChoice,
+    pack: CompiledScriptPack,
+) -> dict[str, Any]:
+    """The player's just-committed choice as the writer's context sees it.
+
+    Two layers: a natural-language confirmation sentence (text layer, what
+    the prose must visibly honor) plus the structured Choice Meaning fields
+    (intent/stance/risk/obligation).  Lives for exactly one segment — the
+    one generated immediately after the selection; later segments only see
+    the choice through the event digest.
+    """
+    language = pack.source.identity.language
+    names = {item.id: item.name for item in pack.source.characters}
+    target = names.get(pending_choice.target_character_id or "", None)
+    choice = pending_choice
+
+    if language.lower().startswith("zh"):
+        parts = [f"玩家刚刚选择了「{choice.label}」。这一选择表明：{choice.intent}。"]
+        if target is not None:
+            axis = choice.stance_axis or "态度"
+            value = choice.stance_value or ""
+            parts.append(f"玩家对{target}的立场（{axis}）随之明确：{value}。")
+        if choice.accepted_risk:
+            parts.append(f"玩家已接受的风险：{choice.accepted_risk}。")
+        if choice.potential_obligation_kind:
+            parts.append(f"这一选择可能带来义务：{choice.potential_obligation_kind}。")
+    else:
+        parts = [f'The player just chose "{choice.label}". This commits to: {choice.intent}.']
+        if target is not None:
+            axis = choice.stance_axis or "attitude"
+            value = choice.stance_value or ""
+            parts.append(f"The player's stance toward {target} ({axis}) is now: {value}.")
+        if choice.accepted_risk:
+            parts.append(f"The player accepted this risk: {choice.accepted_risk}.")
+        if choice.potential_obligation_kind:
+            parts.append(f"This choice may create an obligation: {choice.potential_obligation_kind}.")
+
+    return {
+        "confirmation": " ".join(parts),
+        "structured": {
+            "option_id": choice.id,
+            "action_id": choice.action_id,
+            "label": choice.label,
+            "intent": choice.intent,
+            "target_character_id": choice.target_character_id,
+            "stance_axis": choice.stance_axis,
+            "stance_value": choice.stance_value,
+            "accepted_risk": choice.accepted_risk,
+            "potential_obligation_kind": choice.potential_obligation_kind,
+            "conflict_axis_id": choice.conflict_axis_id,
+        },
+    }
+
+
 def _event_trace_digest(state: SessionState) -> dict[str, Any]:
     """Build a summary of recent events for the Director context."""
     return {
@@ -215,6 +271,8 @@ def build_segment_writer_context(
     pack: CompiledScriptPack,
     state: SessionState,
     plan: SegmentPlan,
+    *,
+    pending_choice: PresentedChoice | None = None,
 ) -> dict[str, Any]:
     """Build per-speaker-scoped context for the Segment Writer Agent.
 
@@ -277,6 +335,11 @@ def build_segment_writer_context(
         "approved_narration_facts": narration_facts,
         "characters": characters,
     }
+
+    # The just-committed choice speaks loudest in the segment that directly
+    # follows it; callers pass ``pending_choice`` for that segment only.
+    if pending_choice is not None:
+        ctx["player_choice"] = player_choice_view(pending_choice, pack)
 
     if plan.terminal == "ending" and plan.ending_proposal is not None:
         ctx["ending_proposal"] = plan.ending_proposal.model_dump(mode="json")

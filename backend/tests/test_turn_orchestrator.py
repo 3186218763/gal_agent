@@ -172,7 +172,7 @@ def test_judge_rejection_regenerates_once_with_notes(tmp_path: Path):
         def __init__(self) -> None:
             self.notes: list[tuple[str, ...]] = []
 
-        async def generate(self, pack, state, pacing, *, rejection_notes=()):
+        async def generate(self, pack, state, pacing, *, rejection_notes=(), pending_choice=None):
             self.notes.append(rejection_notes)
             return await _valid_unified_output(pack, state, pacing)
 
@@ -242,7 +242,7 @@ def test_second_judge_rejection_fails_closed(tmp_path: Path):
         def __init__(self) -> None:
             self.calls = 0
 
-        async def generate(self, pack, state, pacing, *, rejection_notes=()):
+        async def generate(self, pack, state, pacing, *, rejection_notes=(), pending_choice=None):
             self.calls += 1
             return await _valid_unified_output(pack, state, pacing)
 
@@ -349,9 +349,9 @@ def test_segment_ready_choices_come_from_draft_when_plan_scene_has_none(
             )
 
     class DraftChoicesWriter(FakeSegmentWriter):
-        async def write_segment(self, pack, state, plan):
+        async def write_segment(self, pack, state, plan, *, pending_choice=None):
             if plan.terminal != "decision":
-                return await super().write_segment(pack, state, plan)
+                return await super().write_segment(pack, state, plan, pending_choice=pending_choice)
             return SegmentDraft(
                 segment_id=plan.segment_id,
                 scene_drafts=(
