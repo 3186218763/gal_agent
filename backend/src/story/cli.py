@@ -165,9 +165,7 @@ async def ensure_opening_cache(
     if semantic_judge is not None:
         findings = await semantic_judge.judge_segment(pack, state, plan, draft)
         if not findings.passed:
-            reasons = " | ".join(
-                f"{f.kind}: {f.detail}" for f in findings.blocking
-            )
+            reasons = " | ".join(f"{f.kind}: {f.detail}" for f in findings.blocking)
             raise RuntimeError(f"semantic judge rejected opening segment: {reasons}")
         judge_preapproved = True
 
@@ -263,29 +261,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             from dotenv import load_dotenv
 
             from src.story.runtime.completion_judge import CompletionJudge
-            from src.story.runtime.config import OpenCodeGoSettings
-            from src.story.runtime.director import SdkDirector
+            from src.story.runtime.config import LLMSettings
+            from src.story.runtime.director import LLMDirector
             from src.story.runtime.guard import Guard
-            from src.story.runtime.model import build_model_bundle
+            from src.story.runtime.model import LLMClient
             from src.story.runtime.pack_cache import PackCache
-            from src.story.runtime.planner import SdkPlanner
-            from src.story.runtime.segment_writer import SdkSegmentWriter
+            from src.story.runtime.planner import LLMPlanner
+            from src.story.runtime.segment_writer import LLMSegmentWriter
             from src.story.runtime.turn_orchestrator import TurnOrchestrator
-            from src.story.runtime.unified_segment import SdkUnifiedSegmentAgent
+            from src.story.runtime.unified_segment import LLMUnifiedSegmentAgent
 
             load_dotenv()
             pack = compile_script_pack(args.pack_path)
             store = StoryEventStore(args.database)
-            settings = OpenCodeGoSettings.from_env()
-            bundle = build_model_bundle(settings)
+            settings = LLMSettings.from_env()
+            client = LLMClient(settings)
             orchestrator = TurnOrchestrator(
                 store,
-                SdkDirector(bundle.model),
-                SdkSegmentWriter(bundle.model),
+                LLMDirector(client),
+                LLMSegmentWriter(client),
                 Guard(),
                 CompletionJudge(),
-                planner=SdkPlanner(bundle.model),
-                unified_agent=SdkUnifiedSegmentAgent(bundle.model),
+                planner=LLMPlanner(client),
+                unified_agent=LLMUnifiedSegmentAgent(client),
                 pack_cache=PackCache(Path(os.getenv("GAL_PACK_CACHE_ROOT", "data/pack_cache"))),
             )
             asyncio.run(
@@ -303,24 +301,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "init-pack":
             from dotenv import load_dotenv
 
-            from src.story.runtime.config import OpenCodeGoSettings
+            from src.story.runtime.config import LLMSettings
             from src.story.runtime.guard import Guard
-            from src.story.runtime.model import build_model_bundle
+            from src.story.runtime.model import LLMClient
             from src.story.runtime.unified_segment import (
                 OPENING_INSTRUCTIONS,
-                SdkUnifiedSegmentAgent,
+                LLMUnifiedSegmentAgent,
             )
 
             load_dotenv()
             pack = compile_script_pack(args.pack_path)
-            settings = OpenCodeGoSettings.from_env()
-            bundle = build_model_bundle(settings)
+            settings = LLMSettings.from_env()
+            client = LLMClient(settings)
             result = asyncio.run(
                 _init_pack(
                     pack=pack,
                     cache_root=args.cache_root,
-                    opening_agent=SdkUnifiedSegmentAgent(
-                        bundle.model, instructions=OPENING_INSTRUCTIONS
+                    opening_agent=LLMUnifiedSegmentAgent(
+                        client,
+                        instructions=OPENING_INSTRUCTIONS,
                     ),
                     guard=Guard(),
                     force=args.force,

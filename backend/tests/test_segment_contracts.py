@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from agents.agent_output import AgentOutputSchema
 from pydantic import ValidationError
 
 from src.story.runtime.contracts import (
@@ -234,20 +233,26 @@ def test_guard_result_with_violations():
 
 
 # ---------------------------------------------------------------------------
-# Agent SDK output schemas (Plan 3 Task 1)
+# Structured-output schemas (Plan 3 Task 1)
 # ---------------------------------------------------------------------------
 
 
 def test_director_output_strict_schema():
-    assert AgentOutputSchema(DirectorOutput).is_strict_json_schema() is True
+    from src.story.runtime.model import build_output_schema
+
+    assert build_output_schema(DirectorOutput)["additionalProperties"] is False
 
 
 def test_segment_writer_output_strict_schema():
-    assert AgentOutputSchema(SegmentWriterOutput).is_strict_json_schema() is True
+    from src.story.runtime.model import build_output_schema
+
+    assert build_output_schema(SegmentWriterOutput)["additionalProperties"] is False
 
 
-def test_provider_schemas_have_no_bare_refs_in_anyof():
-    from src.story.runtime.model import ProviderStrictOutputSchema
+def test_output_schemas_have_no_bare_refs_in_anyof():
+    import json
+
+    from src.story.runtime.model import build_output_schema
 
     def _find_bare_refs(schema):
         bad = []
@@ -264,8 +269,12 @@ def test_provider_schemas_have_no_bare_refs_in_anyof():
                 bad.extend(_find_bare_refs(item))
         return bad
 
-    assert _find_bare_refs(ProviderStrictOutputSchema(DirectorOutput)._output_schema) == []
-    assert _find_bare_refs(ProviderStrictOutputSchema(SegmentWriterOutput)._output_schema) == []
+    director_schema = build_output_schema(DirectorOutput)
+    writer_schema = build_output_schema(SegmentWriterOutput)
+    assert _find_bare_refs(director_schema) == []
+    assert _find_bare_refs(writer_schema) == []
+    assert "$ref" not in json.dumps(director_schema)
+    assert "$ref" not in json.dumps(writer_schema)
 
 
 # ---------------------------------------------------------------------------

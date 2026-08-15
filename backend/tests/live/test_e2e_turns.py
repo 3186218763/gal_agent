@@ -19,12 +19,12 @@ from fastapi.testclient import TestClient
 
 from src.story.api import create_app
 from src.story.runtime.completion_judge import CompletionJudge
-from src.story.runtime.config import OpenCodeGoSettings
-from src.story.runtime.director import SdkDirector
+from src.story.runtime.config import LLMSettings
+from src.story.runtime.director import LLMDirector
 from src.story.runtime.guard import Guard
-from src.story.runtime.model import build_model_bundle
-from src.story.runtime.planner import SdkPlanner
-from src.story.runtime.segment_writer import SdkSegmentWriter
+from src.story.runtime.model import LLMClient
+from src.story.runtime.planner import LLMPlanner
+from src.story.runtime.segment_writer import LLMSegmentWriter
 from src.story.runtime.turn_orchestrator import TurnOrchestrator
 from src.story.storage import StoryEventStore
 
@@ -58,8 +58,8 @@ def _parse_sse_lines(response) -> list[tuple[str, dict]]:
 
 def _build_live_app(tmp_path: Path):
     """Build a FastAPI app wired with real LLM components."""
-    settings = OpenCodeGoSettings.from_env()
-    bundle = build_model_bundle(settings)
+    settings = LLMSettings.from_env()
+    client = LLMClient(settings)
     store = StoryEventStore(tmp_path / "e2e_turns.db")
     registry_root = Path(os.getenv("GAL_SCRIPT_PACK_ROOT", "script_packs"))
     from src.story.api import AppDependencies, ScriptPackRegistry
@@ -67,11 +67,11 @@ def _build_live_app(tmp_path: Path):
     registry = ScriptPackRegistry(registry_root)
     orchestrator = TurnOrchestrator(
         store=store,
-        director=SdkDirector(bundle.model),
-        writer=SdkSegmentWriter(bundle.model),
+        director=LLMDirector(client),
+        writer=LLMSegmentWriter(client),
         guard=Guard(),
         completion_judge=CompletionJudge(),
-        planner=SdkPlanner(bundle.model),
+        planner=LLMPlanner(client),
     )
     deps = AppDependencies(
         store=store,

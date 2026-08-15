@@ -9,19 +9,19 @@ from tests.live.conftest import load_live_environment
 
 load_live_environment()
 
-from src.story.runtime.config import OpenCodeGoSettings
+from src.story.runtime.config import LLMSettings
 from src.story.runtime.contracts import PacingEnvelope
-from src.story.runtime.director import SdkDirector
+from src.story.runtime.director import LLMDirector
 from src.story.runtime.guard import Guard
-from src.story.runtime.model import build_model_bundle
-from src.story.runtime.segment_writer import SdkSegmentWriter
+from src.story.runtime.model import LLMClient
+from src.story.runtime.segment_writer import LLMSegmentWriter
 from src.story.script_pack import compile_script_pack
 from src.story.state import StoryPhase, initial_session_state
 
 
 async def main() -> None:
-    settings = OpenCodeGoSettings.from_env()
-    bundle = build_model_bundle(settings)
+    settings = LLMSettings.from_env()
+    client = LLMClient(settings)
     pack = compile_script_pack(Path("script_packs/cafe_mystery"))
     state = initial_session_state(pack, "debug-pipeline", session_seed=99)
     pacing = PacingEnvelope(
@@ -36,12 +36,13 @@ async def main() -> None:
         in_convergence=False,
         max_new_threads=2,
         quiet_scene_allowance=1,
+        target_block_range=(30, 60),
     )
-    director = SdkDirector(bundle.model)
+    director = LLMDirector(client)
     plan = await director.plan_segment(pack, state, pacing)
     print("PLAN terminal:", plan.terminal)
     print("PLAN scenes:", [(s.scene_id, s.terminal, s.present_character_ids) for s in plan.scenes])
-    writer = SdkSegmentWriter(bundle.model)
+    writer = LLMSegmentWriter(client)
     draft = await writer.write_segment(pack, state, plan)
     guard = Guard()
     result = guard.check_segment(pack, state, plan, draft)
@@ -53,7 +54,9 @@ async def main() -> None:
         for i, scene in enumerate(draft.scene_drafts):
             for j, block in enumerate(scene.blocks):
                 marker = " <-- FLAGGED" if global_idx in flagged else ""
-                print(f"scene[{i}].block[{global_idx}] {block.kind} {block.character_id}: {block.text!r}{marker}")
+                print(
+                    f"scene[{i}].block[{global_idx}] {block.kind} {block.character_id}: {block.text!r}{marker}"
+                )
                 global_idx += 1
     print("CHOICES:", [(c.option_id, c.label) for c in draft.choices])
 

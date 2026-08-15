@@ -4,19 +4,21 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from openai import AsyncOpenAI
 
 from src.story.runtime.contracts import (
     ChoicePlan,
     ScenePlan,
     SegmentPlan,
 )
-from src.story.runtime.stream_writer import StreamingSceneGenerator
+from src.story.runtime.stream_writer import (
+    STREAMING_WRITER_INSTRUCTIONS,
+    StreamingSceneGenerator,
+)
 from src.story.script_pack import compile_source
 from src.story.state import initial_session_state
+from tests.fakes import StubLLMClient
 from tests.story_factories import minimal_script_pack_dict
 
 
@@ -58,26 +60,10 @@ def _approved_plan() -> SegmentPlan:
     )
 
 
-class FakeStreamEvent:
-    def __init__(self, event_type: str, delta: str = "") -> None:
-        self.type = event_type
-        self.delta = delta
-
-
-class FakeStream:
-    def __init__(self, chunks: list[str]) -> None:
-        self._chunks = chunks
-
-    def __aiter__(self):
-        self._idx = 0
-        return self
-
-    async def __anext__(self):
-        if self._idx >= len(self._chunks):
-            raise StopAsyncIteration
-        chunk = self._chunks[self._idx]
-        self._idx += 1
-        return FakeStreamEvent("response.output_text.delta", chunk)
+def _stream_client(chunks: list[str]) -> StubLLMClient:
+    """A StubLLMClient whose stream_text replays the given text deltas."""
+    client = StubLLMClient(replies=chunks)
+    return client
 
 
 @pytest.mark.asyncio
@@ -118,11 +104,7 @@ async def test_streaming_adapter_consumes_approved_plan(pack, state):
         }
     )
 
-    mock_client = MagicMock(spec=AsyncOpenAI)
-    mock_client.responses = MagicMock()
-    mock_client.responses.create = AsyncMock(return_value=FakeStream([output_json]))
-
-    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
+    generator = StreamingSceneGenerator(_stream_client([output_json]))
     events = []
     async for event_type, data in generator.generate_segment(pack, state, plan):
         events.append((event_type, data))
@@ -135,7 +117,6 @@ async def test_streaming_adapter_consumes_approved_plan(pack, state):
 async def test_streaming_adapter_builds_prompt_from_plan(pack, state):
     """Verify the adapter prompt references the plan, not just state."""
     plan = _approved_plan()
-    captured_kwargs: dict[str, Any] = {}
 
     output_json = json.dumps(
         {
@@ -163,21 +144,17 @@ async def test_streaming_adapter_builds_prompt_from_plan(pack, state):
         }
     )
 
-    async def fake_create(**kwargs):
-        captured_kwargs.update(kwargs)
-        return FakeStream([output_json])
-
-    mock_client = MagicMock(spec=AsyncOpenAI)
-    mock_client.responses = MagicMock()
-    mock_client.responses.create = fake_create
-
-    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
+    client = _stream_client([output_json])
+    generator = StreamingSceneGenerator(client)
     events = []
     async for event_type, data in generator.generate_segment(pack, state, plan):
         events.append((event_type, data))
 
-    # The prompt should contain the plan
-    prompt_str = captured_kwargs.get("input", "")
+    # The prompt was built from the plan and sent through stream_text
+    request = client.requests[0]
+    assert request["instructions"] == STREAMING_WRITER_INSTRUCTIONS
+    prompt_str = json.dumps(request["payload"], ensure_ascii=False)
+    assert request["payload"]["operation"] == "write_segment"
     assert "seg_01" in prompt_str
 
 
@@ -197,12 +174,8 @@ async def test_streaming_segment_parses_json(pack, state):
         }
     )
 
-    mock_client = MagicMock(spec=AsyncOpenAI)
-    mock_client.responses = MagicMock()
-    mock_client.responses.create = AsyncMock(return_value=FakeStream([output_json]))
-
-    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
-    events = []
+    generator = StreamingSceneGenerator(_stream_client([output_json]))
+    events: list[tuple[str, Any]] = []
     async for event_type, data in generator.generate_segment(pack, state, plan):
         events.append((event_type, data))
 
@@ -216,13 +189,9 @@ async def test_streaming_segment_validates_output(pack, state):
     plan = _approved_plan()
     invalid_json = "{invalid json"
 
-    mock_client = MagicMock(spec=AsyncOpenAI)
-    mock_client.responses = MagicMock()
-    mock_client.responses.create = AsyncMock(return_value=FakeStream([invalid_json]))
-
     from src.story.runtime.contracts import ModelContractError
 
-    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
+    generator = StreamingSceneGenerator(_stream_client([invalid_json]))
     with pytest.raises(ModelContractError, match="could not be parsed"):
         async for _ in generator.generate_segment(pack, state, plan):
             pass
@@ -241,13 +210,9 @@ async def test_streaming_segment_rejects_wrong_shape_output(pack, state):
         }
     )
 
-    mock_client = MagicMock(spec=AsyncOpenAI)
-    mock_client.responses = MagicMock()
-    mock_client.responses.create = AsyncMock(return_value=FakeStream([wrong_shape_json]))
-
     from src.story.runtime.contracts import ModelContractError
 
-    generator = StreamingSceneGenerator(mock_client, "deepseek-v4-flash")
+    generator = StreamingSceneGenerator(_stream_client([wrong_shape_json]))
     with pytest.raises(ModelContractError, match="could not be validated"):
         async for _ in generator.generate_segment(pack, state, plan):
             pass

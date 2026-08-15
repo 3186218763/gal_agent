@@ -10,14 +10,10 @@ inform quality without blocking every turn.
 
 from __future__ import annotations
 
-import json
 from typing import Any, Literal, Protocol
 
-from agents import Agent
-from agents.models.openai_responses import OpenAIResponsesModel
-
 from src.story.runtime.contracts import RuntimeModel
-from src.story.runtime.model import ProviderStrictOutputSchema, run_with_contract_retry
+from src.story.runtime.model import LLMClient
 from src.story.runtime.segment_context import (
     _completion_requirement_views,
     _event_trace_digest,
@@ -205,8 +201,8 @@ pack language.
 Return only the requested structured contract."""
 
 
-class SdkSemanticJudge:
-    """Independent Semantic Judge backed by the OpenAI Agents SDK.
+class LLMSemanticJudge:
+    """Independent Semantic Judge backed by the structured-output LLM client.
 
     Fail closed: any judge failure (network, contract, or blocking finding)
     is surfaced to the caller as ``RuntimeGenerationUnavailable`` — a
@@ -215,15 +211,11 @@ class SdkSemanticJudge:
 
     def __init__(
         self,
-        model: OpenAIResponsesModel,
+        client: LLMClient,
         instructions: str = JUDGE_INSTRUCTIONS,
     ) -> None:
-        self.agent = Agent(
-            name="Semantic Judge",
-            instructions=instructions,
-            model=model,
-            output_type=ProviderStrictOutputSchema(JudgeFindings),
-        )
+        self.client = client
+        self.instructions = instructions
 
     async def judge_segment(
         self,
@@ -233,14 +225,14 @@ class SdkSemanticJudge:
         draft: SegmentDraft,
         pending_choice: PresentedChoice | None = None,
     ) -> JudgeFindings:
-        prompt = json.dumps(
-            {
+        return await self.client.complete_structured(
+            instructions=self.instructions,
+            payload={
                 "operation": "judge_segment",
                 "context": build_judge_context(pack, state, plan, draft, pending_choice),
             },
-            ensure_ascii=False,
+            output_type=JudgeFindings,
         )
-        return await run_with_contract_retry(self.agent, prompt, JudgeFindings)
 
 
 __all__ = [
@@ -248,7 +240,7 @@ __all__ = [
     "JUDGE_INSTRUCTIONS",
     "JudgeFinding",
     "JudgeFindings",
-    "SdkSemanticJudge",
+    "LLMSemanticJudge",
     "SemanticJudgePort",
     "build_judge_context",
 ]

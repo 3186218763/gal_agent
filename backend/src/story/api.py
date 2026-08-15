@@ -25,7 +25,7 @@ from src.story.projection import (
     project_pack,
     project_session,
 )
-from src.story.runtime.config import OpenCodeGoSettings
+from src.story.runtime.config import LLMSettings
 from src.story.runtime.contracts import (
     DecisionRequired,
     InvalidChoice,
@@ -34,9 +34,9 @@ from src.story.runtime.contracts import (
     RuntimeRevisionConflict,
     RuntimeSessionEnded,
 )
-from src.story.runtime.model import build_model_bundle
+from src.story.runtime.model import LLMClient
 from src.story.runtime.pack_cache import PackCache
-from src.story.runtime.planner import SdkPlanner
+from src.story.runtime.planner import LLMPlanner
 from src.story.runtime.segment_contracts import (
     DirectorPort,
     GuardPort,
@@ -84,31 +84,31 @@ class AppDependencies:
 
 
 def default_dependencies() -> AppDependencies:
-    settings = OpenCodeGoSettings.from_env()
-    bundle = build_model_bundle(settings)
+    settings = LLMSettings.from_env()
+    client = LLMClient(settings)
     store = StoryEventStore(Path(os.getenv("GAL_DATABASE_PATH", "data/story-v2.db")))
     registry = ScriptPackRegistry(Path(os.getenv("GAL_SCRIPT_PACK_ROOT", "script_packs")))
     from src.story.runtime.completion_judge import CompletionJudge
-    from src.story.runtime.director import SdkDirector
+    from src.story.runtime.director import LLMDirector
     from src.story.runtime.guard import Guard
     from src.story.runtime.pack_cache import PackCache
-    from src.story.runtime.segment_writer import SdkSegmentWriter
-    from src.story.runtime.semantic_judge import SdkSemanticJudge
+    from src.story.runtime.segment_writer import LLMSegmentWriter
+    from src.story.runtime.semantic_judge import LLMSemanticJudge
 
-    director = SdkDirector(bundle.model)
-    segment_writer = SdkSegmentWriter(bundle.model)
+    director = LLMDirector(client)
+    segment_writer = LLMSegmentWriter(client)
     guard = Guard()
     from src.story.runtime.unified_segment import (
         OPENING_INSTRUCTIONS,
-        SdkUnifiedSegmentAgent,
+        LLMUnifiedSegmentAgent,
     )
 
-    unified_agent = SdkUnifiedSegmentAgent(bundle.model)
-    semantic_judge = SdkSemanticJudge(bundle.model)
+    unified_agent = LLMUnifiedSegmentAgent(client)
+    semantic_judge = LLMSemanticJudge(client)
     pack_cache = PackCache(Path(os.getenv("GAL_PACK_CACHE_ROOT", "data/pack_cache")))
 
     def unified_agent_factory():
-        return SdkUnifiedSegmentAgent(bundle.model, instructions=OPENING_INSTRUCTIONS)
+        return LLMUnifiedSegmentAgent(client, instructions=OPENING_INSTRUCTIONS)
 
     orchestrator = TurnOrchestrator(
         store,
@@ -116,7 +116,7 @@ def default_dependencies() -> AppDependencies:
         segment_writer,
         guard,
         CompletionJudge(),
-        planner=SdkPlanner(bundle.model),
+        planner=LLMPlanner(client),
         unified_agent=unified_agent,
         pack_cache=pack_cache,
         semantic_judge=semantic_judge,

@@ -1,12 +1,8 @@
-"""SDK-backed Segment Director Agent using OpenAI Responses."""
+"""LLM-backed Segment Director Agent."""
 
 from __future__ import annotations
 
-import json
-
-from agents import Agent
-from agents.models.openai_responses import OpenAIResponsesModel
-
+from src.story.runtime.model import LLMClient
 from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import SessionState
 
@@ -15,7 +11,6 @@ from .contracts import (
     PacingEnvelope,
     SegmentPlan,
 )
-from .model import ProviderStrictOutputSchema, run_with_contract_retry
 from .segment_context import build_director_context
 
 DIRECTOR_INSTRUCTIONS = """You are the Segment Director for a constrained visual novel.
@@ -45,16 +40,11 @@ Rules:
 - Return only the requested structured contract."""
 
 
-class SdkDirector:
-    """Segment Director Agent backed by the OpenAI Agents SDK."""
+class LLMDirector:
+    """Segment Director backed by the structured-output LLM client."""
 
-    def __init__(self, model: OpenAIResponsesModel) -> None:
-        self.agent = Agent(
-            name="Segment Director",
-            instructions=DIRECTOR_INSTRUCTIONS,
-            model=model,
-            output_type=ProviderStrictOutputSchema(DirectorOutput),
-        )
+    def __init__(self, client: LLMClient) -> None:
+        self.client = client
 
     async def plan_segment(
         self,
@@ -62,12 +52,12 @@ class SdkDirector:
         state: SessionState,
         pacing: PacingEnvelope,
     ) -> SegmentPlan:
-        prompt = json.dumps(
-            {
+        output = await self.client.complete_structured(
+            instructions=DIRECTOR_INSTRUCTIONS,
+            payload={
                 "operation": "plan_segment",
                 "context": build_director_context(pack, state, pacing),
             },
-            ensure_ascii=False,
+            output_type=DirectorOutput,
         )
-        output = await run_with_contract_retry(self.agent, prompt, DirectorOutput)
         return output.segment_plan

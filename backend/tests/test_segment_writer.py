@@ -1,14 +1,6 @@
 from __future__ import annotations
 
-import json
-from types import SimpleNamespace
-from typing import Any
-
 import pytest
-from agents import Runner
-from agents.agent_output import AgentOutputSchema
-from agents.exceptions import ModelBehaviorError
-from agents.models.interface import Model
 
 from src.story.runtime.contracts import (
     ChoicePlan,
@@ -21,20 +13,12 @@ from src.story.runtime.contracts import (
     SegmentWriterOutput,
     WrittenChoice,
 )
-from src.story.runtime.segment_writer import SEGMENT_WRITER_INSTRUCTIONS, SdkSegmentWriter
+from src.story.runtime.model import build_output_schema
+from src.story.runtime.segment_writer import SEGMENT_WRITER_INSTRUCTIONS, LLMSegmentWriter
 from src.story.script_pack import compile_source
 from src.story.state import NarrativeBlock, initial_session_state
+from tests.fakes import StubLLMClient, json_reply
 from tests.story_factories import minimal_script_pack_dict
-
-
-class SharedFakeModel(Model):
-    async def get_response(self, *args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("no network in offline tests")
-
-    async def stream_response(self, *args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("no network in offline tests")
-        if False:  # pragma: no cover
-            yield None
 
 
 @pytest.fixture
@@ -45,11 +29,6 @@ def pack():
 @pytest.fixture
 def state(pack):
     return initial_session_state(pack, "session_01", session_seed=42)
-
-
-@pytest.fixture
-def shared_model():
-    return SharedFakeModel()
 
 
 def decision_segment_plan() -> SegmentPlan:
@@ -152,7 +131,10 @@ def valid_ending_draft() -> SegmentDraft:
 
 
 def test_segment_writer_output_strict_schema():
-    assert AgentOutputSchema(SegmentWriterOutput).is_strict_json_schema() is True
+    schema = build_output_schema(SegmentWriterOutput)
+    assert schema["additionalProperties"] is False
+    draft = schema["properties"]["segment_draft"]
+    assert draft["properties"]["segment_id"]["type"] == "string"
 
 
 def test_writer_instructions_forbid_adding_facts():
@@ -164,82 +146,78 @@ def test_writer_instructions_forbid_adding_facts():
 
 
 @pytest.mark.asyncio
-async def test_writer_returns_decision_draft(monkeypatch, shared_model, pack, state):
+async def test_writer_returns_decision_draft(pack, state):
     plan = decision_segment_plan()
-
-    async def fake_run(agent, input):
-        payload = json.loads(input)
-        assert payload["operation"] == "write_segment"
-        assert payload["context"]["approved_plan"]["segment_id"] == "seg_01"
-        return SimpleNamespace(
-            final_output=SegmentWriterOutput(segment_draft=valid_decision_draft())
-        )
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    writer = SdkSegmentWriter(shared_model)
+    client = StubLLMClient(
+        replies=[json_reply(SegmentWriterOutput(segment_draft=valid_decision_draft()))]
+    )
+    writer = LLMSegmentWriter(client)
     draft = await writer.write_segment(pack, state, plan)
     assert draft.segment_id == "seg_01"
     assert len(draft.scene_drafts) == 2
     assert len(draft.choices) == 2
     assert draft.ending is None
-    assert writer.agent.model is shared_model
+    assert writer.client is client
+
+    request = client.requests[0]
+    assert request["instructions"] == SEGMENT_WRITER_INSTRUCTIONS
+    payload = request["payload"]
+    assert payload["operation"] == "write_segment"
+    assert payload["context"]["approved_plan"]["segment_id"] == "seg_01"
 
 
 @pytest.mark.asyncio
-async def test_writer_returns_ending_draft(monkeypatch, shared_model, pack, state):
+async def test_writer_returns_ending_draft(pack, state):
     plan = ending_segment_plan()
-
-    async def fake_run(agent, input):
-        payload = json.loads(input)
-        assert payload["context"]["ending_proposal"]["title"] == "Farewell, Cafe"
-        return SimpleNamespace(final_output=SegmentWriterOutput(segment_draft=valid_ending_draft()))
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    writer = SdkSegmentWriter(shared_model)
+    client = StubLLMClient(
+        replies=[json_reply(SegmentWriterOutput(segment_draft=valid_ending_draft()))]
+    )
+    writer = LLMSegmentWriter(client)
     draft = await writer.write_segment(pack, state, plan)
     assert draft.ending is not None
     assert draft.ending.title == "Farewell, Cafe"
     assert len(draft.ending.blocks) >= 1
+    context = client.requests[0]["payload"]["context"]
+    assert context["ending_proposal"]["title"] == "Farewell, Cafe"
 
 
 @pytest.mark.asyncio
-async def test_writer_contract_error_retries_once(monkeypatch, shared_model, pack, state):
+async def test_writer_contract_error_retries_once(pack, state):
     plan = decision_segment_plan()
-    calls = 0
-
-    async def fake_run(agent, input):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise ModelBehaviorError("bad output")
-        return SimpleNamespace(
-            final_output=SegmentWriterOutput(segment_draft=valid_decision_draft())
-        )
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    writer = SdkSegmentWriter(shared_model)
+    client = StubLLMClient(
+        replies=[
+            "bad output",
+            json_reply(SegmentWriterOutput(segment_draft=valid_decision_draft())),
+        ]
+    )
+    writer = LLMSegmentWriter(client)
     draft = await writer.write_segment(pack, state, plan)
     assert draft.segment_id == "seg_01"
-    assert calls == 2
+    assert len(client.requests) == 2
 
 
 @pytest.mark.asyncio
-async def test_writer_per_character_context_scoping(monkeypatch, shared_model, pack, state):
+async def test_writer_rejects_changed_segment_id(pack, state):
+    from src.story.runtime.contracts import ModelContractError
+
+    plan = decision_segment_plan()
+    wrong = valid_decision_draft().model_copy(update={"segment_id": "seg_other"})
+    client = StubLLMClient(replies=[json_reply(SegmentWriterOutput(segment_draft=wrong))])
+    writer = LLMSegmentWriter(client)
+    with pytest.raises(ModelContractError, match="changed segment_id"):
+        await writer.write_segment(pack, state, plan)
+
+
+@pytest.mark.asyncio
+async def test_writer_per_character_context_scoping(pack, state):
     """Verify that the writer context does not leak secrets across characters."""
     plan = decision_segment_plan()
-    captured_context = None
-
-    async def fake_run(agent, input):
-        nonlocal captured_context
-        payload = json.loads(input)
-        captured_context = payload["context"]
-        return SimpleNamespace(
-            final_output=SegmentWriterOutput(segment_draft=valid_decision_draft())
-        )
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    writer = SdkSegmentWriter(shared_model)
+    client = StubLLMClient(
+        replies=[json_reply(SegmentWriterOutput(segment_draft=valid_decision_draft()))]
+    )
+    writer = LLMSegmentWriter(client)
     await writer.write_segment(pack, state, plan)
+    captured_context = client.requests[0]["payload"]["context"]
     # Each character should only see their own known_facts
     for char in captured_context["characters"]:
         for known in char["known_facts"]:

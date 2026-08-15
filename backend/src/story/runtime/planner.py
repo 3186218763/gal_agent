@@ -1,18 +1,15 @@
-"""SDK-backed narrative planner using OpenAI Responses only."""
+"""LLM-backed narrative planner."""
 
 from __future__ import annotations
 
-import json
+from typing import Any
 
-from agents import Agent
-from agents.models.openai_responses import OpenAIResponsesModel
-
+from src.story.runtime.model import LLMClient
 from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import PresentedChoice, SessionState
 
 from .context import build_planner_context
 from .contracts import ActionResolution, ModelContractError, PlannerOutput, ScenePlan
-from .model import ProviderStrictOutputSchema, run_with_contract_retry
 
 PLANNER_INSTRUCTIONS = """You are the semantic planner for a constrained visual novel.
 Return only the requested structured contract. Propose events and action outcomes; never claim
@@ -21,25 +18,23 @@ actions supplied in the input. Never choose a latent fact value outside its cand
 write narration or dialogue. The validator and reducer are the only state authority."""
 
 
-class SdkPlanner:
-    def __init__(self, model: OpenAIResponsesModel) -> None:
-        self.agent = Agent(
-            name="V2 Narrative Planner",
-            instructions=PLANNER_INSTRUCTIONS,
-            model=model,
-            output_type=ProviderStrictOutputSchema(PlannerOutput),
-        )
+class LLMPlanner:
+    def __init__(self, client: LLMClient) -> None:
+        self.client = client
 
     async def plan_scene(
         self,
         pack: CompiledScriptPack,
         state: SessionState,
     ) -> ScenePlan:
-        prompt = json.dumps(
-            {"operation": "plan_scene", "context": build_planner_context(pack, state)},
-            ensure_ascii=False,
+        output = await self.client.complete_structured(
+            instructions=PLANNER_INSTRUCTIONS,
+            payload={
+                "operation": "plan_scene",
+                "context": build_planner_context(pack, state),
+            },
+            output_type=PlannerOutput,
         )
-        output = await run_with_contract_retry(self.agent, prompt, PlannerOutput)
         if output.kind != "scene" or output.scene is None:
             raise ModelContractError("planner returned non-scene output")
         return output.scene
@@ -49,16 +44,20 @@ class SdkPlanner:
         pack: CompiledScriptPack,
         state: SessionState,
         choice: PresentedChoice,
+        rejection_notes: tuple[str, ...] = (),
     ) -> ActionResolution:
-        prompt = json.dumps(
-            {
-                "operation": "resolve_action",
-                "choice": choice.model_dump(mode="json"),
-                "context": build_planner_context(pack, state),
-            },
-            ensure_ascii=False,
+        payload: dict[str, Any] = {
+            "operation": "resolve_action",
+            "choice": choice.model_dump(mode="json"),
+            "context": build_planner_context(pack, state),
+        }
+        if rejection_notes:
+            payload["rejection_notes"] = list(rejection_notes)
+        output = await self.client.complete_structured(
+            instructions=PLANNER_INSTRUCTIONS,
+            payload=payload,
+            output_type=PlannerOutput,
         )
-        output = await run_with_contract_retry(self.agent, prompt, PlannerOutput)
         if output.kind != "resolution" or output.resolution is None:
             raise ModelContractError("planner returned non-resolution output")
         return output.resolution

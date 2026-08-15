@@ -27,8 +27,11 @@ class ChoicePlan(RuntimeModel):
     action_id: str
     intent: str
     target_character_id: str | None = None
-    stance_axis: str | None = None
-    stance_value: str | None = None
+    stance_axis: str | None = Field(default=None, description="Named axis, e.g. 'trust'.")
+    stance_value: str | None = Field(
+        default=None,
+        description="Stance as a short word on the axis (e.g. 'wary'), never a number.",
+    )
     accepted_risk: str | None = Field(default=None, max_length=240)
     potential_obligation_kind: str | None = None
     conflict_axis_id: str | None = None
@@ -154,6 +157,7 @@ class PlannerPort(Protocol):
         pack: CompiledScriptPack,
         state: SessionState,
         choice: PresentedChoice,
+        rejection_notes: tuple[str, ...] = (),
     ) -> ActionResolution:
         raise NotImplementedError
 

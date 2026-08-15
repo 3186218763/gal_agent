@@ -292,21 +292,19 @@ def test_repeated_turn_with_same_key_replays_identical_events(tmp_path: Path):
 def test_default_dependencies_include_segment_pipeline(monkeypatch, tmp_path):
     """Verify default_dependencies() wires the segment pipeline agents.
 
-    The test runs fully offline: the model bundle and settings are stubbed,
+    The test runs fully offline: the LLM client and settings are stubbed,
     and the store points at a tmp_path database. Construction of the real
-    SdkDirector/SdkSegmentWriter/Guard/CompletionJudge/TurnOrchestrator proves
+    LLMDirector/LLMSegmentWriter/Guard/CompletionJudge/TurnOrchestrator proves
     the wiring path is sound without any provider credentials.
     """
     import dataclasses
 
-    from agents.models.interface import Model
-
     import src.story.api as api_module
     from src.story.runtime.completion_judge import CompletionJudge
-    from src.story.runtime.director import SdkDirector
+    from src.story.runtime.director import LLMDirector
     from src.story.runtime.guard import Guard
-    from src.story.runtime.planner import SdkPlanner
-    from src.story.runtime.segment_writer import SdkSegmentWriter
+    from src.story.runtime.planner import LLMPlanner
+    from src.story.runtime.segment_writer import LLMSegmentWriter
     from src.story.runtime.turn_orchestrator import TurnOrchestrator
 
     fields = {f.name for f in dataclasses.fields(AppDependencies)}
@@ -314,19 +312,23 @@ def test_default_dependencies_include_segment_pipeline(monkeypatch, tmp_path):
     assert "runtime" not in fields
     assert "pregen_manager" not in fields
 
-    class FakeModel(Model):
-        async def get_response(self, *args: Any, **kwargs: Any) -> Any:
+    class FakeLLMClient:
+        """Stub stand-in for LLMClient: never touches the network."""
+
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+        async def complete_structured(self, *args: Any, **kwargs: Any) -> Any:
             raise AssertionError("network model calls are not allowed in offline tests")
 
-        async def stream_response(self, *args: Any, **kwargs: Any) -> Any:
+        async def stream_text(self, *args: Any, **kwargs: Any) -> Any:
             raise AssertionError("network model calls are not allowed in offline tests")
             if False:  # pragma: no cover - signature-compatible async generator
                 yield None
 
-    fake_bundle = SimpleNamespace(model=FakeModel(), client=object())
-    monkeypatch.setattr(api_module, "build_model_bundle", lambda _settings: fake_bundle)
+    monkeypatch.setattr(api_module, "LLMClient", FakeLLMClient)
     monkeypatch.setattr(
-        api_module.OpenCodeGoSettings,
+        api_module.LLMSettings,
         "from_env",
         staticmethod(lambda: SimpleNamespace(model="fake-model")),
     )
@@ -335,15 +337,15 @@ def test_default_dependencies_include_segment_pipeline(monkeypatch, tmp_path):
 
     deps = api_module.default_dependencies()
 
-    assert isinstance(deps.director, SdkDirector)
-    assert isinstance(deps.segment_writer, SdkSegmentWriter)
+    assert isinstance(deps.director, LLMDirector)
+    assert isinstance(deps.segment_writer, LLMSegmentWriter)
     assert isinstance(deps.guard, Guard)
     assert isinstance(deps.orchestrator, TurnOrchestrator)
     assert deps.orchestrator.director is deps.director
     assert deps.orchestrator.writer is deps.segment_writer
     assert deps.orchestrator.guard is deps.guard
     assert isinstance(deps.orchestrator.completion_judge, CompletionJudge)
-    assert isinstance(deps.orchestrator.planner, SdkPlanner)
+    assert isinstance(deps.orchestrator.planner, LLMPlanner)
 
 
 # ---------------------------------------------------------------------------

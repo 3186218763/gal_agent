@@ -490,18 +490,43 @@ class TurnOrchestrator:
             conflict_axis_id=pending.conflict_axis_id,
         )
         await emit(_progress_event("planning", started))
-        try:
-            resolution = await self._await_with_heartbeats(
-                self.planner.resolve_action(pack, state, choice), emit, started
-            )
-            resolution = validate_action_resolution(
-                pack,
-                state,
-                resolution,
-                expected_action_id=pending.action_id,
-            )
-        except Exception as exc:
-            raise RuntimeGenerationUnavailable("planner failed to resolve the consequence") from exc
+        # A rejected resolution gets one regeneration attempt with the
+        # validator reasons fed back to the planner — same shape as the
+        # segment regeneration loop, and nothing commits unless the revised
+        # resolution passes the deterministic validator.
+        rejection_notes: list[str] = []
+        regeneration_left = 1
+        while True:
+            try:
+                resolution = await self._await_with_heartbeats(
+                    self.planner.resolve_action(
+                        pack, state, choice, rejection_notes=tuple(rejection_notes)
+                    ),
+                    emit,
+                    started,
+                )
+                resolution = validate_action_resolution(
+                    pack,
+                    state,
+                    resolution,
+                    expected_action_id=pending.action_id,
+                )
+            except (ModelContractError, ProposalRejected) as exc:
+                detail = getattr(exc, "errors", None) or str(exc)
+                if regeneration_left <= 0:
+                    raise RuntimeGenerationUnavailable(
+                        "planner failed to resolve the consequence"
+                    ) from exc
+                regeneration_left -= 1
+                rejection_notes = [str(detail)]
+                logger.warning("resolution rejected: %s", detail)
+                await emit(_progress_event("regenerating", started))
+                continue
+            except Exception as exc:
+                raise RuntimeGenerationUnavailable(
+                    "planner failed to resolve the consequence"
+                ) from exc
+            break
 
         consequence_events = simulate_consequence(pack, state, resolution)
         consequence_envelopes = tuple(
@@ -611,8 +636,7 @@ class TurnOrchestrator:
                 failure = "guard rejected segment"
             else:
                 reasons = [
-                    f"judge/{f.kind} (block {f.block_index}): {f.detail}"
-                    for f in findings.blocking
+                    f"judge/{f.kind} (block {f.block_index}): {f.detail}" for f in findings.blocking
                 ]
                 failure = "semantic judge rejected segment"
             logger.warning("segment rejected: %s", " | ".join(reasons))
@@ -942,9 +966,7 @@ class TurnOrchestrator:
         try:
             while True:
                 try:
-                    return await asyncio.wait_for(
-                        asyncio.shield(task), _HEARTBEAT_INTERVAL_SECONDS
-                    )
+                    return await asyncio.wait_for(asyncio.shield(task), _HEARTBEAT_INTERVAL_SECONDS)
                 except TimeoutError:
                     if task.done():
                         return task.result()

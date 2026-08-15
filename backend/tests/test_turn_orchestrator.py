@@ -102,9 +102,7 @@ def test_turn_streams_progress_stages_before_segment_events(tmp_path: Path):
         if "elapsed_ms" in data:
             assert data["elapsed_ms"] >= 0
     # every progress event precedes the committed segment stream
-    first_segment = next(
-        i for i, (t, _data) in enumerate(events) if t == "segment_started"
-    )
+    first_segment = next(i for i, (t, _data) in enumerate(events) if t == "segment_started")
     last_progress = max(i for i, (t, _data) in enumerate(events) if t == "progress")
     assert last_progress < first_segment
 
@@ -124,9 +122,7 @@ def test_choice_turn_streams_planning_stage(tmp_path: Path):
 
 
 def test_slow_generation_emits_heartbeats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        "src.story.runtime.turn_orchestrator._HEARTBEAT_INTERVAL_SECONDS", 0.01
-    )
+    monkeypatch.setattr("src.story.runtime.turn_orchestrator._HEARTBEAT_INTERVAL_SECONDS", 0.01)
 
     class SlowDirector(FakeDirector):
         async def plan_segment(self, pack, state, pacing):
@@ -435,7 +431,7 @@ def test_idempotent_replay_returns_same_segment(tmp_path: Path):
 
 def test_failed_consequence_generation_preserves_committed_choice(tmp_path: Path):
     class FailingPlanner(FakePlanner):
-        async def resolve_action(self, pack, state, choice):
+        async def resolve_action(self, pack, state, choice, rejection_notes=()):
             raise RuntimeError("model failed")
 
     pack = compile_source(budget_test_pack_dict())
@@ -485,12 +481,59 @@ def test_failed_consequence_generation_preserves_committed_choice(tmp_path: Path
     assert loaded.pending_consequence.outcome is None
 
 
+def test_rejected_resolution_regenerates_once_with_notes(tmp_path: Path):
+    """A validator-rejected consequence resolution gets one regeneration
+    carrying the rejection reasons; the turn commits only when the revised
+    resolution passes the deterministic validator."""
+    from src.story.runtime.validator import ProposalRejected
+
+    pack = compile_source(budget_test_pack_dict())
+
+    class RejectOncePlanner(FakePlanner):
+        def __init__(self) -> None:
+            self.notes: list[tuple[str, ...]] = []
+            self.calls = 0
+
+        async def resolve_action(self, pack, state, choice, rejection_notes=()):
+            self.calls += 1
+            self.notes.append(rejection_notes)
+            if self.calls == 1:
+                raise ProposalRejected(["cannot evidence uncommitted fact: alice_hidden_motive"])
+            return await super().resolve_action(pack, state, choice)
+
+    planner = RejectOncePlanner()
+    store = StoryEventStore(tmp_path / "resolution_retry.db")
+    store.create_session(initial_session_state(pack, "s1", session_seed=42))
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=planner,
+    )
+
+    opening = _collect_events(orch.execute_turn(pack, "s1", 0, "cmd-opening", None))
+    ready = next(data for t, data in opening if t == "segment_ready")
+    offered = ready["choices"][0]
+
+    events = _collect_events(
+        orch.execute_turn(pack, "s1", ready["revision"], "cmd-select", offered["id"])
+    )
+
+    assert any(t == "segment_ready" for t, _data in events)
+    stages = [data["stage"] for t, data in events if t == "progress"]
+    assert "regenerating" in stages
+    assert planner.notes[0] == ()
+    assert planner.notes[1] and "uncommitted fact" in planner.notes[1][0]
+
+
 def test_pending_consequence_resumes_without_resubmitting_choice(tmp_path: Path):
     class FailsOncePlanner(FakePlanner):
         def __init__(self):
             self.failed = False
 
-        async def resolve_action(self, pack, state, choice):
+        async def resolve_action(self, pack, state, choice, rejection_notes=()):
             if not self.failed:
                 self.failed = True
                 raise RuntimeError("transient failure")
@@ -778,7 +821,7 @@ def test_cafe_mystery_completion_review_evaluates_real_derived_evidence(
     pack = compile_script_pack(PACK_DIR)
 
     class TrustingPlanner(FakePlanner):
-        async def resolve_action(self, pack, state, choice):
+        async def resolve_action(self, pack, state, choice, rejection_notes=()):
             return ActionResolution(
                 action_id=choice.action_id,
                 outcome="success",
@@ -1042,7 +1085,7 @@ def test_legacy_choice_cache_cannot_bypass_authoritative_flow(tmp_path: Path):
     class RecordingPlanner(FakePlanner):
         called = False
 
-        async def resolve_action(self, pack, state, choice):
+        async def resolve_action(self, pack, state, choice, rejection_notes=()):
             self.called = True
             return await super().resolve_action(pack, state, choice)
 

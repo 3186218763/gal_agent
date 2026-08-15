@@ -184,7 +184,7 @@ def _post_turn(
 class FailingPlanner(FakePlanner):
     """Planner whose resolve_action always fails like a model outage."""
 
-    async def resolve_action(self, pack, state, choice):
+    async def resolve_action(self, pack, state, choice, rejection_notes=()):
         raise RuntimeError("model failed")
 
 
@@ -194,7 +194,7 @@ class FailsOncePlanner(FakePlanner):
     def __init__(self):
         self._failed = False
 
-    async def resolve_action(self, pack, state, choice):
+    async def resolve_action(self, pack, state, choice, rejection_notes=()):
         if not self._failed:
             self._failed = True
             raise RuntimeError("transient model failure")

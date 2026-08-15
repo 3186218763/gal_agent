@@ -11,17 +11,17 @@ from pathlib import Path
 
 import pytest
 
-from src.story.runtime.config import OpenCodeGoSettings
+from src.story.runtime.config import LLMSettings
 from src.story.runtime.contracts import (
     PacingEnvelope,
     SegmentDraft,
     SegmentPlan,
 )
-from src.story.runtime.director import SdkDirector
+from src.story.runtime.director import LLMDirector
 from src.story.runtime.guard import Guard
-from src.story.runtime.model import build_model_bundle
+from src.story.runtime.model import LLMClient
 from src.story.runtime.segment_contracts import GuardResult
-from src.story.runtime.segment_writer import SdkSegmentWriter
+from src.story.runtime.segment_writer import LLMSegmentWriter
 from src.story.script_pack import compile_script_pack
 from src.story.state import StoryPhase, initial_session_state
 
@@ -34,9 +34,9 @@ async def test_segment_pipeline_director_writer_guard_roundtrip():
     if os.getenv("RUN_LIVE_ZEN_TEST") != "1":
         pytest.skip("set RUN_LIVE_ZEN_TEST=1 to run provider tests")
 
-    settings = OpenCodeGoSettings.from_env()
+    settings = LLMSettings.from_env()
     assert settings.api == "responses"
-    bundle = build_model_bundle(settings)
+    client = LLMClient(settings)
 
     pack = compile_script_pack(Path("script_packs/cafe_mystery"))
     state = initial_session_state(pack, "live-pipeline-test", session_seed=99)
@@ -57,7 +57,7 @@ async def test_segment_pipeline_director_writer_guard_roundtrip():
     )
 
     # 1. Director produces a SegmentPlan
-    director = SdkDirector(bundle.model)
+    director = LLMDirector(client)
     plan = await director.plan_segment(pack, state, pacing)
     assert isinstance(plan, SegmentPlan)
     assert len(plan.scenes) >= 1
@@ -91,7 +91,7 @@ async def test_segment_pipeline_director_writer_guard_roundtrip():
             assert char_id in pack.character_ids, f"Director proposed unknown character: {char_id}"
 
     # 2. Writer produces a SegmentDraft
-    writer = SdkSegmentWriter(bundle.model)
+    writer = LLMSegmentWriter(client)
     draft = await writer.write_segment(pack, state, plan)
     assert isinstance(draft, SegmentDraft)
     assert draft.segment_id == plan.segment_id

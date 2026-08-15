@@ -6,8 +6,9 @@ and test_story_cli_live.py.
 
 from __future__ import annotations
 
+import json
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from typing import Any
 
 from src.story.runtime.contracts import (
@@ -18,6 +19,7 @@ from src.story.runtime.contracts import (
     ScenePlan,
     WrittenChoice,
 )
+from src.story.runtime.model import LLMClient
 from src.story.runtime.segment_contracts import (
     EndingProposal,
     GuardResult,
@@ -31,6 +33,40 @@ from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import NarrativeBlock, SessionState
 
 
+class StubLLMClient(LLMClient):
+    """Offline LLMClient: scripted _ask replies, recorded requests.
+
+    Exercises the real complete_structured logic (in-prompt schema,
+    one repair retry, fail-closed) with no network.  ``replies`` are raw
+    model texts popped in order; ``requests`` records every user payload
+    the client would have sent.
+    """
+
+    def __init__(self, replies: Sequence[str] = ()) -> None:
+        self.replies = list(replies)
+        self.requests: list[dict[str, Any]] = []
+        self._api = "chat_completions"
+        self.model = "stub-model"
+
+    async def _ask(self, instructions: str, user: str, schema: dict[str, Any]) -> str:
+        self.requests.append({"instructions": instructions, "payload": json.loads(user)})
+        if not self.replies:
+            raise AssertionError("StubLLMClient ran out of scripted replies")
+        return self.replies.pop(0)
+
+    async def stream_text(self, *, system: str, user: str) -> AsyncIterator[str]:
+        self.requests.append(
+            {"instructions": system, "payload": json.loads(user), "streaming": True}
+        )
+        for reply in self.replies:
+            yield reply
+
+
+def json_reply(model: Any) -> str:
+    """Serialize a contract model instance as a raw model reply."""
+    return json.dumps(model.model_dump(mode="json"), ensure_ascii=False)
+
+
 class FakePlanner:
     """Fake PlannerPort that returns a deterministic decision plan."""
 
@@ -38,7 +74,7 @@ class FakePlanner:
         return valid_decision_plan()
 
     async def resolve_action(
-        self, pack: CompiledScriptPack, state: SessionState, choice
+        self, pack: CompiledScriptPack, state: SessionState, choice, rejection_notes=()
     ) -> ActionResolution:
         return ActionResolution(action_id=choice.action_id, outcome="success")
 

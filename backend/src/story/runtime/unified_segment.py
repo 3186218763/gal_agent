@@ -7,11 +7,8 @@ latency and significantly improves reliability on flash-tier models.
 
 from __future__ import annotations
 
-import json
 from typing import Any, Protocol
 
-from agents import Agent
-from agents.models.openai_responses import OpenAIResponsesModel
 from pydantic import model_validator
 
 from src.story.runtime.contracts import (
@@ -20,7 +17,7 @@ from src.story.runtime.contracts import (
     SegmentPlan,
     WrittenChoice,
 )
-from src.story.runtime.model import ProviderStrictOutputSchema, run_with_contract_retry
+from src.story.runtime.model import LLMClient
 from src.story.runtime.segment_context import (
     _character_known_facts,
     _completion_requirement_views,
@@ -310,8 +307,8 @@ same segment_id, same scene_ids in the same order.
 7. Return only the requested structured contract."""
 
 
-class SdkUnifiedSegmentAgent:
-    """Unified Segment Agent backed by the OpenAI Agents SDK.
+class LLMUnifiedSegmentAgent:
+    """Unified Segment Agent backed by the structured-output LLM client.
 
     Pass ``instructions=OPENING_INSTRUCTIONS`` to create an agent that
     generates long, atmospheric opening segments.
@@ -319,15 +316,11 @@ class SdkUnifiedSegmentAgent:
 
     def __init__(
         self,
-        model: OpenAIResponsesModel,
+        client: LLMClient,
         instructions: str = UNIFIED_INSTRUCTIONS,
     ) -> None:
-        self.agent = Agent(
-            name="Unified Segment Agent",
-            instructions=instructions,
-            model=model,
-            output_type=ProviderStrictOutputSchema(UnifiedSegmentOutput),
-        )
+        self.client = client
+        self.instructions = instructions
 
     async def generate(
         self,
@@ -345,8 +338,11 @@ class SdkUnifiedSegmentAgent:
             # Guard/judge reasons from a rejected attempt: the writer must
             # fix these while keeping every other contract rule.
             payload["fix_these_rejection_reasons"] = list(rejection_notes)
-        prompt = json.dumps(payload, ensure_ascii=False)
-        output = await run_with_contract_retry(self.agent, prompt, UnifiedSegmentOutput)
+        output = await self.client.complete_structured(
+            instructions=self.instructions,
+            payload=payload,
+            output_type=UnifiedSegmentOutput,
+        )
         # Extra validation: draft choices must match plan choices.
         # If the model forgot to put choices in the draft, auto-repair
         # by deriving WrittenChoice entries from the plan's ChoicePlan list.

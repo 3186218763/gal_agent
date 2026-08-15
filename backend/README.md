@@ -1,6 +1,6 @@
 # Galgame AI Backend (V2)
 
-V2-only FastAPI + CLI runtime. Script packs compile offline; live scene generation uses OpenCode Go **Responses** (`deepseek-v4-flash`) via the OpenAI Agents SDK (`OpenAIResponsesModel`).
+V2-only FastAPI + CLI runtime. Script packs compile offline; live scene generation uses the EveryGPT OpenAI-compatible **Chat Completions** endpoint (`gemini-3.7-flash`) through a direct structured-output client (`src/story/runtime/model.py:LLMClient` — no agent framework).
 
 ## Features
 
@@ -24,16 +24,18 @@ cp .env.example .env
 Edit `.env` (leave secrets out of git):
 
 ```dotenv
-GAL_LLM_PROVIDER=opencode_go
-OPENCODE_GO_API_KEY=
-OPENCODE_GO_BASE_URL=https://opencode.ai/zen/go/v1
-GAL_LLM_MODEL=deepseek-v4-flash
-GAL_LLM_API=responses
+GAL_LLM_PROVIDER=everygpt
+EVERYGPT_API_KEY=
+EVERYGPT_BASE_URL=https://api.everygpt.site/v1
+GAL_LLM_MODEL=gemini-3.7-flash
+GAL_LLM_API=chat_completions
 GAL_LLM_TIMEOUT_SECONDS=45
 GAL_LLM_MAX_RETRIES=1
 ```
 
-**Security:** any key previously exposed in chat must be revoked. Never put a real key in `.env.example`. `OPENAI_API_KEY` is an optional equal-value alias for `OPENCODE_GO_API_KEY`.
+The alternative provider is `opencode_go` (OpenCode Go **Responses**, `deepseek-v4-flash`, `GAL_LLM_API=responses`, key `OPENCODE_GO_API_KEY`).
+
+**Security:** any key previously exposed in chat must be revoked. Never put a real key in `.env.example`. `OPENAI_API_KEY` is an optional equal-value alias for the provider key.
 
 ## Commands
 
@@ -139,14 +141,14 @@ uv run pytest tests/ -q
 uv run ruff check src/story src/main.py tests
 
 # live capability (rotated key required)
-RUN_LIVE_ZEN_TEST=1 uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
+RUN_LIVE_ZEN_TEST=1 uv run pytest -m live tests/live/test_everygpt_chat_runtime.py -v
 ```
 
 The live command reads the ignored `backend/.env` with `override=False`, so an explicitly exported CI secret wins. If the provider answers slowly, raise the timeout (default 45s):
 
 ```bash
 cd backend
-RUN_LIVE_ZEN_TEST=1 GAL_LLM_TIMEOUT_SECONDS=120 uv run pytest -m live tests/live/test_opencode_go_v2_runtime.py -v
+RUN_LIVE_ZEN_TEST=1 GAL_LLM_TIMEOUT_SECONDS=120 uv run pytest -m live tests/live/test_everygpt_chat_runtime.py -v
 ```
 
 The live test drives the real model through the strict planner/writer contract; the model is nondeterministic, so an occasional run fails closed (`ProposalRejected`) or times out without committing anything — a pass proves the roundtrip works, and the session stays unmodified on failure.

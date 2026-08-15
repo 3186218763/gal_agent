@@ -10,16 +10,15 @@ import os
 from pathlib import Path
 
 import pytest
-from agents.models.openai_responses import OpenAIResponsesModel
 
 from src.story.runtime.completion_judge import CompletionJudge
-from src.story.runtime.config import OpenCodeGoSettings
+from src.story.runtime.config import LLMSettings
 from src.story.runtime.contracts import ChoicePlan, ScenePlan
 from src.story.runtime.guard import Guard
-from src.story.runtime.model import build_model_bundle
-from src.story.runtime.planner import SdkPlanner
+from src.story.runtime.model import LLMClient
+from src.story.runtime.planner import LLMPlanner
 from src.story.runtime.segment_contracts import SegmentPlan
-from src.story.runtime.segment_writer import SdkSegmentWriter
+from src.story.runtime.segment_writer import LLMSegmentWriter
 from src.story.runtime.turn_orchestrator import TurnOrchestrator
 from src.story.runtime.validator import validate_scene_plan
 from src.story.script_pack import compile_script_pack
@@ -33,17 +32,17 @@ pytestmark = pytest.mark.live
 async def test_deepseek_responses_runs_one_v2_choice_roundtrip(tmp_path):
     if os.getenv("RUN_LIVE_ZEN_TEST") != "1":
         pytest.skip("set RUN_LIVE_ZEN_TEST=1 to run provider tests")
-    settings = OpenCodeGoSettings.from_env()
+    settings = LLMSettings.from_env()
     assert settings.api == "responses"
-    bundle = build_model_bundle(settings)
-    assert isinstance(bundle.model, OpenAIResponsesModel)
-    sdk_planner = SdkPlanner(bundle.model)
+    client = LLMClient(settings)
+    assert client.api == "responses"
+    planner = LLMPlanner(client)
     pack = compile_script_pack(Path("script_packs/cafe_mystery"))
     store = StoryEventStore(tmp_path / "live.db")
     state = initial_session_state(pack, "live-capability", 17)
     store.create_session(state)
 
-    planner_probe = await sdk_planner.plan_scene(pack, state)
+    planner_probe = await planner.plan_scene(pack, state)
     validate_scene_plan(pack, state, planner_probe)
 
     actions = sorted(pack.action_ids & set(pack.source.protagonist.capabilities))[:2]
@@ -75,10 +74,10 @@ async def test_deepseek_responses_runs_one_v2_choice_roundtrip(tmp_path):
     orchestrator = TurnOrchestrator(
         store,
         FixedSegmentDirector(),
-        SdkSegmentWriter(bundle.model),
+        LLMSegmentWriter(client),
         Guard(),
         CompletionJudge(),
-        planner=sdk_planner,
+        planner=planner,
     )
 
     events: list[tuple[str, dict]] = []

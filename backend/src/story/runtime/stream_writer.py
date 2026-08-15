@@ -1,4 +1,4 @@
-"""Streaming segment writer adapter using raw OpenAI Responses API.
+"""Streaming segment writer adapter using the raw OpenAI Chat Completions API.
 
 Consumes an approved SegmentPlan and streams provisional blocks.
 Does NOT invent facts, choices, terminal states, or effects.
@@ -10,10 +10,10 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from src.story.runtime.contracts import ModelContractError, SegmentPlan, SegmentWriterOutput
+from src.story.runtime.model import LLMClient
 from src.story.runtime.segment_context import build_segment_writer_context
 from src.story.runtime.stream_parser import BlockStreamParser
 from src.story.script_pack.models import CompiledScriptPack
@@ -61,9 +61,8 @@ class StreamingSceneGenerator:
     SegmentWriterOutput.
     """
 
-    def __init__(self, client: AsyncOpenAI, model: str) -> None:
+    def __init__(self, client: LLMClient) -> None:
         self._client = client
-        self._model = model
 
     async def generate_segment(
         self,
@@ -74,20 +73,13 @@ class StreamingSceneGenerator:
         prompt = _build_segment_prompt(pack, state, plan)
         parser = BlockStreamParser()
 
-        stream = await self._client.responses.create(
-            model=self._model,
-            input=prompt,
-            instructions=STREAMING_WRITER_INSTRUCTIONS,
-            stream=True,
-        )
-
-        async for event in stream:
-            event_type = getattr(event, "type", "")
-            if event_type == "response.output_text.delta":
-                delta = getattr(event, "delta", "")
-                blocks = parser.feed(delta)
-                for block_dict in blocks:
-                    yield ("block", block_dict)
+        async for delta in self._client.stream_text(
+            system=STREAMING_WRITER_INSTRUCTIONS,
+            user=prompt,
+        ):
+            blocks = parser.feed(delta)
+            for block_dict in blocks:
+                yield ("block", block_dict)
 
         final = parser.finalize()
         if final is None:

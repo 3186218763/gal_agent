@@ -1,12 +1,8 @@
-"""SDK-backed Segment Writer Agent using OpenAI Responses."""
+"""LLM-backed Segment Writer Agent."""
 
 from __future__ import annotations
 
-import json
-
-from agents import Agent
-from agents.models.openai_responses import OpenAIResponsesModel
-
+from src.story.runtime.model import LLMClient
 from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import SessionState
 
@@ -16,7 +12,6 @@ from .contracts import (
     SegmentPlan,
     SegmentWriterOutput,
 )
-from .model import ProviderStrictOutputSchema, run_with_contract_retry
 from .segment_context import build_segment_writer_context
 
 SEGMENT_WRITER_INSTRUCTIONS = """You are the Segment Writer for a constrained visual novel.
@@ -61,16 +56,11 @@ HARD RULES — the output is machine-validated and any violation is rejected:
 - Return only the requested structured contract."""
 
 
-class SdkSegmentWriter:
-    """Segment Writer Agent backed by the OpenAI Agents SDK."""
+class LLMSegmentWriter:
+    """Segment Writer backed by the structured-output LLM client."""
 
-    def __init__(self, model: OpenAIResponsesModel) -> None:
-        self.agent = Agent(
-            name="Segment Writer",
-            instructions=SEGMENT_WRITER_INSTRUCTIONS,
-            model=model,
-            output_type=ProviderStrictOutputSchema(SegmentWriterOutput),
-        )
+    def __init__(self, client: LLMClient) -> None:
+        self.client = client
 
     async def write_segment(
         self,
@@ -78,14 +68,14 @@ class SdkSegmentWriter:
         state: SessionState,
         plan: SegmentPlan,
     ) -> SegmentDraft:
-        prompt = json.dumps(
-            {
+        output = await self.client.complete_structured(
+            instructions=SEGMENT_WRITER_INSTRUCTIONS,
+            payload={
                 "operation": "write_segment",
                 "context": build_segment_writer_context(pack, state, plan),
             },
-            ensure_ascii=False,
+            output_type=SegmentWriterOutput,
         )
-        output = await run_with_contract_retry(self.agent, prompt, SegmentWriterOutput)
         draft = output.segment_draft
         if draft.segment_id != plan.segment_id:
             raise ModelContractError(

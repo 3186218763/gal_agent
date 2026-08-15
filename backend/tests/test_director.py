@@ -1,13 +1,6 @@
 from __future__ import annotations
 
-import json
-from types import SimpleNamespace
-from typing import Any
-
 import pytest
-from agents import Runner
-from agents.exceptions import ModelBehaviorError
-from agents.models.interface import Model
 
 from src.story.runtime.contracts import (
     ChoicePlan,
@@ -17,20 +10,11 @@ from src.story.runtime.contracts import (
     ScenePlan,
     SegmentPlan,
 )
-from src.story.runtime.director import DIRECTOR_INSTRUCTIONS, SdkDirector
+from src.story.runtime.director import DIRECTOR_INSTRUCTIONS, LLMDirector
 from src.story.script_pack import compile_source
 from src.story.state import StoryPhase, initial_session_state
+from tests.fakes import StubLLMClient, json_reply
 from tests.story_factories import minimal_script_pack_dict
-
-
-class SharedFakeModel(Model):
-    async def get_response(self, *args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("network model calls are not allowed in offline tests")
-
-    async def stream_response(self, *args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("network model calls are not allowed in offline tests")
-        if False:  # pragma: no cover
-            yield None
 
 
 @pytest.fixture
@@ -59,11 +43,6 @@ def pacing():
         quiet_scene_allowance=1,
         target_block_range=(8, 25),
     )
-
-
-@pytest.fixture
-def shared_model():
-    return SharedFakeModel()
 
 
 def valid_segment_plan() -> SegmentPlan:
@@ -101,9 +80,12 @@ def valid_director_output() -> DirectorOutput:
 
 
 def test_director_output_supports_strict_json_schema():
-    from agents.agent_output import AgentOutputSchema
+    from src.story.runtime.model import build_output_schema
 
-    assert AgentOutputSchema(DirectorOutput).is_strict_json_schema() is True
+    schema = build_output_schema(DirectorOutput)
+    assert schema["additionalProperties"] is False
+    plan = schema["properties"]["segment_plan"]
+    assert plan["properties"]["segment_id"]["type"] == "string"
 
 
 def test_director_instructions_forbid_prose():
@@ -112,61 +94,46 @@ def test_director_instructions_forbid_prose():
 
 
 @pytest.mark.asyncio
-async def test_director_returns_segment_plan(monkeypatch, shared_model, pack, state, pacing):
-    async def fake_run(agent, input):
-        payload = json.loads(input)
-        assert payload["operation"] == "plan_segment"
-        assert "context" in payload
-        assert "pacing" in payload["context"]
-        return SimpleNamespace(final_output=valid_director_output())
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    director = SdkDirector(shared_model)
+async def test_director_returns_segment_plan(pack, state, pacing):
+    client = StubLLMClient(replies=[json_reply(valid_director_output())])
+    director = LLMDirector(client)
     plan = await director.plan_segment(pack, state, pacing)
     assert plan.segment_id == "seg_01"
     assert len(plan.scenes) == 2
     assert plan.terminal == "decision"
-    assert director.agent.model is shared_model
+
+    request = client.requests[0]
+    assert request["instructions"] == DIRECTOR_INSTRUCTIONS
+    payload = request["payload"]
+    assert payload["operation"] == "plan_segment"
+    assert "pacing" in payload["context"]
 
 
 @pytest.mark.asyncio
-async def test_director_contract_error_retries_once(monkeypatch, shared_model, pack, state, pacing):
-    calls = 0
-
-    async def fake_run(agent, input):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise ModelBehaviorError("invalid output")
-        return SimpleNamespace(final_output=valid_director_output())
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    director = SdkDirector(shared_model)
+async def test_director_contract_error_retries_once(pack, state, pacing):
+    client = StubLLMClient(
+        replies=[
+            "invalid output",
+            json_reply(valid_director_output()),
+        ]
+    )
+    director = LLMDirector(client)
     plan = await director.plan_segment(pack, state, pacing)
     assert plan.segment_id == "seg_01"
-    assert calls == 2
+    assert len(client.requests) == 2
 
 
 @pytest.mark.asyncio
-async def test_director_second_failure_raises_contract_error(
-    monkeypatch, shared_model, pack, state, pacing
-):
-    calls = 0
-
-    async def fake_run(agent, input):
-        nonlocal calls
-        calls += 1
-        raise ModelBehaviorError("still broken")
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    director = SdkDirector(shared_model)
+async def test_director_second_failure_raises_contract_error(pack, state, pacing):
+    client = StubLLMClient(replies=["still broken", "still broken"])
+    director = LLMDirector(client)
     with pytest.raises(ModelContractError, match="structured output failed after repair"):
         await director.plan_segment(pack, state, pacing)
-    assert calls == 2
+    assert len(client.requests) == 2
 
 
 @pytest.mark.asyncio
-async def test_director_ending_proposal(monkeypatch, shared_model, pack, state, pacing):
+async def test_director_ending_proposal(pack, state, pacing):
     from src.story.runtime.contracts import EndingProposal
 
     ending_plan = SegmentPlan(
@@ -187,12 +154,8 @@ async def test_director_ending_proposal(monkeypatch, shared_model, pack, state, 
             terminal_state_summary="They part ways.",
         ),
     )
-
-    async def fake_run(agent, input):
-        return SimpleNamespace(final_output=DirectorOutput(segment_plan=ending_plan))
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    director = SdkDirector(shared_model)
+    client = StubLLMClient(replies=[json_reply(DirectorOutput(segment_plan=ending_plan))])
+    director = LLMDirector(client)
     plan = await director.plan_segment(pack, state, pacing)
     assert plan.terminal == "ending"
     assert plan.ending_proposal is not None

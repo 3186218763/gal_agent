@@ -13,7 +13,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 if [[ ! -f ".env" ]]; then
-  echo "error: missing .env — copy .env.example and set OPENCODE_GO_API_KEY (or OPENAI_API_KEY alias)" >&2
+  echo "error: missing .env — copy .env.example and set the provider API key" >&2
   exit 1
 fi
 
@@ -22,14 +22,31 @@ set -a
 source .env
 set +a
 
-if [[ -z "${OPENCODE_GO_API_KEY:-}${OPENAI_API_KEY:-}" ]]; then
-  echo "error: set OPENCODE_GO_API_KEY (or OPENAI_API_KEY) in .env" >&2
-  exit 1
-fi
+export GAL_LLM_PROVIDER="${GAL_LLM_PROVIDER:-everygpt}"
 
-export GAL_LLM_PROVIDER="${GAL_LLM_PROVIDER:-opencode_go}"
-export GAL_LLM_API="${GAL_LLM_API:-responses}"
-export GAL_LLM_MODEL="${GAL_LLM_MODEL:-deepseek-v4-flash}"
+case "${GAL_LLM_PROVIDER}" in
+  everygpt)
+    if [[ -z "${EVERYGPT_API_KEY:-}${OPENAI_API_KEY:-}" ]]; then
+      echo "error: set EVERYGPT_API_KEY (or OPENAI_API_KEY) in .env" >&2
+      exit 1
+    fi
+    export GAL_LLM_API="${GAL_LLM_API:-chat_completions}"
+    export GAL_LLM_MODEL="${GAL_LLM_MODEL:-gemini-3.7-flash}"
+    ;;
+  opencode_go)
+    if [[ -z "${OPENCODE_GO_API_KEY:-}${OPENAI_API_KEY:-}" ]]; then
+      echo "error: set OPENCODE_GO_API_KEY (or OPENAI_API_KEY) in .env" >&2
+      exit 1
+    fi
+    export GAL_LLM_API="${GAL_LLM_API:-responses}"
+    export GAL_LLM_MODEL="${GAL_LLM_MODEL:-deepseek-v4-flash}"
+    ;;
+  *)
+    echo "error: GAL_LLM_PROVIDER must be everygpt or opencode_go" >&2
+    exit 1
+    ;;
+esac
+
 export GAL_DATABASE_PATH="${GAL_DATABASE_PATH:-data/story-v2.db}"
 export GAL_SCRIPT_PACK_ROOT="${GAL_SCRIPT_PACK_ROOT:-script_packs}"
 export HOST="${HOST:-127.0.0.1}"

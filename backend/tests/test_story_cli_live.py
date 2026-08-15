@@ -96,7 +96,7 @@ async def test_autoplay_recovers_pending_consequence_without_reoffering_choice(t
         def __init__(self):
             self.failed = False
 
-        async def resolve_action(self, pack, state, choice):
+        async def resolve_action(self, pack, state, choice, rejection_notes=()):
             if not self.failed:
                 self.failed = True
                 raise RuntimeError("transient model failure")
@@ -122,7 +122,7 @@ async def test_autoplay_recovers_pending_consequence_without_reoffering_choice(t
 @pytest.mark.asyncio
 async def test_autoplay_exhausts_attempts_on_persistent_generation_failure(tmp_path):
     class AlwaysFailingPlanner(FakePlanner):
-        async def resolve_action(self, pack, state, choice):
+        async def resolve_action(self, pack, state, choice, rejection_notes=()):
             raise RuntimeError("persistent model failure")
 
     store, orchestrator = _build_autoplay_runtime(tmp_path, planner=AlwaysFailingPlanner())

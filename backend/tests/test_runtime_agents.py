@@ -1,42 +1,24 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from agents import Runner
-from agents.agent_output import AgentOutputSchema
-from agents.exceptions import ModelBehaviorError
-from agents.models.interface import Model
 
 from src.story.runtime.contracts import (
     ActionResolution,
     ChoicePlan,
     ModelContractError,
     PlannerOutput,
-    SceneDraft,
     ScenePlan,
     WriterOutput,
-    WrittenChoice,
 )
-from src.story.runtime.model import run_with_contract_retry
-from src.story.runtime.planner import SdkPlanner
+from src.story.runtime.model import SCHEMA_RULE, build_output_schema
+from src.story.runtime.planner import LLMPlanner
 from src.story.script_pack import compile_source
-from src.story.state import NarrativeBlock, PresentedChoice, initial_session_state
+from src.story.state import PresentedChoice, initial_session_state
+from tests.fakes import StubLLMClient, json_reply
 from tests.story_factories import minimal_script_pack_dict
-
-
-class SharedFakeModel(Model):
-    """Offline stand-in accepted by Agent model type checks."""
-
-    async def get_response(self, *args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("network model calls are not allowed in offline tests")
-
-    async def stream_response(self, *args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("network model calls are not allowed in offline tests")
-        if False:  # pragma: no cover - make this an async generator signature-compatible
-            yield None
 
 
 @pytest.fixture
@@ -50,11 +32,6 @@ def state(pack):
 
 
 @pytest.fixture
-def decision_state(state):
-    return state
-
-
-@pytest.fixture
 def offered_choice() -> PresentedChoice:
     return PresentedChoice(
         id="ask_alice",
@@ -62,11 +39,6 @@ def offered_choice() -> PresentedChoice:
         label="Ask Alice",
         intent="ask directly",
     )
-
-
-@pytest.fixture
-def shared_model():
-    return SharedFakeModel()
 
 
 def valid_scene_plan() -> ScenePlan:
@@ -93,27 +65,7 @@ def valid_planner_output(kind: str = "scene") -> PlannerOutput:
     )
 
 
-def valid_writer_scene_output() -> WriterOutput:
-    plan = valid_scene_plan()
-    return WriterOutput(
-        kind="scene",
-        scene=SceneDraft(
-            scene_id=plan.scene_id,
-            blocks=(NarrativeBlock(kind="narration", text="The cafe hums quietly."),),
-            choices=tuple(
-                WrittenChoice(option_id=item.option_id, label=item.intent[:80])
-                for item in plan.choices
-            ),
-        ),
-    )
-
-
-def test_planner_and_writer_outputs_support_strict_json_schema():
-    assert AgentOutputSchema(PlannerOutput).is_strict_json_schema() is True
-    assert AgentOutputSchema(WriterOutput).is_strict_json_schema() is True
-
-
-def _anyof_branches_without_type(schema: Any) -> list[list[Any]]:
+def _missing_type_in_anyof(schema: Any) -> list[list[Any]]:
     bad: list[list[Any]] = []
     if isinstance(schema, dict):
         any_of = schema.get("anyOf")
@@ -122,101 +74,117 @@ def _anyof_branches_without_type(schema: Any) -> list[list[Any]]:
             if missing:
                 bad.append(missing)
         for value in schema.values():
-            bad.extend(_anyof_branches_without_type(value))
+            bad.extend(_missing_type_in_anyof(value))
     elif isinstance(schema, list):
         for item in schema:
-            bad.extend(_anyof_branches_without_type(item))
+            bad.extend(_missing_type_in_anyof(item))
     return bad
 
 
-def test_provider_schemas_have_no_bare_refs_in_anyof():
-    from src.story.runtime.model import ProviderStrictOutputSchema
-
-    assert (
-        _anyof_branches_without_type(ProviderStrictOutputSchema(PlannerOutput)._output_schema) == []
-    )
-    assert (
-        _anyof_branches_without_type(ProviderStrictOutputSchema(WriterOutput)._output_schema) == []
-    )
+def test_planner_and_writer_schemas_are_strict_and_self_contained():
+    schema = build_output_schema(PlannerOutput)
+    assert schema["properties"]["kind"]["enum"] == ["scene", "resolution"]
+    # strict: every object forbids extra fields
+    assert schema["additionalProperties"] is False
+    # self-contained: no $defs and no unresolved refs anywhere
+    assert _missing_type_in_anyof(schema) == []
+    assert '"$ref"' not in json.dumps(schema)
+    writer_schema = build_output_schema(WriterOutput)
+    assert writer_schema["additionalProperties"] is False
+    assert _missing_type_in_anyof(writer_schema) == []
 
 
 @pytest.mark.asyncio
-async def test_planner_uses_one_agent_for_scene_and_resolution(
-    monkeypatch, shared_model, pack, state, decision_state, offered_choice
-):
-    async def fake_run(agent, input):
-        payload = json.loads(input)
-        if payload["operation"] == "plan_scene":
-            return SimpleNamespace(final_output=valid_planner_output("scene"))
-        if payload["operation"] == "resolve_action":
-            return SimpleNamespace(
-                final_output=PlannerOutput(
-                    kind="resolution",
-                    resolution=ActionResolution(
-                        action_id=payload["choice"]["action_id"],
-                        outcome="success",
-                    ),
-                )
-            )
-        raise AssertionError(f"unexpected operation: {payload['operation']}")
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    planner = SdkPlanner(shared_model)
+async def test_planner_uses_one_client_for_scene_and_resolution(pack, state, offered_choice):
+    client = StubLLMClient(
+        replies=[
+            json_reply(valid_planner_output("scene")),
+            json_reply(valid_planner_output("resolution")),
+        ]
+    )
+    planner = LLMPlanner(client)
     scene = await planner.plan_scene(pack, state)
-    resolution = await planner.resolve_action(pack, decision_state, offered_choice)
+    resolution = await planner.resolve_action(pack, state, offered_choice)
     assert scene.scene_id == "scene_01"
     assert resolution.action_id == offered_choice.action_id
-    assert planner.agent.model is shared_model
+    # both operations went through the same client with the same instructions
+    assert [r["payload"]["operation"] for r in client.requests] == [
+        "plan_scene",
+        "resolve_action",
+    ]
+    assert len({r["instructions"] for r in client.requests}) == 1
 
 
 @pytest.mark.asyncio
-async def test_contract_error_retries_once_without_chat_fallback(
-    monkeypatch, shared_model, pack, state
-):
-    calls = 0
-
-    async def fake_run(agent, input):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise ModelBehaviorError("invalid structured output")
-        return SimpleNamespace(final_output=valid_planner_output())
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    planner = SdkPlanner(shared_model)
-    await planner.plan_scene(pack, state)
-    assert calls == 2
+async def test_planner_passes_rejection_notes_on_resolve(pack, state, offered_choice):
+    client = StubLLMClient(replies=[json_reply(valid_planner_output("resolution"))])
+    planner = LLMPlanner(client)
+    await planner.resolve_action(
+        pack, state, offered_choice, rejection_notes=("cannot evidence uncommitted fact",)
+    )
+    assert client.requests[0]["payload"]["rejection_notes"] == ["cannot evidence uncommitted fact"]
 
 
 @pytest.mark.asyncio
-async def test_second_contract_failure_raises_model_contract_error(monkeypatch, shared_model):
-    calls = 0
-
-    async def fake_run(agent, input):
-        nonlocal calls
-        calls += 1
-        raise ModelBehaviorError("still invalid")
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    agent = SimpleNamespace(name="stub")
-    with pytest.raises(ModelContractError, match="structured output failed after repair"):
-        await run_with_contract_retry(agent, json.dumps({"operation": "plan_scene"}), PlannerOutput)
-    assert calls == 2
-
-
-@pytest.mark.asyncio
-async def test_validation_error_is_repaired_once(monkeypatch, shared_model, pack, state):
-    calls = 0
-
-    async def fake_run(agent, input):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return SimpleNamespace(final_output={"kind": "scene"})  # missing scene payload
-        return SimpleNamespace(final_output=valid_planner_output())
-
-    monkeypatch.setattr(Runner, "run", fake_run)
-    planner = SdkPlanner(shared_model)
+async def test_invalid_json_is_repaired_once(pack, state):
+    client = StubLLMClient(
+        replies=[
+            "not json at all",
+            json_reply(valid_planner_output()),
+        ]
+    )
+    planner = LLMPlanner(client)
     scene = await planner.plan_scene(pack, state)
     assert scene.scene_id == "scene_01"
-    assert calls == 2
+    assert len(client.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_contract_schema_rides_on_first_attempt_and_repair(pack, state):
+    """Providers that treat json_schema as guidance get the exact schema in
+    the request payload from the first attempt, and again in the repair
+    turn, so near-miss field names and shorthand values can be corrected."""
+    client = StubLLMClient(
+        replies=[
+            '{"kind": "scene", "scene": {"bad_field": true}}',
+            json_reply(valid_planner_output()),
+        ]
+    )
+    planner = LLMPlanner(client)
+    await planner.plan_scene(pack, state)
+
+    first = client.requests[0]["payload"]
+    assert first["operation"] == "plan_scene"
+    assert first["required_output_schema"]["properties"]["kind"]["enum"] == [
+        "scene",
+        "resolution",
+    ]
+    assert "never a shorthand string" in first["schema_rule"]
+    assert SCHEMA_RULE == first["schema_rule"]
+
+    repair = client.requests[1]["payload"]
+    assert repair["operation"] == "repair_contract"
+    assert "validation_error" in repair
+    assert repair["original_input"]["operation"] == "plan_scene"
+    assert repair["required_output_schema"]["properties"]["kind"]["enum"] == [
+        "scene",
+        "resolution",
+    ]
+    assert repair["schema_rule"] == SCHEMA_RULE
+
+
+@pytest.mark.asyncio
+async def test_second_contract_failure_raises_model_contract_error(monkeypatch, pack, state):
+    client = StubLLMClient(replies=["still invalid", "also invalid"])
+    planner = LLMPlanner(client)
+    with pytest.raises(ModelContractError, match="structured output failed after repair"):
+        await planner.plan_scene(pack, state)
+    assert len(client.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_planner_rejects_wrong_output_kind(pack, state, offered_choice):
+    client = StubLLMClient(replies=[json_reply(valid_planner_output("scene"))])
+    planner = LLMPlanner(client)
+    with pytest.raises(ModelContractError, match="non-resolution"):
+        await planner.resolve_action(pack, state, offered_choice)
