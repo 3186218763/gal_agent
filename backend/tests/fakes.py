@@ -91,7 +91,7 @@ class FakeWriter:
         return EndingDraft(
             ending_id=ending.id,
             title=ending.title,
-            blocks=(NarrativeBlock(kind="narration", text=f"Ending: {ending.title}"),),
+            blocks=finale_blocks(ending.title),
         )
 
 
@@ -177,11 +177,24 @@ def valid_scene_draft(plan: ScenePlan) -> SceneDraft:
     )
 
 
+def finale_blocks(title: str) -> tuple[NarrativeBlock, ...]:
+    """ENDING_BLOCK_FLOOR narration blocks — the density validator's finale floor."""
+    from src.story.runtime.validator import ENDING_BLOCK_FLOOR
+
+    return tuple(
+        NarrativeBlock(
+            kind="narration",
+            text=f"Ending: {title}." if i == 0 else f"Payoff beat {i} of {title}.",
+        )
+        for i in range(ENDING_BLOCK_FLOOR)
+    )
+
+
 def valid_ending_draft(ending) -> EndingDraft:
     return EndingDraft(
         ending_id=ending.id,
         title=ending.title,
-        blocks=(NarrativeBlock(kind="narration", text=f"Ending: {ending.title}"),),
+        blocks=finale_blocks(ending.title),
     )
 
 
@@ -326,15 +339,12 @@ class FakeSegmentWriter:
         ending = None
         if plan.terminal == "ending" and plan.ending_proposal is not None:
             ending_id = f"ending_{state.session_id}_{uuid.uuid4().hex[:8]}"
+            # Meet the finale density floor: the validator rejects an ending
+            # whose player-visible blocks fall under ENDING_BLOCK_FLOOR.
             ending = EndingDraft(
                 ending_id=ending_id,
                 title=plan.ending_proposal.title,
-                blocks=(
-                    NarrativeBlock(
-                        kind="narration",
-                        text=f"{plan.ending_proposal.title}. {plan.ending_proposal.terminal_state_summary}",
-                    ),
-                ),
+                blocks=finale_blocks(plan.ending_proposal.title),
                 tone=plan.ending_proposal.tone,
                 terminal_state_summary=plan.ending_proposal.terminal_state_summary,
             )

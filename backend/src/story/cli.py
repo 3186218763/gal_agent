@@ -96,6 +96,10 @@ async def autoplay(
 
     commands = 0
     attempts = 0
+    # Command keys are salted with the revision this run resumed from: an
+    # abandoned run leaves its keys claimed with stale fingerprints, and a
+    # fresh run at a different revision must not reuse them.
+    run_tag = state.revision
     while True:
         state = store.load_session(session_id)
         if state.status == SessionStatus.ENDED:
@@ -105,14 +109,14 @@ async def autoplay(
 
         if state.pending_consequence is not None:
             choice_id = None
-            command_key = f"autoplay-resume-{commands}"
+            command_key = f"autoplay-resume-{run_tag}-{commands}"
         elif state.pending_decision is not None:
             choice = state.pending_decision.choices[0 if choice_strategy == "first" else -1]
             choice_id = choice.id
-            command_key = f"autoplay-select-{commands}"
+            command_key = f"autoplay-select-{run_tag}-{commands}"
         else:
             choice_id = None
-            command_key = f"autoplay-open-{commands}"
+            command_key = f"autoplay-open-{run_tag}-{commands}"
 
         try:
             async for event_type, data in orchestrator.execute_turn(

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from src.story.runtime.contracts import (
+    EndingDraft,
     NarrativeBlock,
     RuntimeGenerationUnavailable,
     SceneDraft,
@@ -70,7 +71,14 @@ def test_density_floor_comes_from_pacing_range():
     assert str(pacing.target_block_range[0]) in errors[0]
 
 
-def test_endings_are_exempt_from_the_floor():
+def test_endings_have_their_own_finale_floor():
+    """Endings are exempt from the DECISION floor but gated by ENDING_BLOCK_FLOOR.
+
+    Only draft.ending.blocks is player-visible for endings (scene drafts are
+    not committed), so scene prose never counts toward the finale floor.
+    """
+    from src.story.runtime.validator import ENDING_BLOCK_FLOOR
+
     pack = compile_source(budget_test_pack_dict())
     state = initial_session_state(pack, "s1", session_seed=42)
     pacing = compute_pacing_envelope(state, pack)
@@ -90,7 +98,27 @@ def test_endings_are_exempt_from_the_floor():
         }
     )
 
-    assert segment_density_errors(ending_plan, draft, pacing) == []
+    # Short/no ending blocks are rejected even with dense scene drafts.
+    errors = segment_density_errors(ending_plan, draft, pacing)
+    assert errors, "a short finale must be rejected"
+    assert str(ENDING_BLOCK_FLOOR) in errors[0]
+
+    # A full payoff ending clears the floor.
+    full_ending = draft.model_copy(
+        update={
+            "ending": EndingDraft(
+                ending_id="end_goodbye",
+                title="Farewell",
+                blocks=tuple(
+                    NarrativeBlock(kind="narration", text=f"Payoff beat {i}.")
+                    for i in range(ENDING_BLOCK_FLOOR)
+                ),
+                tone="quiet",
+                terminal_state_summary="They part ways.",
+            )
+        }
+    )
+    assert segment_density_errors(ending_plan, full_ending, pacing) == []
 
 
 class _Agent:

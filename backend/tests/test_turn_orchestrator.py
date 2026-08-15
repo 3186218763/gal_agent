@@ -1245,3 +1245,75 @@ def test_pregen_manager_no_longer_exists_as_a_consumption_path(tmp_path: Path):
     assert "pregen_manager" not in inspect.signature(TurnOrchestrator.__init__).parameters
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("src.story.runtime.pregeneration")
+
+
+def test_validator_rejected_plan_regenerates_with_notes(tmp_path: Path):
+    """A plan rejected by the deterministic validator regenerates once with
+    the validator reasons as rejection notes, instead of failing the command
+    cold (autoplay-level retries start without notes)."""
+
+    class PoisonedFirstAgent:
+        """First proposal commits an unavailable candidate value."""
+
+        def __init__(self) -> None:
+            self.notes: list[tuple[str, ...]] = []
+            self.poisoned = True
+
+        async def generate(self, pack, state, pacing, *, rejection_notes=(), pending_choice=None):
+            from src.story.runtime.contracts import FactCommitPlan
+
+            self.notes.append(rejection_notes)
+            output = await _valid_unified_output(pack, state, pacing)
+            if self.poisoned:
+                self.poisoned = False
+                plan = output.segment_plan.model_copy(
+                    update={
+                        "scenes": (
+                            output.segment_plan.scenes[0].model_copy(
+                                update={
+                                    "fact_commits": (
+                                        FactCommitPlan(
+                                            fact_id="who_took_notebook",
+                                            value="nobody",
+                                            reason="explicit_revelation",
+                                        ),
+                                    )
+                                }
+                            ),
+                        )
+                    }
+                )
+                return output.model_copy(
+                    update={"segment_plan": plan},
+                )
+            return output
+
+    pack = compile_source(budget_test_pack_dict())
+    store = StoryEventStore(tmp_path / "plan_regen.db")
+    store.create_session(initial_session_state(pack, "s1", session_seed=42))
+    orch = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=FakePlanner(),
+        unified_agent=PoisonedFirstAgent(),
+    )
+
+    events = _collect_events(orch.execute_turn(pack, "s1", 0, "cmd-plan-regen", None))
+
+    assert any(t == "segment_ready" for t, _data in events)
+    stages = [data["stage"] for t, data in events if t == "progress"]
+    assert "regenerating" in stages
+    assert agent_notes_carry_validator_reason(orch)
+    record = store.load_turn_diagnostics("s1")[0]
+    assert record["regenerations"] == 1
+    assert record["validator_violations"]
+
+
+def agent_notes_carry_validator_reason(orch) -> bool:
+    return any(
+        "validator/proposal" in note
+        for note in orch.unified_agent.notes[1]
+    )

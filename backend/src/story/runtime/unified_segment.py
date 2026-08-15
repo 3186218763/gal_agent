@@ -215,6 +215,9 @@ same segment_id, same scene_ids in the same order.
    same scene even when evidence_required > 1 — the finale is where the mystery
    pays off. Use reason="explicit_revelation", reveal=true there; do not try to
    pre-evidence an uncommitted fact through the consequence resolution instead.
+   The ending's blocks are the finale the player reads: write at least 10,
+   dramatizing the payoff — the confrontation, the reveal, and the aftermath —
+   not a short epilogue summary.
 3. Otherwise set terminal="decision" and provide 2-4 choices on the last scene.
 4. Middle scenes must always be terminal="continue".
 5. You may propose thread_ops (open/advance/close), new_facts (fact commits), and phase_after.
@@ -316,6 +319,9 @@ same segment_id, same scene_ids in the same order.
    same scene even when evidence_required > 1 — the finale is where the mystery
    pays off. Use reason="explicit_revelation", reveal=true there; do not try to
    pre-evidence an uncommitted fact through the consequence resolution instead.
+   The ending's blocks are the finale the player reads: write at least 10,
+   dramatizing the payoff — the confrontation, the reveal, and the aftermath —
+   not a short epilogue summary.
 3. Otherwise set terminal="decision" and provide 2-4 choices on the last scene.
 4. Middle scenes must always be terminal="continue".
 5. You may propose thread_ops (open/advance/close), new_facts (fact commits), and phase_after.

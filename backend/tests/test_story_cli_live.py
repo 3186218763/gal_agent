@@ -142,3 +142,48 @@ async def test_autoplay_exhausts_attempts_on_persistent_generation_failure(tmp_p
     state = store.load_session("auto-03")
     assert state.pending_consequence is not None
     assert state.pending_decision is None
+
+
+@pytest.mark.asyncio
+async def test_autoplay_resume_after_failed_run_does_not_collide_on_command_keys(tmp_path):
+    """An abandoned run leaves command keys claimed with stale fingerprints;
+    a resumed run at a different revision must derive fresh keys."""
+
+    class AlwaysFailingPlanner(FakePlanner):
+        async def resolve_action(self, pack, state, choice, rejection_notes=()):
+            raise RuntimeError("model outage")
+
+    store, failing = _build_autoplay_runtime(tmp_path, planner=AlwaysFailingPlanner())
+    with pytest.raises(RuntimeGenerationUnavailable):
+        await autoplay(
+            pack=live_test_pack(),
+            store=store,
+            orchestrator=failing,
+            session_id="auto-04",
+            seed=17,
+            choice_strategy="first",
+            max_commands=50,
+            max_attempts=2,
+        )
+    assert store.load_session("auto-04").pending_consequence is not None
+
+    # Model is back: a new run resumes the pending consequence and must not
+    # reuse the failed run's positional command keys at a new revision.
+    recovered = TurnOrchestrator(
+        store=store,
+        director=FakeDirector(),
+        writer=FakeSegmentWriter(),
+        guard=FakeGuard(),
+        completion_judge=CompletionJudge(),
+        planner=FakePlanner(),
+    )
+    result = await autoplay(
+        pack=live_test_pack(),
+        store=store,
+        orchestrator=recovered,
+        session_id="auto-04",
+        seed=17,
+        choice_strategy="first",
+        max_commands=50,
+    )
+    assert result.status == SessionStatus.ENDED

@@ -44,12 +44,31 @@ def _validate_fact_commits(pack, state, commits, allow_finale_reveal: bool = Fal
             errors.append(f"commit reason is not allowed: {commit.fact_id}.{commit.reason}")
         if commit.reason == "explicit_revelation" and not commit.reveal:
             errors.append(f"explicit revelation must reveal the fact: {commit.fact_id}")
-        for index in range(len(candidate.requirements)):
-            key = f"fact.{commit.fact_id}.candidate.{commit.value}.requirement.{index}"
-            if not pack.conditions[key].evaluate(context):
-                errors.append(
-                    f"candidate requirement is false: {commit.fact_id}.{commit.value}.{index}"
+        requirement_failures = [
+            f"candidate requirement is false: {commit.fact_id}.{commit.value}.{index}"
+            for index in range(len(candidate.requirements))
+            if not pack.conditions[
+                f"fact.{commit.fact_id}.candidate.{commit.value}.requirement.{index}"
+            ].evaluate(context)
+        ]
+        errors.extend(requirement_failures)
+        if requirement_failures:
+            # Name the candidates whose requirements hold NOW so a rejection
+            # note can steer the model instead of bouncing the same value.
+            available = [
+                item.value
+                for item in question.candidates
+                if all(
+                    pack.conditions[
+                        f"fact.{commit.fact_id}.candidate.{item.value}.requirement.{index}"
+                    ].evaluate(context)
+                    for index in range(len(item.requirements))
                 )
+            ]
+            errors.append(
+                f"candidate {commit.fact_id}.{commit.value} is not available now; "
+                f"candidates whose requirements currently hold: {', '.join(available) or 'none'}"
+            )
         unknown_learners = set(commit.learned_by) - pack.character_ids
         errors.extend(f"unknown character: {item}" for item in sorted(unknown_learners))
         # Finale exemption: the ending scene may settle a multi-evidence
@@ -229,18 +248,36 @@ def validate_scene_draft(plan: ScenePlan, draft: SceneDraft) -> SceneDraft:
     return draft
 
 
+# Ending segments commit no SceneCommitted; the player-visible finale prose
+# is EndingGenerated.blocks alone, so the payoff gets its own hard floor.
+ENDING_BLOCK_FLOOR = 10
+
+
 def segment_density_errors(
     plan: SegmentPlan,
     draft: SegmentDraft,
     pacing: PacingEnvelope,
 ) -> list[str]:
-    """Block-count floor for decision segments (choice-density backstop).
+    """Block-count floors for decision and ending segments.
 
-    The reader should get at least ``target_block_range``'s lower bound of
-    prose between decision points; a writer rushing to the next fork gets
-    bounced back with the floor named in the reason.  Endings are exempt
-    (``must_end`` can force them at any length).
+    Decision segments: the reader gets at least ``target_block_range``'s
+    lower bound of prose between forks.  Ending segments: the finale prose
+    the player actually reads is ``draft.ending.blocks`` (scene drafts are
+    not committed for endings), so it must clear ``ENDING_BLOCK_FLOOR`` —
+    a payoff scene, not a three-block epilogue.  Scene drafts never count
+    toward the ending floor.
     """
+    if plan.terminal == "ending":
+        blocks = len(draft.ending.blocks) if draft.ending is not None else 0
+        if blocks < ENDING_BLOCK_FLOOR:
+            return [
+                (
+                    f"ending segment has {blocks} ending blocks but the finale "
+                    f"density floor requires at least {ENDING_BLOCK_FLOOR} — dramatize "
+                    "the reveal and its aftermath, not a short epilogue"
+                )
+            ]
+        return []
     floor = pacing.target_block_range[0] if pacing.target_block_range else 0
     if plan.terminal != "decision" or floor <= 0:
         return []

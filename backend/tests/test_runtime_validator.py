@@ -3,6 +3,7 @@ import pytest
 from src.story.runtime.contracts import (
     ActionResolution,
     ChoicePlan,
+    FactCommitPlan,
     LearnedFactPlan,
     RelationshipDelta,
     SceneDraft,
@@ -99,3 +100,30 @@ def test_action_resolution_rejects_duplicate_learned_fact_characters_and_ids():
     )
     with pytest.raises(ProposalRejected, match="learned fact"):
         validate_action_resolution(pack, state, resolution, expected_action_id="ask")
+
+
+def test_failed_candidate_requirement_names_available_candidates():
+    """A rejected candidate value must point at values whose requirements hold now."""
+    data = minimal_script_pack_dict()
+    data["facts"]["latent_questions"][0]["candidates"][0]["requirements"] = [
+        "relationships.alice.trust >= 999"
+    ]
+    pack = compile_source(data)
+    state = initial_session_state(pack, "session_01", session_seed=42)
+    plan = valid_decision_plan().model_copy(
+        update={
+            "fact_commits": (
+                FactCommitPlan(
+                    fact_id="who_took_notebook",
+                    value="alice",
+                    reason="explicit_revelation",
+                    reveal=True,
+                ),
+            )
+        }
+    )
+    with pytest.raises(ProposalRejected) as exc:
+        validate_scene_plan(pack, state, plan)
+    message = str(exc.value)
+    assert "candidate requirement is false: who_took_notebook.alice.0" in message
+    assert "requirements currently hold: stranger" in message

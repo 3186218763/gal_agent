@@ -730,18 +730,36 @@ class TurnOrchestrator:
         rejection_notes: list[str] = []
         regeneration_left = 1 if self.unified_agent is not None else 0
         while True:
-            with diagnostics.stage("generating"):
-                plan, draft, judge_preapproved = await self._generate_segment(
-                    pack,
-                    state,
-                    pacing,
-                    emit,
-                    started,
-                    allow_opening_cache=command_kind == "generate_opening"
-                    and not rejection_notes,
-                    rejection_notes=tuple(rejection_notes),
-                    pending_choice=pending_choice,
-                )
+            try:
+                with diagnostics.stage("generating"):
+                    plan, draft, judge_preapproved = await self._generate_segment(
+                        pack,
+                        state,
+                        pacing,
+                        emit,
+                        started,
+                        allow_opening_cache=command_kind == "generate_opening"
+                        and not rejection_notes,
+                        rejection_notes=tuple(rejection_notes),
+                        pending_choice=pending_choice,
+                    )
+            except ProposalRejected as exc:
+                # A validator-rejected plan/draft regenerates with the reasons
+                # fed back — same budget as guard/density/judge rejections,
+                # and nothing commits unless the revised proposal passes.
+                reasons = [
+                    str(item) for item in (getattr(exc, "errors", None) or (str(exc),))
+                ]
+                diagnostics.note_validator_violations(reasons)
+                logger.warning("segment plan rejected: %s", " | ".join(reasons))
+                failure = f"unified agent produced an invalid segment: {tuple(reasons)}"
+                if regeneration_left <= 0:
+                    raise RuntimeGenerationUnavailable(failure) from exc
+                regeneration_left -= 1
+                diagnostics.regenerations += 1
+                rejection_notes = [f"validator/proposal: {reason}" for reason in reasons]
+                await emit(_progress_event("regenerating", started))
+                continue
 
             await emit(_progress_event("validating", started))
             findings = None
@@ -1101,7 +1119,11 @@ class TurnOrchestrator:
                 plan = validate_segment_plan(pack, state, result.segment_plan, pacing)
                 draft = validate_segment_draft(plan, result.segment_draft)
                 return plan, draft, False
-            except (ModelContractError, ProposalRejected) as exc:
+            except ProposalRejected:
+                # The caller's regeneration loop retries with the validator
+                # reasons as rejection notes instead of failing the command.
+                raise
+            except ModelContractError as exc:
                 detail = getattr(exc, "errors", None) or str(exc)
                 raise RuntimeGenerationUnavailable(
                     f"unified agent produced an invalid segment: {detail}"
