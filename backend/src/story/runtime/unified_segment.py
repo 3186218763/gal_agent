@@ -211,6 +211,10 @@ same segment_id, same scene_ids in the same order.
 1. The plan must contain 1 or more scenes. Only the last scene may be terminal.
 2. If pacing.must_end is true or the story has a defensible conclusion, set terminal="ending"
    and provide an ending_proposal with title, tone, and terminal_state_summary.
+   In an ending segment, new_facts may commit AND reveal a latent question in the
+   same scene even when evidence_required > 1 — the finale is where the mystery
+   pays off. Use reason="explicit_revelation", reveal=true there; do not try to
+   pre-evidence an uncommitted fact through the consequence resolution instead.
 3. Otherwise set terminal="decision" and provide 2-4 choices on the last scene.
 4. Middle scenes must always be terminal="continue".
 5. You may propose thread_ops (open/advance/close), new_facts (fact commits), and phase_after.
@@ -308,6 +312,10 @@ same segment_id, same scene_ids in the same order.
 1. The plan must contain 1 or more scenes. Only the last scene may be terminal.
 2. If pacing.must_end is true or the story has a defensible conclusion, set terminal="ending"
    and provide an ending_proposal with title, tone, and terminal_state_summary.
+   In an ending segment, new_facts may commit AND reveal a latent question in the
+   same scene even when evidence_required > 1 — the finale is where the mystery
+   pays off. Use reason="explicit_revelation", reveal=true there; do not try to
+   pre-evidence an uncommitted fact through the consequence resolution instead.
 3. Otherwise set terminal="decision" and provide 2-4 choices on the last scene.
 4. Middle scenes must always be terminal="continue".
 5. You may propose thread_ops (open/advance/close), new_facts (fact commits), and phase_after.

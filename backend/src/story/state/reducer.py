@@ -331,8 +331,10 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
             current.truth_status == FactTruthStatus.COMMITTED,
             "only a committed fact can be revealed",
         )
+        # A finale reveal (ending segment) settles the question in one scene;
+        # every other reveal must still ride the evidence ladder.
         _require(
-            len(current.evidence_event_ids) >= current.evidence_required,
+            event.finale or len(current.evidence_event_ids) >= current.evidence_required,
             f"fact {event.fact_id} lacks required evidence",
         )
         facts = dict(next_state.facts)

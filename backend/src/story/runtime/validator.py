@@ -21,7 +21,7 @@ class ProposalRejected(ValueError):
         super().__init__("; ".join(self.errors))
 
 
-def _validate_fact_commits(pack, state, commits) -> list[str]:
+def _validate_fact_commits(pack, state, commits, allow_finale_reveal: bool = False) -> list[str]:
     errors: list[str] = []
     context = build_condition_context(state)
     seen: set[str] = set()
@@ -52,13 +52,18 @@ def _validate_fact_commits(pack, state, commits) -> list[str]:
                 )
         unknown_learners = set(commit.learned_by) - pack.character_ids
         errors.extend(f"unknown character: {item}" for item in sorted(unknown_learners))
-        if commit.reveal and question.evidence_required > 1:
+        # Finale exemption: the ending scene may settle a multi-evidence
+        # latent question in one commit+reveal; mid-story keeps the ladder.
+        if commit.reveal and question.evidence_required > 1 and not allow_finale_reveal:
             errors.append(f"fact cannot be revealed by one scene: {commit.fact_id}")
     return errors
 
 
 def validate_scene_plan(
-    pack: CompiledScriptPack, state: SessionState, plan: ScenePlan
+    pack: CompiledScriptPack,
+    state: SessionState,
+    plan: ScenePlan,
+    allow_finale_reveal: bool = False,
 ) -> ScenePlan:
     errors: list[str] = []
     location_ids = {
@@ -91,7 +96,9 @@ def validate_scene_plan(
     option_ids = [item.option_id for item in plan.choices]
     if len(option_ids) != len(set(option_ids)):
         errors.append("choice option ids must be unique")
-    errors.extend(_validate_fact_commits(pack, state, plan.fact_commits))
+    errors.extend(
+        _validate_fact_commits(pack, state, plan.fact_commits, allow_finale_reveal)
+    )
     if errors:
         raise ProposalRejected(errors)
     return plan
@@ -303,10 +310,11 @@ def validate_segment_plan(
                 "last scene must have terminal='decision' when segment terminal is 'decision'"
             )
 
-    # Validate each scene plan individually.
+    # Validate each scene plan individually.  Ending segments carry the
+    # finale reveal exemption (convergence-window payoff in one scene).
     for scene in plan.scenes:
         try:
-            validate_scene_plan(pack, state, scene)
+            validate_scene_plan(pack, state, scene, allow_finale_reveal=plan.terminal == "ending")
         except ProposalRejected as exc:
             errors.extend(f"scene {scene.scene_id}: {e}" for e in exc.errors)
 

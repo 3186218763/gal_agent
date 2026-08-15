@@ -82,6 +82,11 @@ class FactEvidenced(FrozenModel):
 class FactRevealed(FrozenModel):
     type: Literal["fact_revealed"] = "fact_revealed"
     fact_id: str
+    # Finale exemption: an ending scene may commit and reveal a multi-evidence
+    # latent fact in one shot (the finale is the payoff; the evidence ladder
+    # still applies to every non-ending reveal).  Defaults to False so
+    # replaying pre-exemption event streams keeps the strict semantics.
+    finale: bool = False
 
 
 class CharacterLearnedFact(FrozenModel):

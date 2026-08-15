@@ -274,20 +274,23 @@ class Guard:
                                 )
                 global_block_index += 1
 
-        # 8. Evidence counts: fact commits must have sufficient evidence
-        for scene in plan.scenes:
-            for fact_commit in scene.fact_commits:
-                fact_runtime = state.facts.get(fact_commit.fact_id)
-                if fact_runtime and fact_runtime.evidence_required > len(
-                    fact_runtime.evidence_event_ids
-                ):
-                    violations.append(
-                        GuardViolation(
-                            kind="unauthorized_fact",
-                            detail=f"fact '{fact_commit.fact_id}' committed without sufficient evidence: "
-                            f"required {fact_runtime.evidence_required}, have {len(fact_runtime.evidence_event_ids)}",
+        # 8. Evidence counts: fact commits must have sufficient evidence.
+        #    Ending segments are exempt — the finale may settle a multi-evidence
+        #    latent question in one commit+reveal (convergence-window payoff).
+        if plan.terminal != "ending":
+            for scene in plan.scenes:
+                for fact_commit in scene.fact_commits:
+                    fact_runtime = state.facts.get(fact_commit.fact_id)
+                    if fact_runtime and fact_runtime.evidence_required > len(
+                        fact_runtime.evidence_event_ids
+                    ):
+                        violations.append(
+                            GuardViolation(
+                                kind="unauthorized_fact",
+                                detail=f"fact '{fact_commit.fact_id}' committed without sufficient evidence: "
+                                f"required {fact_runtime.evidence_required}, have {len(fact_runtime.evidence_event_ids)}",
+                            )
                         )
-                    )
 
         # 9. World-rule references: check dialogue doesn't contradict immutable
         # rules. Heuristic: only flag when the text outside the rule's own

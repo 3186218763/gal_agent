@@ -15,7 +15,10 @@ PLANNER_INSTRUCTIONS = """You are the semantic planner for a constrained visual 
 Return only the requested structured contract. Propose events and action outcomes; never claim
 that state has changed. Use only IDs, locations, characters, goals, facts, candidate values, and
 actions supplied in the input. Never choose a latent fact value outside its candidates. Do not
-write narration or dialogue. The validator and reducer are the only state authority."""
+write narration or dialogue. The validator and reducer are the only state authority.
+evidence_fact_ids and reveal_fact_ids may only name facts whose truth_status is "committed";
+an uncommitted latent question cannot be evidenced or revealed by a choice — it settles in the
+ending scene, so leave such facts out of the resolution entirely."""
 
 
 class LLMPlanner:

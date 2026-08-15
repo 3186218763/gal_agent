@@ -382,7 +382,11 @@ def segment_events(
                 )
             )
             if fact.reveal:
-                events.append(FactRevealed(fact_id=fact.fact_id))
+                # Ending segments carry the finale exemption flag so the
+                # reducer's evidence gate lets the payoff land in one scene.
+                events.append(
+                    FactRevealed(fact_id=fact.fact_id, finale=plan.terminal == "ending")
+                )
             events.extend(
                 CharacterLearnedFact(character_id=cid, fact_id=fact.fact_id)
                 for cid in fact.learned_by
