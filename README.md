@@ -32,7 +32,7 @@ CLI       play-live (same TurnOrchestrator flow)
 
 - V1 (Agents SDK Director/Character, WebSocket, `plot.md` beats) is **removed**; V2 is the only runtime and state authority. `tests/test_v2_only_layout.py` rejects legacy paths and routes structurally.
 - The V2 runtime is implemented and offline-verified: a single authoritative `TurnOrchestrator` command flow with atomic command receipts; only deterministic validation → simulation → reducer → EventStore can mutate session state. Legacy mutation surfaces (`/advance`, `/choices/{id}`, `RuntimeService`, pregeneration with implicit-success results) are removed.
-- Verification so far: backend `447 passed` (live tests opt-in via `RUN_LIVE_ZEN_TEST=1`), Ruff clean, `cafe_mystery` v2 pack valid with authored completion requirements; frontend `74 passed`, `npm run build` + `npm run lint` clean. Full gate results are reported in the handoff report after each change wave.
+- Verification so far: backend `447 passed` (live tests opt-in via `RUN_LIVE_ZEN_TEST=1`), Ruff clean, `yokai_after_school` v2 pack valid with authored completion requirements; frontend `74 passed`, `npm run build` + `npm run lint` clean. Full gate results are reported in the handoff report after each change wave.
 - **Not done yet:** real-model verification (live test and `play-live` autoplay need `OPENCODE_GO_API_KEY`) and the evaluation milestone (trace store, automated player policies, metrics, human playtest workflow).
 
 ## Design notes
@@ -130,7 +130,7 @@ Optional paths for the API process:
 ```bash
 cd backend
 uv sync --extra dev
-uv run python -m src.story.cli validate script_packs/cafe_mystery
+uv run python -m src.story.cli validate script_packs/yokai_after_school
 uv run uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -141,7 +141,7 @@ Live autoplay (needs key):
 
 ```bash
 cd backend
-uv run python -m src.story.cli play-live script_packs/cafe_mystery \
+uv run python -m src.story.cli play-live script_packs/yokai_after_school \
   --database data/live.db --session-id demo --seed 17
 ```
 
@@ -170,7 +170,7 @@ Production pack path:
 backend/script_packs/<pack_id>/pack.yaml
 ```
 
-Example: [`backend/script_packs/cafe_mystery/pack.yaml`](backend/script_packs/cafe_mystery/pack.yaml)
+Example: [`backend/script_packs/yokai_after_school/pack.yaml`](backend/script_packs/yokai_after_school/pack.yaml)
 
 Packs define identity, experience bounds, protagonist, world, characters, facts, goals, and endings (including at least one `fallback`). There is no `plot.md` or beat script.
 
@@ -190,7 +190,7 @@ gal_agent/
 │   │       ├── state/           # events, session models, reducer
 │   │       └── storage/         # StoryEventStore
 │   ├── script_packs/
-│   │   └── cafe_mystery/
+│   │   └── yokai_after_school/
 │   ├── tests/                   # offline suite + tests/live/ (opt-in)
 │   └── .env.example
 ├── frontend/                    # Vite React segment-aware player (SSE /turns)

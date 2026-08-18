@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import '../demo/demo.css'
 import './live.css'
 import {
+  DEFAULT_PACK_ID,
   createSession,
   fetchPack,
   newCommandId,
@@ -31,9 +32,9 @@ interface CharacterInfo {
 // ── Character color palette (matches demo) ──
 
 const CHAR_COLORS: Record<string, string> = {
-  alice: '#F08A8A',
-  bob: '#6BA3E8',
-  mina: '#7FC9A0',
+  hiyori: '#E879A8',
+  chika: '#F2B84B',
+  mio: '#67BFA3',
   protagonist: '#E8D55A',
 }
 
@@ -56,7 +57,7 @@ export default function LiveApp() {
     cleared: boolean
   } | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
-  const [sceneLabel] = useState('cafe')
+  const [sceneLabel] = useState('campus')
 
   const typewriterRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -187,9 +188,9 @@ export default function LiveApp() {
     setPhase('loading')
     setErrorMsg('')
     try {
-      const pk = await fetchPack('cafe_mystery')
+      const pk = await fetchPack(DEFAULT_PACK_ID)
       setPack(pk)
-      const session: SessionProjection = await createSession('cafe_mystery', newSessionSeed())
+      const session: SessionProjection = await createSession(DEFAULT_PACK_ID, newSessionSeed())
       setSessionId(session.session_id)
       setRevision(session.revision)
       await startTurn(session.session_id, session.revision, null)
@@ -301,10 +302,10 @@ export default function LiveApp() {
 
   if (phase === 'title') {
     return (
-      <div className="demo-stage demo-bg-cafe">
+      <div className="demo-stage demo-bg-campus">
         <div className="demo-title-overlay">
-          <h1 className="demo-title">咖啡馆疑云</h1>
-          <p className="demo-subtitle">AI 动态叙事 · Live Backend</p>
+          <h1 className="demo-title">放学后，狐签与心跳</h1>
+          <p className="demo-subtitle">彩枫学园 · 春季学期</p>
           <button className="demo-btn-primary" onClick={startGame}>
             开始游戏
           </button>
@@ -317,7 +318,7 @@ export default function LiveApp() {
 
   if (phase === 'loading') {
     return (
-      <div className="demo-stage demo-bg-cafe">
+      <div className="demo-stage demo-bg-campus">
         <div className="demo-buffering" style={{ bottom: '50%' }}>
           <span className="demo-buffering-dot" />
           <span className="demo-buffering-dot" />
@@ -332,7 +333,7 @@ export default function LiveApp() {
 
   if (phase === 'error') {
     return (
-      <div className="demo-stage demo-bg-cafe">
+      <div className="demo-stage demo-bg-campus">
         <div className="demo-ending-overlay">
           <div className="demo-ending-eyebrow" style={{ color: '#d96c5f' }}>ERROR</div>
           <p className="demo-ending-tone">{errorMsg}</p>

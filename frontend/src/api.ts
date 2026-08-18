@@ -85,7 +85,7 @@ export class ApiError extends Error {
   }
 }
 
-export const DEFAULT_PACK_ID = 'cafe_mystery'
+export const DEFAULT_PACK_ID = 'yokai_after_school'
 
 const rawApiBase = (import.meta.env.VITE_API_BASE as string | undefined) ?? ''
 const API_BASE = rawApiBase.replace(/\/+$/, '')

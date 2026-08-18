@@ -1,0 +1,389 @@
+schema_version: "2.0"
+
+identity:
+  id: yokai_after_school
+  title: "放学后，狐签与心跳"
+  language: zh-CN
+  genres: [romance, school_life, comedy, light_fantasy]
+  expected_minutes: 45
+
+experience:
+  viewpoint: first_person
+  prose_style: "明快的日系轻小说风格，以自然对话、校园细节、误会式笑点和细腻心动为主；避免长篇说教与沉重悬疑"
+  tone: "轻松、青春、温暖，偶尔出现无害而绚丽的小小怪异"
+  choice_density: key_moments
+  min_scenes: 8
+  max_scenes: 14
+  reserved_resolution_scenes: 3
+  forbidden_content:
+    - "露骨色情内容"
+    - "以国籍或文化差异进行贬损和刻板羞辱"
+    - "无铺垫的极端暴力、死亡或世界级灾难"
+    - "把跟踪、胁迫或控制包装成浪漫"
+
+protagonist:
+  id: protagonist
+  name: "陆言"
+  personality:
+    traits: [随和, 会吐槽, 观察细致, 适应力强]
+    values: [真诚, 尊重差异, 说到做到]
+    fears: [在新环境里始终只是客人, 因语言误会伤害别人]
+    flaws: [听不懂日语俗语时会装懂, 不擅长拒绝热情的请求]
+  background: >
+    来自中国杭州的十七岁留学生，春季学期转入东京近郊的私立彩枫学园二年B班。
+    日常日语没有问题，却经常在敬语、校园简称和流行语上慢半拍。原本只想平稳度过第一周，
+    却在行李里发现一枚会自己折耳朵的彩色狐形纸签。
+  capabilities: [ask, observe, support, challenge, withhold, disclose, follow, leave]
+  boundaries:
+    cannot:
+      - "凭空掌握尚未发现的秘密"
+      - "用文化优越感贬低他人"
+      - "用暴力、威胁或公开羞辱解决校园矛盾"
+      - "同时对多人作出互相矛盾的恋爱承诺"
+
+world_setting:
+  premise: >
+    春季开学第一天，中国留学生陆言转入私立彩枫学园。午休时，他被认真过头的班长朝雾日和、
+    把任何事故都当成节目素材的广播部少女橘千夏，以及守着校内旧神社的安静同学雨宫澪，
+    阴差阳错地带进濒临废部的“狐灯研究同好会”。同好会必须在周五社团审查前证明自己值得保留，
+    三名少女却各有完全不同的活动方案。与此同时，陆言行李里的狐形纸签在放学钟后醒来，
+    让校园里偶尔出现持续几分钟的彩色小怪异：会变色的粉笔字、倒着飘的樱花瓣、只说真话的校内广播。
+    玩家将在真实的课堂、值日、社团招新和放学路上选择与谁合作，决定同好会的方向，也决定自己在异国校园里与谁逐渐靠近。
+  immutable_rules:
+    - "故事主要发生在彩枫学园及学生放学后可步行到达的周边地点，核心矛盾必须保持为校园生活、社团活动与青春关系。"
+    - "狐形纸签的力量只会在放学钟后引发短暂、无害、可收拾的小型色彩怪异，不能读心、操纵感情、改变记忆或替角色解决问题。"
+    - "怪异可以制造尴尬和契机，但任何信任、好感、和解或承诺都必须由角色真实行动获得。"
+    - "陆言是中国留学生；文化差异用于生活细节、善意误会和互相理解，不能成为歧视笑料。"
+    - "三名核心女主都有独立目标和边界，不能沦为围绕主角争风吃醋的单一标签。"
+    - "已提交和揭示的事实不能被后续场景否认，角色只能依据自己的知识、信念和推测行动。"
+    - "故事时间集中在转学后的第一周，不得突然跳到毕业、婚姻、拯救世界或脱离校园的宏大事件。"
+  locations:
+    - id: classroom_2b
+      name: "彩枫学园二年B班教室"
+      tags: [school, daytime, first_meeting]
+    - id: clubroom
+      name: "旧特别教室楼的狐灯同好会活动室"
+      tags: [school, after_school, cozy, supernatural]
+    - id: school_shrine
+      name: "银杏坡上的校内小神社"
+      tags: [school, quiet, supernatural]
+    - id: broadcast_room
+      name: "广播室"
+      tags: [school, lively, public]
+    - id: rooftop_greenhouse
+      name: "屋顶温室"
+      tags: [school, private, romantic]
+    - id: shopping_street
+      name: "车站前枫叶商店街"
+      tags: [after_school, public, casual]
+  factions:
+    - id: fox_lantern_club
+      name: "狐灯研究同好会"
+      description: "记录校园趣闻、维护校内小神社，也承接各种没人愿意管的小麻烦；目前因人数不足面临废部。"
+    - id: student_council
+      name: "彩枫学园学生会"
+      description: "负责周五的社团资格审查，并要求同好会拿出对普通学生真正有用的成果。"
+  forbidden_content:
+    - "露骨色情内容"
+    - "国籍、口音或文化背景歧视"
+    - "严重犯罪、残酷伤害或恐怖化怪谈"
+    - "超自然力量强迫恋爱或消除拒绝"
+  fact_rules:
+    - "狐形纸签的送出者只能通过 paper_fox_sender 的提交机制确定。"
+    - "同好会最终采用的存续方案只能通过 club_future 的提交机制确定。"
+    - "日和写在旧绘马背面的心愿只能通过 hiyori_wish 的提交机制确定。"
+    - "所有怪异都必须保持轻微、短暂、色彩鲜明，并留下可被学生用普通方式收拾的后果。"
+
+story_history:
+  summary: >
+    彩枫学园的狐灯研究同好会曾是一个普通的校园文化社团，近年来只剩朝雾日和、橘千夏和雨宫澪三人。
+    学生会通知她们，若不能在本周五前完成一项真正对学生有用的活动，活动室将被收回。
+    转学生陆言抵达日本前，校方寄到中国的资料袋里混入了一枚来历不明的狐形纸签；
+    它在抵达彩枫学园后开始显露微弱力量。游戏从陆言转入二年B班的第一天开始，
+    过去没有固定恋爱关系，也没有预先决定的路线或结局。
+  events:
+    - summary: "学生会向狐灯研究同好会发出周五社团资格审查通知。"
+      participants: [hiyori, chika, mio]
+    - summary: "日和暂时承担同好会负责人工作，并分别向千夏和澪征集存续方案。"
+      participants: [hiyori, chika, mio]
+      remembered_differently_by:
+        chika: "她记得日和说的是‘想做什么就做什么’，并自动忽略了后半句‘但先写申请书’。"
+        hiyori: "她非常确定自己把申请书三个字重复了四遍。"
+    - summary: "千夏预告会在本周广播中推出一期能够证明同好会价值的特别节目。"
+      participants: [chika]
+    - summary: "澪将校内小神社换下的旧绘马和纸签收进活动室，发现其中少了一枚狐形纸签。"
+      participants: [mio]
+    - summary: "陆言带着校方资料袋抵达日本，尚不知道袋中的狐形纸签与学校有关。"
+      participants: []
+
+opening_state:
+  location: classroom_2b
+  present_characters: [hiyori, chika]
+  known_facts: [transfer_day, club_review_friday]
+  time_label: "周一，开学典礼后的午休"
+  starting_pressure: 0.12
+
+characters:
+  - id: hiyori
+    name: "朝雾日和"
+    public_profile: "二年B班班长兼狐灯同好会临时负责人，成绩优秀、做事周全，却总能一本正经地把场面推向更尴尬的方向。"
+    personality:
+      traits: [认真, 可靠, 不服输, 隐性天然呆]
+      values: [责任, 公平, 普通而安稳的校园生活]
+      fears: [自己没能守住大家珍惜的地方, 被看穿其实很怕寂寞]
+      flaws: [把求助说成工作安排, 越害羞越使用正式敬语]
+    voice:
+      style: "措辞端正、逻辑清楚；慌张时会过度使用敬语，并试图用班长权限掩饰害羞"
+      forbidden: ["无理由地傲慢刻薄", "突然撒娇卖萌", "长篇训话压过他人"]
+    drives:
+      - "通过正当而有用的活动保住同好会"
+      - "让初来日本的陆言真正融入班级，而不是只被当作需要照顾的客人"
+    knowledge: [transfer_day, club_review_friday, hiyori_signed_for_club]
+    secrets: [hiyori_signed_for_club, hiyori_wish]
+    capabilities: [ask, observe, support, challenge, withhold, disclose, follow, leave]
+    initial_relationship: {trust: 35, affection: 5, suspicion: 5}
+    boundaries:
+      cannot: ["利用班长身份强迫陆言参加社团", "公开取笑陆言的语言失误"]
+
+  - id: chika
+    name: "橘千夏"
+    public_profile: "广播部的人气午间主播，也是狐灯同好会成员；行动比思考快半拍，坚信好故事能拯救一切。"
+    personality:
+      traits: [开朗, 机灵, 行动力强, 爱凑热闹]
+      values: [快乐, 坦率, 让沉默的人被听见]
+      fears: [被当成只会胡闹的人, 重要时刻没人愿意相信她]
+      flaws: [容易把私事节目化, 兴奋时忘记征求许可]
+    voice:
+      style: "节奏快、比喻多，常把日常对话说成现场直播；认真时反而会放慢语速"
+      forbidden: ["恶意曝光隐私", "持续大喊大叫", "把文化差异当猎奇新闻"]
+    drives:
+      - "做出一期让全校愿意参与的特别广播"
+      - "证明自己不只会制造热闹，也能为别人守住重要的事"
+    knowledge: [transfer_day, club_review_friday, chika_promised_broadcast]
+    secrets: [chika_promised_broadcast, club_future]
+    capabilities: [ask, observe, support, challenge, disclose, follow, leave]
+    initial_relationship: {trust: 30, affection: 10, suspicion: 5}
+    boundaries:
+      cannot: ["未经同意播出私密告白", "为了节目效果伪造别人说过的话"]
+
+  - id: mio
+    name: "雨宫澪"
+    public_profile: "负责照看校内小神社的同学，也是狐灯同好会最安静的成员；表情变化很小，吐槽却总是精准。"
+    personality:
+      traits: [安静, 细心, 温柔, 冷面幽默]
+      values: [照料, 约定, 给怪事留一点余地]
+      fears: [小神社和同好会一起被遗忘, 自己的关心给别人添麻烦]
+      flaws: [习惯独自收拾后果, 重要解释总要晚一步才说]
+    voice:
+      style: "短句、停顿多，语气平淡却经常说出意外精准的玩笑；谈到神社时会更认真"
+      forbidden: ["故作神秘地拒绝所有交流", "突然变成全知全能的巫女", "用怪异威胁别人"]
+    drives:
+      - "把失踪的狐形纸签平安送回校内小神社"
+      - "让陆言自行决定是否接近怪异，而不是替他做决定"
+    knowledge: [transfer_day, club_review_friday, paper_fox_awake, mio_keeps_shrine]
+    secrets: [paper_fox_awake, mio_keeps_shrine, paper_fox_sender]
+    capabilities: [ask, observe, support, challenge, withhold, disclose, follow, leave]
+    initial_relationship: {trust: 30, affection: 5, suspicion: 10}
+    boundaries:
+      cannot: ["用怪异试探或操纵陆言的感情", "把危险信息隐瞒到会伤害他人的程度"]
+
+facts:
+  fixed:
+    - id: transfer_day
+      statement: "今天是陆言转入彩枫学园二年B班的第一天。"
+      known_by: [hiyori, chika, mio]
+      visibility: revealed
+    - id: club_review_friday
+      statement: "狐灯研究同好会必须在本周五前完成一项对学生有用的活动，否则将失去活动室。"
+      known_by: [hiyori, chika, mio]
+      visibility: revealed
+    - id: paper_fox_awake
+      statement: "陆言资料袋里的狐形纸签会在放学钟后引发短暂而无害的色彩怪异。"
+      known_by: [mio]
+      visibility: hidden
+    - id: hiyori_signed_for_club
+      statement: "日和在无人愿意负责时独自签下了同好会本周的活动承诺书。"
+      known_by: [hiyori]
+      visibility: hidden
+    - id: chika_promised_broadcast
+      statement: "千夏已经向广播部老师保证，本周会交出一期不侵犯任何人隐私的特别节目。"
+      known_by: [chika]
+      visibility: hidden
+    - id: mio_keeps_shrine
+      statement: "澪一直独自打扫校内小神社，并把学生遗落的旧绘马妥善保存。"
+      known_by: [mio]
+      visibility: hidden
+
+  latent_questions:
+    - id: paper_fox_sender
+      question: "是谁让狐形纸签混进陆言的留学资料袋，它原本想把他带到哪里？"
+      selection: lazy_commit
+      candidates:
+        - value: mio_returned_it_by_mistake
+          weight: 1.0
+          requirements: ["relationships.mio.trust >= 25"]
+        - value: club_adviser_sent_welcome_charm
+          weight: 1.0
+          requirements: ["session.scene_count >= 2"]
+        - value: former_member_left_a_message
+          weight: 0.8
+          requirements: ["session.scene_count >= 4"]
+      commit_when: [first_irreversible_evidence, explicit_revelation]
+      evidence_required: 2
+    - id: club_future
+      question: "同好会最终用什么活动证明自己的价值？"
+      selection: lazy_commit
+      candidates:
+        - value: multilingual_campus_guide
+          weight: 1.0
+          requirements: ["relationships.hiyori.trust >= 30"]
+        - value: after_school_radio_special
+          weight: 1.0
+          requirements: ["relationships.chika.trust >= 25"]
+        - value: shrine_and_campus_open_day
+          weight: 1.0
+          requirements: ["relationships.mio.trust >= 25"]
+      commit_when: [first_irreversible_evidence, explicit_revelation]
+      evidence_required: 2
+    - id: hiyori_wish
+      question: "日和写在旧绘马背面、又不肯让人看到的心愿是什么？"
+      selection: lazy_commit
+      candidates:
+        - value: keep_the_club_together
+          weight: 1.0
+          requirements: ["relationships.hiyori.trust >= 35"]
+        - value: learn_to_ask_for_help
+          weight: 1.0
+          requirements: ["relationships.hiyori.affection >= 5"]
+        - value: give_the_transfer_student_a_home
+          weight: 0.8
+          requirements: ["session.scene_count >= 3"]
+      commit_when: [first_irreversible_evidence, explicit_revelation]
+      evidence_required: 1
+
+  derived:
+    - id: hiyori_opens_up
+      condition: "relationships.hiyori.trust >= 70"
+    - id: chika_takes_player_seriously
+      condition: "relationships.chika.affection >= 60"
+    - id: mio_invites_player_in
+      condition: "relationships.mio.trust >= 70"
+    - id: club_direction_known
+      condition: "facts.club_future.visibility == 'revealed'"
+
+goals:
+  - id: hiyori_keep_club
+    owner: hiyori
+    desire: "用不会给任何人添麻烦的正当方案保住同好会，并学会把责任分给可信任的人。"
+    urgency: 0.8
+    conflicts_with: [chika_make_broadcast]
+    success_condition: "relationships.hiyori.trust >= 70"
+    failure_condition: "relationships.hiyori.trust <= 10"
+  - id: chika_make_broadcast
+    owner: chika
+    desire: "完成一期有趣又尊重隐私的放学后特别广播，让全校愿意参与同好会活动。"
+    urgency: 0.75
+    conflicts_with: [hiyori_keep_club, mio_return_charm]
+    success_condition: "relationships.chika.affection >= 60"
+    failure_condition: "relationships.chika.suspicion >= 75"
+  - id: mio_return_charm
+    owner: mio
+    desire: "在不夺走陆言选择权的前提下弄清狐形纸签为何找到他，并妥善处理怪异。"
+    urgency: 0.65
+    conflicts_with: [chika_make_broadcast]
+    success_condition: "relationships.mio.trust >= 70"
+    failure_condition: "relationships.mio.trust <= 10"
+  - id: protagonist_find_place
+    owner: protagonist
+    desire: "在第一周里不再只是被照顾的留学生，而是通过自己的选择成为某个人和某个地方真正需要的伙伴。"
+    urgency: 0.6
+    conflicts_with: []
+    success_condition: "facts.club_future.visibility == 'revealed'"
+    failure_condition: "session.scene_count >= 12 and facts.club_future.visibility != 'revealed'"
+
+conflict_axes:
+  - id: order_vs_spontaneity
+    values: [order, spontaneity]
+    source_character_ids: [hiyori, chika]
+    initial_incompatibility: >
+      日和认为只有可执行、可负责的计划才能保住同好会，千夏则相信没有惊喜的校园活动根本不会有人在意。
+  - id: privacy_vs_expression
+    values: [privacy, expression]
+    source_character_ids: [mio, chika]
+    initial_incompatibility: >
+      澪优先保护愿望和怪异不被围观，千夏则认为只要征得同意，把故事说出来就能让被忽略的人获得帮助。
+  - id: guest_vs_member
+    values: [guest, member]
+    source_character_ids: [hiyori, mio]
+    initial_incompatibility: >
+      日和想周到照顾初来乍到的陆言，澪却认为真正的接纳应当让他承担选择和后果，而不是永远被当作客人。
+
+relationship_event_tags:
+  - id: shared_laughter
+    description: "玩家与角色共同经历并化解了一次善意的校园笑料。"
+  - id: cultural_curiosity
+    description: "玩家或角色真诚询问并理解彼此的生活习惯，而非依赖刻板印象。"
+  - id: privacy_respected
+    description: "玩家在有机会制造热闹时仍尊重了角色不愿公开的部分。"
+  - id: responsibility_shared
+    description: "玩家主动承担了社团活动或怪异造成的现实收尾工作。"
+  - id: honest_invitation
+    description: "角色不以职责或借口包装，而是坦率邀请玩家一起行动。"
+  - id: relationship_changed_trust
+    description: "引擎锚点：一次信任轴关系变化。"
+  - id: relationship_changed_affection
+    description: "引擎锚点：一次好感轴关系变化。"
+  - id: relationship_changed_suspicion
+    description: "引擎锚点：一次怀疑轴关系变化。"
+
+relationship_turning_points:
+  - id: hiyori_accepts_help
+    character_id: hiyori
+    all_of_event_tags: [relationship_changed_trust]
+    min_distinct_source_choices: 2
+  - id: chika_drops_the_act
+    character_id: chika
+    all_of_event_tags: [relationship_changed_trust]
+    min_distinct_source_choices: 2
+  - id: mio_shares_the_shrine
+    character_id: mio
+    all_of_event_tags: [relationship_changed_trust]
+    min_distinct_source_choices: 2
+
+obligation_kinds:
+  - id: keep_private_wish
+    description: "保守角色在信任基础上展示的私密愿望，不把它变成公开谈资。"
+    burden: 2
+    allowed_outcomes: [fulfilled, broken, released]
+  - id: finish_club_task
+    description: "把答应参与的值日、广播、校园指南或神社准备工作真正完成。"
+    burden: 1
+    allowed_outcomes: [fulfilled, broken, released]
+  - id: share_public_risk
+    description: "在方案可能失败或引发误会时，与提出方案的角色共同承担公开说明和收尾责任。"
+    burden: 3
+    allowed_outcomes: [fulfilled, broken, released]
+
+completion_requirements:
+  - id: strange_welcome_understood
+    description: "玩家理解狐形纸签为何来到自己身边，并决定如何面对这份奇怪的欢迎。"
+    fact_revealed: {fact_id: paper_fox_sender}
+  - id: club_has_direction
+    description: "玩家参与确定了一项能让同好会继续存在的校园活动。"
+    fact_revealed: {fact_id: club_future}
+  - id: meaningful_bond
+    description: "玩家与至少一名核心角色形成由多个选择促成的真实关系转折。"
+    any:
+      - relationship_turning_point: {turning_point_id: hiyori_accepts_help}
+      - relationship_turning_point: {turning_point_id: chika_drops_the_act}
+      - relationship_turning_point: {turning_point_id: mio_shares_the_shrine}
+  - id: accepted_cost
+    description: "玩家为自己的校园方案、承诺或感情立场承担了可见的现实代价。"
+    cost_incurred: {min_severity: 1}
+
+interaction_rules:
+  enabled_standard: [ask, observe, support, challenge, withhold, disclose, follow, leave]
+  disabled: []
+  extensions: []
+
+assets: {}

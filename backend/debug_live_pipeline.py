@@ -22,7 +22,7 @@ from src.story.state import StoryPhase, initial_session_state
 async def main() -> None:
     settings = LLMSettings.from_env()
     client = LLMClient(settings)
-    pack = compile_script_pack(Path("script_packs/cafe_mystery"))
+    pack = compile_script_pack(Path("script_packs/yokai_after_school"))
     state = initial_session_state(pack, "debug-pipeline", session_seed=99)
     pacing = PacingEnvelope(
         phase=StoryPhase.OPENING,

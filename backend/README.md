@@ -42,9 +42,9 @@ The alternative provider is `opencode_go` (OpenCode Go **Responses**, `deepseek-
 ```bash
 cd backend
 uv sync --extra dev
-uv run python -m src.story.cli validate script_packs/cafe_mystery
+uv run python -m src.story.cli validate script_packs/yokai_after_school
 uv run uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
-uv run python -m src.story.cli play-live script_packs/cafe_mystery \
+uv run python -m src.story.cli play-live script_packs/yokai_after_school \
   --database data/live.db --session-id demo --seed 17
 ```
 
@@ -60,7 +60,7 @@ uv run python -m src.story.cli play-live script_packs/cafe_mystery \
 Offline helpers:
 
 ```bash
-uv run python -m src.story.cli init-session script_packs/cafe_mystery \
+uv run python -m src.story.cli init-session script_packs/yokai_after_school \
   --database data/story.db --session-id local_demo --seed 17
 uv run python -m src.story.cli inspect-session local_demo --database data/story.db
 ```
@@ -107,7 +107,7 @@ backend/
 │       ├── state/
 │       └── storage/
 ├── script_packs/
-│   └── cafe_mystery/pack.yaml
+│   └── yokai_after_school/pack.yaml
 ├── tests/
 │   └── live/                   # opt-in; RUN_LIVE_ZEN_TEST=1
 ├── .env.example
@@ -124,12 +124,12 @@ script_packs/<pack_id>/pack.yaml
 Validate:
 
 ```bash
-uv run python -m src.story.cli validate script_packs/cafe_mystery
+uv run python -m src.story.cli validate script_packs/yokai_after_school
 ```
 
 Expect JSON with `pack_id`, `pack_hash`, character/fact/goal counts, and `completion_requirements` (v2 packs).
 
-`init-pack script_packs/cafe_mystery` (model key required) generates and caches only the validated opening segment under `data/pack_cache/<pack_hash>/`; `play-live` and the HTTP server reuse it to start instantly. It never pre-generates choices or writes consequences — the authoritative `/turns` flow is the only way a consequence can be committed.
+`init-pack script_packs/yokai_after_school` (model key required) generates and caches only the validated opening segment under `data/pack_cache/<pack_hash>/`; `play-live` and the HTTP server reuse it to start instantly. It never pre-generates choices or writes consequences — the authoritative `/turns` flow is the only way a consequence can be committed.
 
 ## Development
 

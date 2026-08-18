@@ -2,8 +2,8 @@
 
 Every detector is pure text/structure analysis over the loaded corpus — no
 model calls, no randomness, same input → same findings.  Thresholds are
-calibrated on the seed corpus (two cafe_mystery sessions, 69 blocks, 9
-manually-identified failures; see ``docs/2026-08-15-script-consensus.md``).
+calibrated on a legacy seed corpus (two sessions, 69 blocks, 9
+manually-identified failures).
 They are heuristic anchors for before/after comparison, not absolute truth.
 """
 

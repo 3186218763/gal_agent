@@ -50,7 +50,7 @@ def test_play_live_parser_accepts_required_arguments():
     args = _parser().parse_args(
         [
             "play-live",
-            "script_packs/cafe_mystery",
+            "script_packs/yokai_after_school",
             "--database",
             "data/live.db",
             "--session-id",
@@ -62,7 +62,7 @@ def test_play_live_parser_accepts_required_arguments():
         ]
     )
     assert args.command == "play-live"
-    assert args.pack_path == Path("script_packs/cafe_mystery")
+    assert args.pack_path == Path("script_packs/yokai_after_school")
     assert args.database == Path("data/live.db")
     assert args.session_id == "live-01"
     assert args.seed == 17

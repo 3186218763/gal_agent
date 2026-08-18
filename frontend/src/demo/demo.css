@@ -18,10 +18,10 @@
 
 /* ── 背景渐变(场景占位) ── */
 
-.demo-bg-cafe {
+.demo-bg-campus {
   background:
-    radial-gradient(ellipse at 50% 70%, rgba(255, 180, 100, 0.15), transparent 60%),
-    linear-gradient(180deg, #1a1408 0%, #2a1e12 30%, #1e160c 70%, #100a06 100%);
+    radial-gradient(ellipse at 75% 20%, rgba(244, 114, 182, 0.16), transparent 45%),
+    linear-gradient(180deg, #172338 0%, #263b49 45%, #18332f 72%, #0c1718 100%);
 }
 
 .demo-bg-evening {

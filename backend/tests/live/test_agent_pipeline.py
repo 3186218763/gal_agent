@@ -38,7 +38,7 @@ async def test_segment_pipeline_director_writer_guard_roundtrip():
     assert settings.api == "responses"
     client = LLMClient(settings)
 
-    pack = compile_script_pack(Path("script_packs/cafe_mystery"))
+    pack = compile_script_pack(Path("script_packs/yokai_after_school"))
     state = initial_session_state(pack, "live-pipeline-test", session_seed=99)
 
     pacing = PacingEnvelope(

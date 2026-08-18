@@ -808,11 +808,11 @@ def test_ending_ready_payload_carries_causal_traces(tmp_path: Path):
         assert referenced.issubset(committed_ids)
 
 
-def test_cafe_mystery_completion_review_evaluates_real_derived_evidence(
+def test_yokai_after_school_completion_review_evaluates_real_derived_evidence(
     tmp_path: Path,
 ):
     """End-to-end with the real pack: a playthrough that builds trust with
-    Alice and repeatedly takes an obligation-typed risk produces derived
+    Hiyori and repeatedly takes an obligation-typed risk produces derived
     turning-point and cost evidence that the completion review actually
     evaluates — meaningful_bond and accepted_cost are satisfied from
     committed history, not prose."""
@@ -824,7 +824,7 @@ def test_cafe_mystery_completion_review_evaluates_real_derived_evidence(
     )
     from src.story.script_pack import compile_script_pack
 
-    PACK_DIR = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+    PACK_DIR = Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school"
     pack = compile_script_pack(PACK_DIR)
 
     class TrustingPlanner(FakePlanner):
@@ -833,7 +833,7 @@ def test_cafe_mystery_completion_review_evaluates_real_derived_evidence(
                 action_id=choice.action_id,
                 outcome="success",
                 relationship_deltas=(
-                    RelationshipDelta(character_id="alice", axis="trust", delta=10),
+                    RelationshipDelta(character_id="hiyori", axis="trust", delta=10),
                 ),
             )
 
@@ -851,13 +851,13 @@ def test_cafe_mystery_completion_review_evaluates_real_derived_evidence(
                 option_id=choices[0].option_id,
                 action_id=choices[0].action_id,
                 intent=choices[0].intent,
-                accepted_risk="keep_secret",
-                potential_obligation_kind="keep_secret",
+                accepted_risk="keep_private_wish",
+                potential_obligation_kind="keep_private_wish",
             )
             scenes[-1] = last_scene.model_copy(update={"choices": tuple(choices)})
             return plan.model_copy(update={"scenes": tuple(scenes)})
 
-    store = StoryEventStore(tmp_path / "cafe_completion.db")
+    store = StoryEventStore(tmp_path / "yokai_completion.db")
     store.create_session(initial_session_state(pack, "s1", session_seed=11))
     orch = TurnOrchestrator(
         store=store,

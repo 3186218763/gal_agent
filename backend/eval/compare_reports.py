@@ -2,8 +2,8 @@
 
 Usage::
 
-    python eval/compare_reports.py eval/baseline-2026-08-15.json \
-        eval/postfix-2026-08-15.json --out eval/compare-2026-08-15.md
+    python eval/compare_reports.py eval/baseline.json \
+        eval/candidate.json --out eval/compare.md
 """
 
 from __future__ import annotations

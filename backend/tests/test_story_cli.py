@@ -3,13 +3,13 @@ from pathlib import Path
 
 from src.story.cli import main
 
-PACK_DIR = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+PACK_DIR = Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school"
 
 
 def test_validate_command_prints_compiled_summary(capsys):
     assert main(["validate", str(PACK_DIR)]) == 0
     output = json.loads(capsys.readouterr().out)
-    assert output["pack_id"] == "cafe_mystery"
+    assert output["pack_id"] == "yokai_after_school"
     assert len(output["pack_hash"]) == 64
     assert output["completion_requirements"] >= 2
 
@@ -35,7 +35,7 @@ def test_init_and_inspect_session(tmp_path: Path, capsys):
     assert main(["inspect-session", "cli_session", "--database", str(database)]) == 0
     output = json.loads(capsys.readouterr().out)
     assert output["session_id"] == "cli_session"
-    assert output["pack_id"] == "cafe_mystery"
+    assert output["pack_id"] == "yokai_after_school"
     assert output["phase"] == "opening"
 
 

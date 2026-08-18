@@ -37,7 +37,7 @@ async def test_deepseek_responses_runs_one_v2_choice_roundtrip(tmp_path):
     client = LLMClient(settings)
     assert client.api == "responses"
     planner = LLMPlanner(client)
-    pack = compile_script_pack(Path("script_packs/cafe_mystery"))
+    pack = compile_script_pack(Path("script_packs/yokai_after_school"))
     store = StoryEventStore(tmp_path / "live.db")
     state = initial_session_state(pack, "live-capability", 17)
     store.create_session(state)

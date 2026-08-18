@@ -5,8 +5,8 @@ import { clearSessionId, saveSessionId } from './storage'
 import type { PackProjection, SessionProjection } from './api'
 
 const PACK: PackProjection = {
-  pack_id: 'cafe_mystery',
-  title: '咖啡馆疑云',
+  pack_id: 'yokai_after_school',
+  title: '放学后，狐签与心跳',
   language: 'zh-CN',
   characters: [
     { character_id: 'alice', name: '艾丽丝', public_profile: '' },
@@ -42,7 +42,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 function sessionBody(overrides: Partial<SessionProjection> = {}): SessionProjection {
   return {
     session_id: 's1',
-    pack_id: 'cafe_mystery',
+    pack_id: 'yokai_after_school',
     revision: 1,
     status: 'active',
     phase: 'opening',

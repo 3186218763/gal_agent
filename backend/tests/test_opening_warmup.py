@@ -47,8 +47,8 @@ class _FakeOpeningAgent:
                 ScenePlan(
                     scene_id="scene_warmup",
                     summary="warmup scene",
-                    location_id="cafe",
-                    present_character_ids=("alice",),
+                    location_id="classroom_2b",
+                    present_character_ids=("hiyori",),
                     terminal="decision",
                     decision_id="dec_warmup",
                     choices=(
@@ -110,7 +110,7 @@ class TestWarmupOpeningCaches:
 
         await _warmup_opening_caches(deps)
 
-        pack = deps.registry.get("cafe_mystery")
+        pack = deps.registry.get("yokai_after_school")
         assert deps.pack_cache is not None
         assert deps.pack_cache.has_opening(pack.pack_hash)
         assert agent.call_count == 1
@@ -122,7 +122,7 @@ class TestWarmupOpeningCaches:
         deps = _make_deps(tmp_path, agent_factory=lambda: agent)
 
         # Pre-populate the cache
-        pack = deps.registry.get("cafe_mystery")
+        pack = deps.registry.get("yokai_after_school")
         pre_existing = CachedOpening(
             segment_plan=SegmentPlan(
                 segment_id="pre",
@@ -130,8 +130,8 @@ class TestWarmupOpeningCaches:
                     ScenePlan(
                         scene_id="pre_scene",
                         summary="pre",
-                        location_id="cafe",
-                        present_character_ids=("alice",),
+                        location_id="classroom_2b",
+                        present_character_ids=("hiyori",),
                         terminal="decision",
                         decision_id="dec_pre",
                         choices=(
@@ -179,7 +179,7 @@ class TestWarmupOpeningCaches:
         deps = _make_deps(tmp_path, agent_factory=None)
         await _warmup_opening_caches(deps)
 
-        pack = deps.registry.get("cafe_mystery")
+        pack = deps.registry.get("yokai_after_school")
         assert not deps.pack_cache.has_opening(pack.pack_hash)
 
     @pytest.mark.asyncio
@@ -194,7 +194,7 @@ class TestWarmupOpeningCaches:
         # Should not raise
         await _warmup_opening_caches(deps)
 
-        pack = deps.registry.get("cafe_mystery")
+        pack = deps.registry.get("yokai_after_school")
         assert not deps.pack_cache.has_opening(pack.pack_hash)
 
 
@@ -215,5 +215,5 @@ class TestLifespanIntegration:
             assert resp.status_code == 200
 
         # After shutdown, the background warmup task has completed
-        pack = deps.registry.get("cafe_mystery")
+        pack = deps.registry.get("yokai_after_school")
         assert deps.pack_cache.has_opening(pack.pack_hash)

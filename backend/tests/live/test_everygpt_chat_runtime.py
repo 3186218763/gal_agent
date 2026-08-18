@@ -37,7 +37,7 @@ async def test_gemini_chat_completions_runs_segment_roundtrip():
     assert client.api == "chat_completions"
     assert client.model == "gemini-3.7-flash"
 
-    pack = compile_script_pack(Path("script_packs/cafe_mystery"))
+    pack = compile_script_pack(Path("script_packs/yokai_after_school"))
     state = initial_session_state(pack, "live-everygpt", 21)
     pacing = PacingEnvelope(
         phase=StoryPhase.OPENING,

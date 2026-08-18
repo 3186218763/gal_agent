@@ -41,15 +41,15 @@ def test_initial_state_separates_truth_visibility_and_character_knowledge():
 
 def test_real_pack_state_keeps_private_fixed_fact_hidden():
     pack = compile_script_pack(
-        Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+        Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school"
     )
 
     state = initial_session_state(pack, "session_02", session_seed=7)
 
-    assert state.facts["org_exists"].truth_status == FactTruthStatus.COMMITTED
-    assert state.facts["org_exists"].visibility == FactVisibility.HIDDEN
-    assert "org_exists" in state.characters["alice"].knowledge
-    assert "org_exists" in state.characters["bob"].knowledge
+    assert state.facts["paper_fox_awake"].truth_status == FactTruthStatus.COMMITTED
+    assert state.facts["paper_fox_awake"].visibility == FactVisibility.HIDDEN
+    assert "paper_fox_awake" in state.characters["mio"].knowledge
+    assert "paper_fox_awake" not in state.characters["hiyori"].knowledge
 
 
 def test_session_state_is_immutable():

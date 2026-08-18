@@ -679,7 +679,7 @@ class TestFakesModule:
 
 
 # ---------------------------------------------------------------------------
-# Task 7: cafe_mystery v2.0 migration
+# Task 7: yokai_after_school v2.0 migration
 # ---------------------------------------------------------------------------
 
 from pathlib import Path
@@ -687,68 +687,68 @@ from pathlib import Path
 from src.story.script_pack.compiler import compile_script_pack
 
 
-class TestCafeMysteryV2:
-    def test_cafe_mystery_compiles_as_v2(self):
-        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+class TestYokaiAfterSchoolV2:
+    def test_yokai_after_school_compiles_as_v2(self):
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school"
         compiled = compile_script_pack(pack_path)
         assert compiled.source.schema_version == "2.0"
         assert len(compiled.completion_requirement_ids) >= 2
         assert compiled.ending_ids == frozenset()
 
-    def test_cafe_mystery_has_no_endings_field(self):
+    def test_yokai_after_school_has_no_endings_field(self):
         import yaml
 
         pack_path = (
-            Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+            Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school" / "pack.yaml"
         )
         raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
         assert "endings" not in raw
         assert raw["schema_version"] == "2.0"
 
-    def test_cafe_mystery_has_world_setting(self):
+    def test_yokai_after_school_has_world_setting(self):
         import yaml
 
         pack_path = (
-            Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+            Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school" / "pack.yaml"
         )
         raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
         assert "world_setting" in raw
         assert raw["world_setting"]["premise"]
         assert len(raw["world_setting"]["locations"]) >= 2
 
-    def test_cafe_mystery_has_story_history(self):
+    def test_yokai_after_school_has_story_history(self):
         import yaml
 
         pack_path = (
-            Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+            Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school" / "pack.yaml"
         )
         raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
         assert "story_history" in raw
         assert raw["story_history"]["summary"]
 
-    def test_cafe_mystery_has_opening_state(self):
+    def test_yokai_after_school_has_opening_state(self):
         import yaml
 
         pack_path = (
-            Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery" / "pack.yaml"
+            Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school" / "pack.yaml"
         )
         raw = yaml.safe_load(pack_path.read_text(encoding="utf-8"))
         assert "opening_state" in raw
-        assert raw["opening_state"]["location"] == "cafe"
+        assert raw["opening_state"]["location"] == "classroom_2b"
 
-    def test_cafe_mystery_completion_requirements_have_evidence(self):
-        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+    def test_yokai_after_school_completion_requirements_have_evidence(self):
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school"
         compiled = compile_script_pack(pack_path)
         req = compiled.source.completion_requirements[0]
         assert req.all or req.any or req.fact_revealed
 
-    def test_cafe_mystery_preserves_all_facts_goals_characters(self):
-        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+    def test_yokai_after_school_preserves_all_facts_goals_characters(self):
+        pack_path = Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school"
         compiled = compile_script_pack(pack_path)
-        assert compiled.character_ids == frozenset({"alice", "bob", "mina"})
-        assert "cafe_is_open" in compiled.fact_ids
-        assert "notebook_holder" in compiled.fact_ids
-        assert "alice_find_ally" in compiled.goal_ids
+        assert compiled.character_ids == frozenset({"hiyori", "chika", "mio"})
+        assert "transfer_day" in compiled.fact_ids
+        assert "paper_fox_sender" in compiled.fact_ids
+        assert "hiyori_keep_club" in compiled.goal_ids
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from src.story.script_pack import compile_script_pack, compile_source
 from src.story.state import initial_session_state
 from tests.story_factories import minimal_script_pack_dict
 
-CAFE_PACK_DIR = Path(__file__).resolve().parents[1] / "script_packs" / "cafe_mystery"
+YOKAI_PACK_DIR = Path(__file__).resolve().parents[1] / "script_packs" / "yokai_after_school"
 
 
 def compiled_state():
@@ -20,9 +20,9 @@ def compiled_state():
     return state, pack
 
 
-def cafe_state():
-    pack = compile_script_pack(CAFE_PACK_DIR)
-    state = initial_session_state(pack, "session_cafe", session_seed=7)
+def yokai_state():
+    pack = compile_script_pack(YOKAI_PACK_DIR)
+    state = initial_session_state(pack, "session_yokai", session_seed=7)
     return state, pack
 
 
@@ -35,29 +35,29 @@ def test_condition_context_matches_compiled_condition_paths():
     assert context["session"]["scene_count"] == 0
 
 
-def test_writer_context_does_not_give_alice_bobs_private_fact():
-    state, pack = cafe_state()
+def test_writer_context_does_not_give_hiyori_mios_private_fact():
+    state, pack = yokai_state()
     plan = ScenePlan(
         scene_id="scene_01",
-        summary="Alice studies the protagonist's reaction.",
+        summary="日和确认转学生是否跟得上班级安排。",
         location_id=state.world.location_id,
-        present_character_ids=("alice",),
+        present_character_ids=("hiyori",),
         terminal="continue",
     )
     context = build_writer_context(
         pack,
         state,
-        present_character_ids=("alice",),
+        present_character_ids=("hiyori",),
         approved_plan=plan,
     )
-    alice = context["characters"][0]
-    assert all(item["id"] != "bob_has_org_history" for item in alice["known_facts"])
-    assert "鲍勃过去曾因隐环遭受损失" not in json.dumps(alice, ensure_ascii=False)
+    hiyori = context["characters"][0]
+    assert all(item["id"] != "paper_fox_awake" for item in hiyori["known_facts"])
+    assert "狐形纸签会在放学钟后" not in json.dumps(hiyori, ensure_ascii=False)
 
 
 def test_possible_latent_fact_exposes_question_but_not_candidate_answer():
-    state, pack = cafe_state()
+    state, pack = yokai_state()
     context = build_planner_context(pack, state)
-    fact = next(item for item in context["facts"] if item["id"] == "notebook_holder")
-    assert fact["question"] == "现在谁持有笔记本？"
+    fact = next(item for item in context["facts"] if item["id"] == "paper_fox_sender")
+    assert fact["question"] == "是谁让狐形纸签混进陆言的留学资料袋，它原本想把他带到哪里？"
     assert "value" not in fact

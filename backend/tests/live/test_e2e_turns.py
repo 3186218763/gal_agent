@@ -95,7 +95,7 @@ def test_e2e_opening_turn_streams_blocks_and_choices(tmp_path: Path):
     # Step 1: Create session
     resp = http.post(
         "/api/v2/sessions",
-        json={"pack_id": "cafe_mystery", "session_seed": 42},
+        json={"pack_id": "yokai_after_school", "session_seed": 42},
     )
     assert resp.status_code == 201
     session = resp.json()
@@ -164,7 +164,7 @@ def test_e2e_second_turn_after_choice(tmp_path: Path):
     # Create session
     resp = http.post(
         "/api/v2/sessions",
-        json={"pack_id": "cafe_mystery", "session_seed": 99},
+        json={"pack_id": "yokai_after_school", "session_seed": 99},
     )
     assert resp.status_code == 201
     session_id = resp.json()["session_id"]
@@ -177,7 +177,7 @@ def test_e2e_second_turn_after_choice(tmp_path: Path):
         if attempt > 0:
             resp = http.post(
                 "/api/v2/sessions",
-                json={"pack_id": "cafe_mystery", "session_seed": seed},
+                json={"pack_id": "yokai_after_school", "session_seed": seed},
             )
             session_id = resp.json()["session_id"]
 
@@ -261,7 +261,7 @@ def test_e2e_idempotent_replay_returns_same_result(tmp_path: Path):
     for attempt in range(3):
         resp = http.post(
             "/api/v2/sessions",
-            json={"pack_id": "cafe_mystery", "session_seed": 777 + attempt},
+            json={"pack_id": "yokai_after_school", "session_seed": 777 + attempt},
         )
         session_id = resp.json()["session_id"]
         key = f"e2e-replay-key-{attempt}"
