@@ -15,11 +15,13 @@ from typing import Any, Literal, Protocol
 from src.story.runtime.contracts import RuntimeModel
 from src.story.runtime.model import LLMClient
 from src.story.runtime.segment_context import (
+    _canon_ledger_views,
     _completion_requirement_views,
     _event_trace_digest,
     _get_forbidden_content,
     _get_immutable_rules,
     _get_world_setting,
+    recent_prose_window,
 )
 from src.story.runtime.segment_contracts import SegmentDraft, SegmentPlan
 from src.story.script_pack.models import CompiledScriptPack
@@ -36,6 +38,8 @@ BLOCKING_KINDS = frozenset(
         "choice_reversal",
         "boundary_violation",
         "missing_ending_integrity",
+        "detail_contradiction",
+        "repetition",
     }
 )
 
@@ -47,6 +51,8 @@ class JudgeFinding(RuntimeModel):
         "choice_reversal",
         "boundary_violation",
         "missing_ending_integrity",
+        "detail_contradiction",
+        "repetition",
         "voice",
         "style",
         "pacing",
@@ -97,10 +103,13 @@ def build_judge_context(
 
     The context includes the committed Choice Meaning being resolved (when
     present) so the judge can verify the consequence does not reverse what
-    the player chose.  It never includes a request to rewrite anything.
+    the player chose, and the verbatim tail of the committed prose so
+    re-narration and style breaks are visible to it.  It never includes a
+    request to rewrite anything.
     """
     source = pack.source
     world_setting = _get_world_setting(source)
+    window = recent_prose_window(state)
     return {
         "pack": {
             "id": source.identity.id,
@@ -119,6 +128,8 @@ def build_judge_context(
         },
         "completion_requirements": _completion_requirement_views(pack, state),
         "event_trace": _event_trace_digest(state),
+        "recent_committed_prose": window,
+        "canon_ledger": _canon_ledger_views(state),
         "pending_choice_meaning": (
             pending_choice.model_dump(mode="json") if pending_choice is not None else None
         ),
@@ -181,6 +192,17 @@ You return a list of findings; an empty list means the segment is safe.
    does not acknowledge the committed dramatic development, abandons open
    obligations without reason, or its title/summary contradicts the tone of
    the history it must conclude.
+6. repetition — the proposed segment re-narrates or re-runs material the
+   player already read: a beat, gesture, exchange, or distinctive phrase
+   from ``recent_committed_prose`` (or the event_trace scene summaries)
+   is performed again instead of the story moving forward. Names, props,
+   and setting terms legitimately recur; only flag re-performance of the
+   same dramatic content or phrasing.
+7. detail_contradiction — the prose (or its ledger_updates) states a
+   narrative detail differently from the canon ledger's entity_cards: a
+   pinned attribute (an object's color, a place's layout, an appearance)
+   is re-described with a different value, or an open narrative promise
+   from canon_ledger is contradicted.
 
 Mark a finding blocking ONLY when you are certain.  If you cannot establish
 safety from the provided context, prefer a blocking finding for the

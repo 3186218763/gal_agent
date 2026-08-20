@@ -209,11 +209,12 @@ def test_guard_rejects_dialogue_from_absent_character(guard, pack, state):
     assert any(v.kind == "wrong_speaker" for v in result.violations)
 
 
-def test_guard_detects_knowledge_leak(guard, pack, state):
-    """Detect when a character references a hidden fact they have not learned."""
+def test_guard_is_structural_only_for_semantic_conflicts(guard, pack, state):
+    """Natural-language knowledge leaks and rule contradictions are the
+    Semantic Judge's job (it sees the prose window); the guard no longer
+    keyword-matches — a fact-id literal in dialogue is already a rules
+    violation caught upstream, so this content must pass the guard."""
     plan = _decision_plan()
-    # Scene 02 is related to the hidden latent question "who_took_notebook",
-    # which alice has not learned (it is not in her knowledge set).
     plan = plan.model_copy(
         update={
             "scenes": (
@@ -223,12 +224,11 @@ def test_guard_detects_knowledge_leak(guard, pack, state):
         }
     )
     draft = _matching_draft()
-    # Alice states the hidden fact's ID verbatim in dialogue.
     leaky_blocks = draft.scene_drafts[1].blocks + (
         NarrativeBlock(
             kind="dialogue",
             character_id="alice",
-            text="I know who_took_notebook: the stranger took it!",
+            text="Dead characters cannot return. Actually, they can! who_took_notebook!",
         ),
     )
     draft = draft.model_copy(
@@ -239,24 +239,6 @@ def test_guard_detects_knowledge_leak(guard, pack, state):
             )
         }
     )
-    result = guard.check_segment(pack, state, plan, draft)
-    assert result.passed is False
-    assert any(v.kind == "knowledge_leak" for v in result.violations)
-
-
-def test_guard_does_not_flag_unmentioned_hidden_fact(guard, pack, state):
-    """A hidden related fact in the plan must not reject dialogue that never
-    mentions it — regression for the fact-visibility false positive."""
-    plan = _decision_plan()
-    plan = plan.model_copy(
-        update={
-            "scenes": (
-                plan.scenes[0],
-                plan.scenes[1].model_copy(update={"related_fact_ids": ("who_took_notebook",)}),
-            )
-        }
-    )
-    draft = _matching_draft()  # dialogue never mentions who_took_notebook
     result = guard.check_segment(pack, state, plan, draft)
     assert result.passed is True
 
@@ -436,37 +418,11 @@ def test_guard_rejects_fact_commit_without_evidence(guard, pack, state):
     assert any("evidence" in v.detail for v in result.violations)
 
 
-def test_guard_detects_world_rule_contradiction(guard, pack, state):
+def test_guard_does_not_flag_rule_reference_with_ordinary_modals(guard, pack, state):
+    """Dialogue restating an immutable rule passes the structural guard;
+    semantic contradiction detection is the judge's responsibility."""
     plan = _decision_plan()
     draft = _matching_draft()
-    # The pack's immutable rule: "Dead characters cannot return." A speaker
-    # reversing it with "Actually" should be flagged as a contradiction.
-    bad_blocks = draft.scene_drafts[1].blocks + (
-        NarrativeBlock(
-            kind="dialogue",
-            character_id="alice",
-            text="Dead characters cannot return. Actually, they can!",
-        ),
-    )
-    draft = draft.model_copy(
-        update={
-            "scene_drafts": (
-                draft.scene_drafts[0],
-                draft.scene_drafts[1].model_copy(update={"blocks": bad_blocks}),
-            )
-        }
-    )
-    result = guard.check_segment(pack, state, plan, draft)
-    assert result.passed is False
-    assert any(v.kind == "contradiction" for v in result.violations)
-
-
-def test_guard_does_not_flag_compliant_rule_restatement(guard, pack, state):
-    plan = _decision_plan()
-    draft = _matching_draft()
-    # The immutable rule is quoted verbatim (including its trailing period) so
-    # the whole-block negation scan would false-positive on "cannot" inside the
-    # rule. A compliant restatement must not be flagged as a contradiction.
     good_blocks = draft.scene_drafts[1].blocks + (
         NarrativeBlock(
             kind="dialogue",
@@ -483,32 +439,4 @@ def test_guard_does_not_flag_compliant_rule_restatement(guard, pack, state):
         }
     )
     result = guard.check_segment(pack, state, plan, draft)
-    assert not any(v.kind == "contradiction" for v in result.violations)
-
-
-@pytest.mark.parametrize(
-    "text",
-    (
-        "Dead characters cannot return. I wish they could.",
-        "Dead characters cannot return, but their ghosts may haunt the cafe.",
-        "Dead characters cannot return. Their memories will live on.",
-    ),
-)
-def test_guard_does_not_flag_rule_reference_with_ordinary_modals(guard, pack, state, text):
-    plan = _decision_plan()
-    draft = _matching_draft()
-    # Compliant dialogue mentioning the rule alongside ordinary modal/auxiliary
-    # verbs must not be flagged; only strong reversal markers count.
-    good_blocks = draft.scene_drafts[1].blocks + (
-        NarrativeBlock(kind="dialogue", character_id="alice", text=text),
-    )
-    draft = draft.model_copy(
-        update={
-            "scene_drafts": (
-                draft.scene_drafts[0],
-                draft.scene_drafts[1].model_copy(update={"blocks": good_blocks}),
-            )
-        }
-    )
-    result = guard.check_segment(pack, state, plan, draft)
-    assert not any(v.kind == "contradiction" for v in result.violations)
+    assert result.passed is True

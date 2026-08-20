@@ -1,5 +1,9 @@
 schema_version: "2.0"
 
+includes:
+  structure: structure.yaml
+  ending_seeds: ending_seeds.yaml
+
 identity:
   id: yokai_after_school
   title: "放学后，狐签与心跳"

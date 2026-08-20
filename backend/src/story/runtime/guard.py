@@ -1,16 +1,17 @@
 """Canon and Knowledge Guard for segment validation.
 
-Layer 1: Deterministic structural checks.
-Layer 2: Bounded semantic critic for knowledge leaks and contradictions.
+Deterministic structural checks only.  Semantic meaning conflicts (canon
+contradiction in natural language, knowledge leakage, repetition) belong to
+the Semantic Judge, which sees the prose context this guard deliberately
+does not interpret — a fact-id literal appearing in dialogue is already a
+rules violation caught upstream, so keyword matching here could never fire
+honestly.
 """
 
 from __future__ import annotations
 
-import re
-
-from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
+from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import (
-    FactTruthStatus,
     SessionState,
 )
 
@@ -19,33 +20,6 @@ from .segment_contracts import (
     GuardViolation,
     SegmentDraft,
     SegmentPlan,
-)
-
-# Strong markers suggesting a speaker is explicitly reversing/contradicting an
-# immutable rule. This is a heuristic: plain negations like "not"/"never" are
-# deliberately excluded because immutable rules often contain them (e.g.
-# "cannot"), and ordinary modal verbs ("can", "will", "could", ...) are
-# excluded because they match compliant dialogue. Full contradiction detection
-# is the Layer 2 semantic critic.
-_WORLD_RULE_STRONG_CONTRADICTION_MARKERS = (
-    "actually",
-    "in fact",
-    "isn't true",
-    "not true",
-    "violat",
-    "broke",
-    "ignored",
-    "ignores",
-    "defied",
-    "defy",
-    "disobey",
-    "contradict",
-    "denies",
-    "deny",
-    "despite",
-    "nevertheless",
-    "no longer",
-    "regardless",
 )
 
 
@@ -243,38 +217,7 @@ class Guard:
                     )
                 )
 
-        # 7. Fact visibility check: a dialogue may only reference a hidden fact
-        #    if the speaker already knows it. Only flag when the dialogue text
-        #    actually mentions the fact — otherwise any scene with a hidden
-        #    related fact would reject every speaker who hasn't learned it.
-        global_block_index = 0
-        for scene_draft in draft.scene_drafts:
-            plan_scene = plan_scenes.get(scene_draft.scene_id)
-            if plan_scene is None:
-                global_block_index += len(scene_draft.blocks)
-                continue
-            for block in scene_draft.blocks:
-                if block.kind == "dialogue" and block.character_id is not None:
-                    text_lower = block.text.lower()
-                    for fact_id in plan_scene.related_fact_ids:
-                        if fact_id not in text_lower:
-                            continue
-                        fact_runtime = state.facts.get(fact_id)
-                        if fact_runtime and fact_runtime.visibility.value == "hidden":
-                            # Only characters who already know the fact can reference it
-                            char_runtime = state.characters.get(block.character_id)
-                            if char_runtime and fact_id not in char_runtime.knowledge:
-                                violations.append(
-                                    GuardViolation(
-                                        kind="knowledge_leak",
-                                        block_index=global_block_index,
-                                        character_id=block.character_id,
-                                        detail=f"speaker references hidden fact '{fact_id}' they don't know",
-                                    )
-                                )
-                global_block_index += 1
-
-        # 8. Evidence counts: fact commits must have sufficient evidence.
+        # 7. Evidence counts: fact commits must have sufficient evidence.
         #    Ending segments are exempt — the finale may settle a multi-evidence
         #    latent question in one commit+reveal (convergence-window payoff).
         if plan.terminal != "ending":
@@ -292,85 +235,9 @@ class Guard:
                             )
                         )
 
-        # 9. World-rule references: check dialogue doesn't contradict immutable
-        # rules. Heuristic: only flag when the text outside the rule's own
-        # substring contains an explicit reversal/contradiction marker; full
-        # contradiction detection is the Layer 2 semantic critic.
-        immutable_rules = (
-            pack.source.world_setting.immutable_rules
-            if isinstance(pack.source, ScriptPackSourceV2)
-            else pack.source.world.immutable_rules
-        )
-        global_block_index = 0
-        for scene_draft in draft.scene_drafts:
-            for block in scene_draft.blocks:
-                if block.kind == "dialogue" and block.character_id is not None:
-                    text_lower = block.text.lower()
-                    for rule in immutable_rules:
-                        rule_lower = rule.lower()
-                        if rule_lower in text_lower:
-                            # Remove the first rule occurrence (replaced with a
-                            # space so adjacent words can't merge into a marker)
-                            # before scanning for strong reversal markers.
-                            remainder = re.sub(re.escape(rule_lower), " ", text_lower, count=1)
-                            if any(
-                                marker in remainder
-                                for marker in _WORLD_RULE_STRONG_CONTRADICTION_MARKERS
-                            ):
-                                violations.append(
-                                    GuardViolation(
-                                        kind="contradiction",
-                                        block_index=global_block_index,
-                                        detail=f"dialogue may contradict immutable rule: '{rule[:50]}...'",
-                                    )
-                                )
-                global_block_index += 1
-
-        # --- Layer 2: Bounded semantic critic ---
-
-        # Knowledge leak heuristic: check if any dialogue block's text
-        # references a fact_id from another character's knowledge that the
-        # speaker doesn't know.
-        character_knowledge = {
-            char_id: set(runtime.knowledge) for char_id, runtime in state.characters.items()
-        }
-
-        # Build a set of authorized fact IDs for this segment
-        authorized_fact_ids: set[str] = set()
-        for scene in plan.scenes:
-            authorized_fact_ids.update(scene.related_fact_ids)
-            authorized_fact_ids.update(fc.fact_id for fc in scene.fact_commits)
-        authorized_fact_ids.update(fc.fact_id for fc in plan.new_facts)
-
-        global_block_index = 0
-        for scene_draft in draft.scene_drafts:
-            plan_scene = plan_scenes.get(scene_draft.scene_id)
-            if plan_scene is None:
-                global_block_index += len(scene_draft.blocks)
-                continue
-            for block in scene_draft.blocks:
-                if block.kind == "dialogue" and block.character_id is not None:
-                    speaker_knowledge = character_knowledge.get(block.character_id, set())
-                    text_lower = block.text.lower()
-                    for fact_id, fact_runtime in state.facts.items():
-                        if (
-                            fact_runtime.truth_status == FactTruthStatus.COMMITTED
-                            and fact_id not in speaker_knowledge
-                            and fact_id not in authorized_fact_ids
-                            and fact_id in text_lower
-                        ):
-                            violations.append(
-                                GuardViolation(
-                                    kind="knowledge_leak",
-                                    block_index=global_block_index,
-                                    character_id=block.character_id,
-                                    detail=(
-                                        f"speaker '{block.character_id}' may reference "
-                                        f"fact '{fact_id}' which they have not learned"
-                                    ),
-                                )
-                            )
-                global_block_index += 1
+        # Semantic meaning conflicts (natural-language knowledge leaks, rule
+        # contradictions, repetition) are judged by the Semantic Judge with
+        # the verbatim prose window — deliberately NOT here.
 
         if violations:
             return GuardResult(passed=False, violations=tuple(violations))

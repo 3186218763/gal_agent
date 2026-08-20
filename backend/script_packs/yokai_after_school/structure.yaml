@@ -1,0 +1,331 @@
+# 狐签与心跳 · Beat Map（v3 结构层）
+# 幕结构 + 作者节拍：作者声明"什么时候、什么条件下、必须发生什么戏剧事件"，
+# 正文仍由 ScenePerformer 生成；DramaManager 按 act 顺序确定性导航。
+# must_include 一句话锚定一场戏，不必写整段正文。
+
+acts:
+  - id: act_transfer_day
+    scene_budget: [2, 3]
+    target_block_range: [8, 25]
+    beats:
+      - id: b_transfer_intro
+        kind: scene
+        purpose: "陆言的转学自我介绍：中日语言的小误会引来善意笑声，书包里的狐形纸签悄悄动了一下。"
+        sketch:
+          location_id: classroom_2b
+          present_character_ids: [hiyori, chika]
+          time_of_day: "周一午休"
+        must_include:
+          - "陆言用错一个校园简称，全班善意地笑"
+          - "书包里的狐形纸签在喧闹中轻轻折起耳朵"
+
+      - id: b_recruit_invitations
+        kind: decision
+        purpose: "日和以班长身份郑重邀请、千夏以节目预告式热情拉人，陆言决定放学后先去哪里。"
+        responds_to: [b_transfer_intro]
+        sketch:
+          location_id: classroom_2b
+          present_character_ids: [hiyori, chika]
+        choices:
+          - option_id: go_with_hiyori
+            action_id: follow
+            label: "跟日和去看活动室"
+            intent: "接受班长的正式邀请，先了解社团本身。"
+            target_character_id: hiyori
+            stance_axis: guest_vs_member
+            stance_value: member
+            accepted_risk: "可能被卷入社团存续的麻烦"
+            outcome: success
+            relationship_deltas:
+              - {character_id: hiyori, axis: trust, delta: 5}
+          - option_id: go_with_chika
+            action_id: follow
+            label: "跟千夏去广播室"
+            intent: "先去看看热闹的广播部，顺便观察她在策划什么。"
+            target_character_id: chika
+            stance_axis: order_vs_spontaneity
+            stance_value: spontaneity
+            outcome: success
+            relationship_deltas:
+              - {character_id: chika, axis: trust, delta: 5}
+              - {character_id: chika, axis: affection, delta: 5}
+          - option_id: politely_decline
+            action_id: withhold
+            label: "先自己逛逛校园"
+            intent: "婉拒两边的邀请，把第一天的放学时间留给自己。"
+            outcome: partial
+        effects:
+          promise_expectations:
+            - "陆言会在周五审查前弄清狐灯同好会是否值得加入"
+
+  - id: act_first_yokai
+    scene_budget: [2, 3]
+    target_block_range: [8, 22]
+    beats:
+      - id: b_clubroom_first_visit
+        kind: scene
+        purpose: "初访活动室：日和介绍社团账目与审查危机，澪整理旧绘马时提到少了一枚狐形纸签。"
+        sketch:
+          location_id: clubroom
+          present_character_ids: [hiyori, mio]
+          time_of_day: "放学后"
+        must_include:
+          - "活动室里堆着社团审查通知书和三年份的活动记录"
+          - "澪说出旧绘马里少了一枚狐形纸签"
+        effects:
+          stage_fact_ids: [mio_keeps_shrine]
+
+      - id: b_first_yokai
+        kind: scene
+        purpose: "第一次色彩怪异：黑板上的粉笔字变成会流动的彩色，几分钟后消失，只留下可擦掉的粉末。"
+        sketch:
+          location_id: classroom_2b
+          present_character_ids: [chika]
+          time_of_day: "放学后，值日时"
+        must_include:
+          - "怪异只持续了几分钟，后果可以由学生用普通方式收拾"
+          - "千夏想把怪异做成节目素材，被陆言提醒不能拍到别人"
+        effects:
+          stage_fact_ids: [paper_fox_awake]
+
+      - id: b_club_direction_debate
+        kind: decision
+        purpose: "同好会方向之争：千夏的特别广播、日和的多语种校园指南，澪的神社开放日沉默地立在第三选项里。"
+        responds_to: [b_clubroom_first_visit]
+        sketch:
+          location_id: clubroom
+          present_character_ids: [hiyori, chika, mio]
+        choices:
+          - option_id: back_broadcast
+            action_id: support
+            label: "支持千夏的广播方案"
+            intent: "好故事能让全校参与，先帮她把节目立起来。"
+            target_character_id: chika
+            stance_axis: order_vs_spontaneity
+            stance_value: spontaneity
+            accepted_risk: "节目可能被学生会认为不够实际"
+            outcome: success
+            relationship_deltas:
+              - {character_id: chika, axis: trust, delta: 10}
+              - {character_id: chika, axis: affection, delta: 5}
+          - option_id: back_guide
+            action_id: support
+            label: "支持日和的校园指南"
+            intent: "可执行、可负责的计划才能通过周五的审查。"
+            target_character_id: hiyori
+            stance_axis: order_vs_spontaneity
+            stance_value: order
+            outcome: success
+            relationship_deltas:
+              - {character_id: hiyori, axis: trust, delta: 10}
+          - option_id: ask_mio_first
+            action_id: ask
+            label: "先听听澪的想法"
+            intent: "在两个响亮的方案之间，先问一问一直沉默的澪。"
+            target_character_id: mio
+            outcome: partial
+            relationship_deltas:
+              - {character_id: mio, axis: trust, delta: 5}
+        effects:
+          promise_expectations:
+            - "被支持的方案提出者要在周五审查前拿出可见成果"
+          advance_arc_phase: true
+
+  - id: act_before_friday
+    scene_budget: [3, 4]
+    target_block_range: [8, 24]
+    beats:
+      - id: b_shrine_afternoon
+        kind: scene
+        priority: 5
+        purpose: "银杏坡小神社的下午：澪讲述旧绘马与学生心愿的来历，陆言第一次感到自己不是客人。"
+        sketch:
+          location_id: school_shrine
+          present_character_ids: [mio]
+          time_of_day: "黄昏"
+        must_include:
+          - "澪把保存旧绘马的原因说出口"
+          - "陆言主动帮忙打扫，而不是站在原地被照顾"
+        effects:
+          promise_expectations:
+            - "陆言会把狐形纸签平安送回它该在的地方"
+
+      - id: b_hiyori_ema
+        kind: scene
+        priority: 5
+        purpose: "屋顶温室里撞见日和对着旧绘马发呆，背面有字却被她慌张地遮住。"
+        sketch:
+          location_id: rooftop_greenhouse
+          present_character_ids: [hiyori]
+          time_of_day: "放学后"
+        must_include:
+          - "日和越害羞越使用正式敬语"
+          - "绘马背面确实有字，但她拒绝现在展示"
+
+      - id: b_commit_club_guide
+        kind: scene
+        priority: 3
+        optional: true
+        purpose: "日和主导的多语种校园指南方案成型：留学生视角成为同好会真正有用的成果。"
+        requires: "relationships.hiyori.trust >= 45"
+        sketch:
+          location_id: clubroom
+          present_character_ids: [hiyori]
+        must_include:
+          - "指南方案有了具体的第一页"
+        effects:
+          commit_latent:
+            - {fact_id: club_future, value: multilingual_campus_guide}
+
+      - id: b_commit_club_radio
+        kind: scene
+        priority: 3
+        optional: true
+        purpose: "千夏的放学后特别广播试录成功：一期能证明同好会价值的节目诞生。"
+        requires: "relationships.chika.trust >= 40"
+        sketch:
+          location_id: broadcast_room
+          present_character_ids: [chika]
+        must_include:
+          - "试录片段让在场的人都被打动"
+        effects:
+          commit_latent:
+            - {fact_id: club_future, value: after_school_radio_special}
+
+      - id: b_commit_club_openday
+        kind: scene
+        priority: 3
+        optional: true
+        purpose: "澪的神社与校园开放日方案成型：把小神社的故事变成全校愿意来访的活动。"
+        requires: "relationships.mio.trust >= 35"
+        sketch:
+          location_id: school_shrine
+          present_character_ids: [mio]
+        must_include:
+          - "开放日的参观路线被画在旧纸上"
+        effects:
+          commit_latent:
+            - {fact_id: club_future, value: shrine_and_campus_open_day}
+
+      - id: b_friday_plan
+        kind: decision
+        priority: 1
+        purpose: "审查前最后两天的分工：把时间投给谁的方案，就是在为谁的证明站台。"
+        responds_to: [b_club_direction_debate]
+        sketch:
+          location_id: clubroom
+          present_character_ids: [hiyori, chika, mio]
+          time_of_day: "周四午休"
+        choices:
+          - option_id: rehearse_with_hiyori
+            action_id: support
+            label: "陪日和排练陈述"
+            intent: "把指南的每一页都过一遍，让周五的说明无懈可击。"
+            target_character_id: hiyori
+            stance_axis: order_vs_spontaneity
+            stance_value: order
+            accepted_risk: "排练占用了帮其他人的时间"
+            outcome: success
+            relationship_deltas:
+              - {character_id: hiyori, axis: trust, delta: 10}
+          - option_id: help_chika_edit
+            action_id: support
+            label: "帮千夏剪节目"
+            intent: "把特别节目剪到能在审查现场放出来的完成度。"
+            target_character_id: chika
+            stance_axis: privacy_vs_expression
+            stance_value: expression
+            accepted_risk: "素材里可能混入需要谨慎处理的内容"
+            outcome: success
+            relationship_deltas:
+              - {character_id: chika, axis: trust, delta: 5}
+              - {character_id: chika, axis: affection, delta: 5}
+          - option_id: build_props_with_mio
+            action_id: follow
+            label: "跟澪做开放日道具"
+            intent: "亲手把参观路线的路牌和装饰做出来。"
+            target_character_id: mio
+            stance_axis: guest_vs_member
+            stance_value: member
+            accepted_risk: "把时间花在还没定案的方案上"
+            outcome: success
+            relationship_deltas:
+              - {character_id: mio, axis: trust, delta: 10}
+        effects:
+          promise_expectations:
+            - "被支援的人要在周五审查现场拿出成果"
+
+  - id: act_review_friday
+    scene_budget: [2, 3]
+    target_block_range: [10, 25]
+    beats:
+      - id: b_paper_fox_truth
+        kind: scene
+        priority: 5
+        purpose: "纸签来历揭晓：澪整理寄给留学生的欢迎资料时误把狐形纸签放了进去，它只是想回神社看看。"
+        sketch:
+          location_id: clubroom
+          present_character_ids: [mio]
+          time_of_day: "周五放学后，审查开始前"
+        must_include:
+          - "澪承认错误并道歉，但没有推卸收尾责任"
+          - "陆言对'被纸签选中'这件事作出自己的回应"
+        effects:
+          commit_latent:
+            - {fact_id: paper_fox_sender, value: mio_returned_it_by_mistake}
+          advance_arc_phase: true
+
+      - id: b_review_day
+        kind: decision
+        priority: 3
+        purpose: "周五审查：方案展示前最后一刻的分工抉择，决定谁站到台前、谁留在幕后。"
+        responds_to: [b_paper_fox_truth]
+        sketch:
+          location_id: broadcast_room
+          present_character_ids: [hiyori, chika, mio]
+          time_of_day: "周五放学后"
+        choices:
+          - option_id: present_together
+            action_id: support
+            label: "大家一起上台"
+            intent: "同好会的成果属于所有人，包括刚来一周的自己。"
+            target_character_id: hiyori
+            stance_axis: guest_vs_member
+            stance_value: member
+            accepted_risk: "留学生身份可能在台上被追问"
+            potential_obligation_kind: share_public_risk
+            outcome: success
+            relationship_deltas:
+              - {character_id: hiyori, axis: trust, delta: 10}
+              - {character_id: chika, axis: affection, delta: 5}
+              - {character_id: mio, axis: trust, delta: 10}
+          - option_id: solo_improv
+            action_id: challenge
+            label: "自己先顶上去"
+            intent: "用即兴的讲述吸引学生会注意，为同伴争取准备时间。"
+            stance_axis: guest_vs_member
+            stance_value: member
+            accepted_risk: "一个人的发挥可能搞砸整场展示"
+            potential_obligation_kind: share_public_risk
+            outcome: partial
+          - option_id: step_back
+            action_id: withhold
+            label: "退到幕后帮忙"
+            intent: "把台前交给更了解社团的人，自己负责没人看见的收尾。"
+            stance_axis: guest_vs_member
+            stance_value: guest
+            outcome: backfire
+
+      - id: b_finale
+        kind: ending
+        priority: 1
+        purpose: "审查落幕：同好会的答案与纸签的归处同时揭晓，这一周在彩色怪异的光里合上。"
+        requires: "facts.club_future.truth_status == 'committed'"
+        position:
+          min_scene: 8
+          max_scene: 14
+        must_include:
+          - "学生会给出对方案的明确回应"
+          - "狐形纸签被送回它该在的地方"
+        effects:
+          reveal_fact_ids: [club_future, paper_fox_sender]

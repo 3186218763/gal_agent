@@ -113,7 +113,7 @@ def test_midplaythrough_exit_preserves_committed_part(tmp_path: Path):
     text = (tmp_path / "playthroughs" / "s1.md").read_text(encoding="utf-8")
     assert text.startswith("# Playthrough · s1")
     # Blocks and the first decision's options are already on disk.
-    assert "The story continues in" in text
+    assert "Turn " in text
     assert "### 抉择 ·" in text
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from src.story.runtime.drama_manager import beat_briefs, seed_must_address
 from src.story.script_pack.models import CompiledScriptPack
 from src.story.state import (
     FactTruthStatus,
@@ -203,6 +204,25 @@ def player_choice_view(
     }
 
 
+def _canon_ledger_views(state: SessionState) -> dict[str, Any]:
+    """Canon Ledger retrieval slices for generation contexts.
+
+    Entity cards pin every established narrative detail (so the notebook's
+    cover color is always in reach), open promise statements carry their
+    original wording, and the motif blacklist names what the prose already
+    performed — the three layers that stop detail drift, forgotten setup,
+    and structural repetition once text leaves the verbatim window.
+    """
+    ledger = state.ledger
+    if not (ledger.entities or ledger.narrative_promises or ledger.recent_motifs):
+        return {}
+    return {
+        "entity_cards": ledger.entity_card_views(),
+        "open_narrative_promises": ledger.open_promise_views(),
+        "motif_blacklist_recently_used_do_not_reperform": ledger.motif_blacklist_views(),
+    }
+
+
 def _event_trace_digest(
     state: SessionState,
     budgets: ContextBudgets = DEFAULT_CONTEXT_BUDGETS,
@@ -250,7 +270,11 @@ def _event_trace_digest(
         "scene_count": state.world.scene_count,
         "revision": state.revision,
         "scene_summaries": [
-            {"scene_id": record.scene_id, "summary": record.summary}
+            {
+                "scene_id": record.scene_id,
+                "summary": record.summary,
+                "key_lines": list(record.key_lines),
+            }
             for record in summaries[len(summaries) - budgets.scene_summary_max :]
         ],
         "scene_summaries_omitted": summaries_omitted,
@@ -467,6 +491,11 @@ def build_segment_writer_context(
     if window is not None:
         ctx["recent_prose"] = window
 
+    # Canon Ledger slices: entity cards, open prose promises, motif blacklist.
+    ledger_views = _canon_ledger_views(state)
+    if ledger_views:
+        ctx["canon_ledger"] = ledger_views
+
     # The just-committed choice speaks loudest in the segment that directly
     # follows it; callers pass ``pending_choice`` for that segment only.
     if pending_choice is not None:
@@ -474,5 +503,15 @@ def build_segment_writer_context(
 
     if plan.terminal == "ending" and plan.ending_proposal is not None:
         ctx["ending_proposal"] = plan.ending_proposal.model_dump(mode="json")
+
+    # Beat Map briefs: order-aligned with the plan's scenes.  The writer must
+    # land each beat's purpose and must_include lines visibly, in natural
+    # language, never as ids.
+    briefs = beat_briefs(pack, plan)
+    if briefs:
+        ctx["beat_map"] = briefs
+    must_address = seed_must_address(pack, plan)
+    if must_address:
+        ctx["ending_must_address"] = must_address
 
     return ctx

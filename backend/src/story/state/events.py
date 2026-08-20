@@ -35,11 +35,52 @@ class SceneCommitted(FrozenModel):
     # One-line scene summary authored with the segment (None in events
     # recorded before summaries existed).
     summary: str | None = None
+    # Deterministic verbatim excerpts of the scene's distinctive lines
+    # (empty in events recorded before scene archives existed).
+    key_lines: tuple[str, ...] = ()
 
 
 class SceneAcknowledged(FrozenModel):
     type: Literal["scene_acknowledged"] = "scene_acknowledged"
     scene_id: str
+
+
+class EntityAttributeSet(FrozenModel):
+    """Canon Ledger: establish or update one canonical entity attribute."""
+
+    type: Literal["entity_attribute_set"] = "entity_attribute_set"
+    entity_id: str = Field(min_length=1, max_length=120)
+    entity_name: str = Field(min_length=1, max_length=120)
+    attribute: str = Field(min_length=1, max_length=80)
+    value: str = Field(min_length=1, max_length=200)
+    scene_id: str = ""
+
+
+class NarrativePromiseMarked(FrozenModel):
+    """Canon Ledger: the prose put a promise on record (Chekhov's gun)."""
+
+    type: Literal["narrative_promise_marked"] = "narrative_promise_marked"
+    promise_id: str = Field(min_length=1, max_length=120)
+    statement: str = Field(min_length=1, max_length=400)
+    scene_id: str = ""
+
+
+class NarrativePromiseSettled(FrozenModel):
+    """Canon Ledger: a prose promise was paid off or explicitly released."""
+
+    type: Literal["narrative_promise_settled"] = "narrative_promise_settled"
+    promise_id: str = Field(min_length=1, max_length=120)
+    outcome: Literal["paid", "released"]
+    scene_id: str = ""
+
+
+class MotifUsed(FrozenModel):
+    """Canon Ledger: a structural motif/gesture/image was performed."""
+
+    type: Literal["motif_used"] = "motif_used"
+    motif_id: str = Field(min_length=1, max_length=120)
+    label: str = Field(min_length=1, max_length=200)
+    scene_id: str = ""
 
 
 class PlayerActionSelected(FrozenModel):
@@ -290,9 +331,25 @@ class CompletionEvaluated(FrozenModel):
     assessments: tuple[CompletionAssessmentRecord, ...]
 
 
+class BeatCompleted(FrozenModel):
+    """A Beat Map beat was performed by the segment just committed.
+
+    Emitted by the simulator for every ``SegmentPlan.beat_ids`` entry so the
+    DramaManager never re-performs a beat (``once`` semantics).
+    """
+
+    type: Literal["beat_completed"] = "beat_completed"
+    beat_id: str
+    source_event_id: str
+
+
 StoryEvent = Annotated[
     SceneCommitted
     | SceneAcknowledged
+    | EntityAttributeSet
+    | NarrativePromiseMarked
+    | NarrativePromiseSettled
+    | MotifUsed
     | PlayerActionSelected
     | ActionResolved
     | FactCommitted
@@ -324,6 +381,7 @@ StoryEvent = Annotated[
     | EndingEntered
     | EndingGenerated
     | DecisionPresented
+    | BeatCompleted
     | CompletionEvaluated
     | SessionEnded,
     Field(discriminator="type"),

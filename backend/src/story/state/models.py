@@ -167,10 +167,14 @@ class PendingSceneReference(FrozenModel):
 
 
 class SceneSummaryRecord(FrozenModel):
-    """One committed scene's one-line summary, replayed from the event stream."""
+    """One committed scene's archive line, replayed from the event stream."""
 
     scene_id: str
     summary: str = Field(min_length=1, max_length=200)
+    # Verbatim excerpts of the scene's most distinctive lines (deterministic
+    # extraction from the committed blocks) — richer than the one-line
+    # summary, cheaper than the full prose ring.
+    key_lines: tuple[str, ...] = ()
 
 
 class ProseBlockRecord(FrozenModel):
@@ -188,6 +192,104 @@ class ProseBlockRecord(FrozenModel):
 
 
 RECENT_PROSE_BLOCK_CAP = 60
+
+
+# ---------------------------------------------------------------------------
+# Canon Ledger — narrative memory of what the prose actually established
+# ---------------------------------------------------------------------------
+
+
+class EntityAttributeRecord(FrozenModel):
+    """One canonical attribute value for a narrative entity.
+
+    Example: notebook.cover = "黑色硬皮".  The latest committed value is
+    authoritative; a generation-time conflict against it is a continuity
+    error rejected before commit, never a silent drift.
+    """
+
+    attribute: str = Field(min_length=1, max_length=80)
+    value: str = Field(min_length=1, max_length=200)
+    source_event_id: str = ""
+
+
+class EntityRecord(FrozenModel):
+    entity_id: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=120)
+    attributes: dict[str, EntityAttributeRecord] = Field(default_factory=dict)
+
+
+class NarrativePromiseLedgerRecord(FrozenModel):
+    """A prose-level promise (Chekhov's gun) with its original statement.
+
+    Unlike the deadline-driven ``PromiseRuntime`` (choice-machine ledgers),
+    this tracks what the *prose* put on record: an object shown, a vow
+    spoken, a question raised that the story is now expected to pay off.
+    """
+
+    promise_id: str = Field(min_length=1, max_length=120)
+    statement: str = Field(min_length=1, max_length=400)
+    origin_scene_id: str = ""
+    status: Literal["open", "paid", "released"] = "open"
+    settled_scene_id: str | None = None
+
+
+class MotifRecord(FrozenModel):
+    """A structural motif/gesture/image the prose already performed."""
+
+    motif_id: str = Field(min_length=1, max_length=120)
+    label: str = Field(min_length=1, max_length=200)
+    scene_id: str = ""
+
+
+MOTIF_RING_CAP = 24
+ENTITY_CARD_CAP = 24
+
+
+class NarrativeLedger(FrozenModel):
+    """The Canon Ledger: entities, prose promises, and recent motifs.
+
+    Rebuilt identically from the event stream; consumed by the context
+    assembler as retrieval slices (entity cards, open promise statements,
+    motif blacklist) so narrative details stop drifting once they leave the
+    verbatim window.
+    """
+
+    entities: dict[str, EntityRecord] = Field(default_factory=dict)
+    narrative_promises: dict[str, NarrativePromiseLedgerRecord] = Field(default_factory=dict)
+    recent_motifs: tuple[MotifRecord, ...] = ()
+
+    def entity_card_views(self, cap: int = ENTITY_CARD_CAP) -> list[dict[str, Any]]:
+        """Newest-established entities first, each with all canonical attributes."""
+        ordered = list(self.entities.values())[-cap:]
+        ordered.reverse()
+        return [
+            {
+                "entity_id": entity.entity_id,
+                "name": entity.name,
+                "attributes": {
+                    attribute: record.value
+                    for attribute, record in sorted(entity.attributes.items())
+                },
+            }
+            for entity in ordered
+        ]
+
+    def open_promise_views(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "promise_id": record.promise_id,
+                "statement": record.statement,
+                "origin_scene_id": record.origin_scene_id,
+            }
+            for _pid, record in sorted(self.narrative_promises.items())
+            if record.status == "open"
+        ]
+
+    def motif_blacklist_views(self, cap: int = 12) -> list[dict[str, Any]]:
+        return [
+            {"motif_id": record.motif_id, "label": record.label, "scene_id": record.scene_id}
+            for record in tuple(reversed(self.recent_motifs))[:cap]
+        ]
 
 
 class PendingDecisionReference(FrozenModel):
@@ -297,6 +399,9 @@ class DramaticState(FrozenModel):
     cost_event_ids: tuple[str, ...] = ()
     arc_phase: DramaticArcPhase = DramaticArcPhase.APPROACH
     decision_count: int = Field(default=0, ge=0)
+    # Beat Map beats already performed — drives ``once`` semantics for the
+    # deterministic DramaManager navigation.
+    completed_beat_ids: frozenset[str] = frozenset()
 
 
 class WorldSnapshot(FrozenModel):
@@ -333,6 +438,7 @@ class SessionState(FrozenModel):
     completion: CompletionState | None = None
     scene_summaries: tuple[SceneSummaryRecord, ...] = ()
     recent_prose_blocks: tuple[ProseBlockRecord, ...] = ()
+    ledger: NarrativeLedger = Field(default_factory=NarrativeLedger)
 
 
 def initial_session_state(

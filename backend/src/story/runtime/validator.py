@@ -7,7 +7,10 @@ from collections.abc import Iterable
 from src.story.runtime.context import build_condition_context
 from src.story.runtime.contracts import ActionResolution, SceneDraft, ScenePlan
 from src.story.runtime.segment_contracts import (
+    EntityAttributeUpdate,
     PacingEnvelope,
+    PromiseMarkUpdate,
+    PromiseSettleUpdate,
     SegmentDraft,
     SegmentPlan,
 )
@@ -19,6 +22,69 @@ class ProposalRejected(ValueError):
     def __init__(self, errors: Iterable[str]):
         self.errors = tuple(errors)
         super().__init__("; ".join(self.errors))
+
+
+def validate_ledger_updates(state: SessionState, draft: SegmentDraft) -> SegmentDraft:
+    """Canon Ledger consistency: reject continuity conflicts with evidence.
+
+    An entity attribute the committed ledger already pins to a different
+    value is a continuity error — the rejection quotes both values so the
+    regeneration loop can fix the draft instead of re-rolling it.  Promise
+    settles must reference an open ledger promise (open ids are listed);
+    promise marks must be new.  Batch-internal consistency is checked the
+    same way (two updates in one draft pinning different values).
+    """
+    errors: list[str] = []
+    entities = state.ledger.entities
+    open_promises = {
+        promise_id
+        for promise_id, record in state.ledger.narrative_promises.items()
+        if record.status == "open"
+    }
+    batch_attributes: dict[tuple[str, str], str] = {}
+    batch_marks: set[str] = set()
+    for update in draft.ledger_updates:
+        if isinstance(update, EntityAttributeUpdate):
+            key = (update.entity_id, update.attribute)
+            committed = entities.get(update.entity_id)
+            if (
+                committed is not None
+                and update.attribute in committed.attributes
+                and committed.attributes[update.attribute].value != update.value
+            ):
+                errors.append(
+                    f"ledger conflict: entity '{update.entity_id}' attribute "
+                    f"'{update.attribute}' is already established as "
+                    f"'{committed.attributes[update.attribute].value}' — the draft "
+                    f"says '{update.value}'; keep the established value unless the "
+                    "story visibly changes it"
+                )
+            elif key in batch_attributes and batch_attributes[key] != update.value:
+                errors.append(
+                    f"ledger conflict: this draft sets '{update.entity_id}.{update.attribute}' "
+                    f"to both '{batch_attributes[key]}' and '{update.value}'"
+                )
+            else:
+                batch_attributes[key] = update.value
+        elif isinstance(update, PromiseMarkUpdate):
+            if update.promise_id in state.ledger.narrative_promises or update.promise_id in batch_marks:
+                errors.append(
+                    f"ledger conflict: narrative promise '{update.promise_id}' already exists; "
+                    "use a new promise_id for a new promise"
+                )
+            batch_marks.add(update.promise_id)
+        elif isinstance(update, PromiseSettleUpdate):
+            if update.promise_id not in open_promises:
+                open_list = ", ".join(sorted(open_promises)) or "(none)"
+                errors.append(
+                    f"ledger conflict: promise '{update.promise_id}' is not an open "
+                    f"narrative promise; open promises: {open_list}"
+                )
+            else:
+                open_promises.discard(update.promise_id)
+    if errors:
+        raise ProposalRejected(errors)
+    return draft
 
 
 def _validate_fact_commits(pack, state, commits, allow_finale_reveal: bool = False) -> list[str]:
@@ -383,6 +449,20 @@ def validate_segment_plan(
             errors.append(f"resolved_obligation_ids references unknown obligation: {obligation_id}")
         elif obligation.status != "open":
             errors.append(f"obligation is already resolved: {obligation_id}")
+
+    # Beat Map referential integrity: beats must exist in the pack and not
+    # be performed yet (once semantics enforced by the reducer).
+    if plan.beat_ids:
+        if pack.beat_ids:
+            for beat_id in plan.beat_ids:
+                if beat_id not in pack.beat_ids:
+                    errors.append(f"beat_ids references unknown beat: {beat_id}")
+                elif beat_id in state.drama.completed_beat_ids:
+                    errors.append(f"beat is already completed: {beat_id}")
+        else:
+            errors.append(
+                "beat_ids are only valid for packs with a structure (Beat Map)"
+            )
 
     if errors:
         raise ProposalRejected(errors)

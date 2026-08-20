@@ -164,6 +164,10 @@ def test_writer_context_digest_includes_scene_summaries(tmp_path: Path):
     ctx = build_segment_writer_context(pack, state, plan)
     summaries = ctx["event_trace"]["scene_summaries"]
     assert summaries == [
-        {"scene_id": record.scene_id, "summary": record.summary}
+        {
+            "scene_id": record.scene_id,
+            "summary": record.summary,
+            "key_lines": list(record.key_lines),
+        }
         for record in state.scene_summaries
     ]

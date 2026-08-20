@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from src.story.state.events import (
     ActionResolved,
     ArcPressureAdvanced,
+    BeatCompleted,
     BeliefChanged,
     CharacterDramaticStateChanged,
     CharacterLearnedFact,
@@ -17,11 +18,15 @@ from src.story.state.events import (
     DramaticQuestionSet,
     EndingEntered,
     EndingGenerated,
+    EntityAttributeSet,
     EventEnvelope,
     FactCommitted,
     FactEvidenced,
     FactRevealed,
     GoalAdvanced,
+    MotifUsed,
+    NarrativePromiseMarked,
+    NarrativePromiseSettled,
     ObligationCreated,
     ObligationResolved,
     PhaseAdvanced,
@@ -41,14 +46,19 @@ from src.story.state.events import (
     ThreadOpened,
 )
 from src.story.state.models import (
+    MOTIF_RING_CAP,
     RECENT_PROSE_BLOCK_CAP,
     CompletionState,
     DramaticArcPhase,
     DramaticQuestionRuntime,
     EndingRuntime,
+    EntityAttributeRecord,
+    EntityRecord,
     FactTruthStatus,
     FactVisibility,
     GoalStatus,
+    MotifRecord,
+    NarrativePromiseLedgerRecord,
     ObligationRuntime,
     PendingConsequenceReference,
     PendingDecisionReference,
@@ -175,7 +185,11 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
         if event.summary:
             scene_summaries = (
                 *scene_summaries,
-                SceneSummaryRecord(scene_id=event.scene_id, summary=event.summary.strip()),
+                SceneSummaryRecord(
+                    scene_id=event.scene_id,
+                    summary=event.summary.strip(),
+                    key_lines=event.key_lines,
+                ),
             )
         # Bounded verbatim ring: the newest blocks survive, the oldest fall off.
         recent_prose = (
@@ -213,6 +227,64 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
             "decision scenes are acknowledged by player_action_selected",
         )
         next_state = next_state.model_copy(update={"pending_scene": None})
+
+    elif isinstance(event, EntityAttributeSet):
+        # The latest committed value is canonical; deliberate revision is a
+        # legitimate later event, while accidental drift is rejected upstream
+        # by the generation-side ledger consistency check.
+        entities = dict(next_state.ledger.entities)
+        entity = entities.get(event.entity_id)
+        if entity is None:
+            entity = EntityRecord(entity_id=event.entity_id, name=event.entity_name)
+        attributes = dict(entity.attributes)
+        attributes[event.attribute] = EntityAttributeRecord(
+            attribute=event.attribute,
+            value=event.value,
+            source_event_id=envelope.event_id,
+        )
+        entities[event.entity_id] = entity.model_copy(
+            update={"name": event.entity_name, "attributes": attributes}
+        )
+        ledger = next_state.ledger.model_copy(update={"entities": entities})
+        next_state = next_state.model_copy(update={"ledger": ledger})
+
+    elif isinstance(event, NarrativePromiseMarked):
+        _require(
+            event.promise_id not in next_state.ledger.narrative_promises,
+            "narrative promise already exists in the canon ledger",
+        )
+        promises = dict(next_state.ledger.narrative_promises)
+        promises[event.promise_id] = NarrativePromiseLedgerRecord(
+            promise_id=event.promise_id,
+            statement=event.statement,
+            origin_scene_id=event.scene_id,
+        )
+        ledger = next_state.ledger.model_copy(update={"narrative_promises": promises})
+        next_state = next_state.model_copy(update={"ledger": ledger})
+
+    elif isinstance(event, NarrativePromiseSettled):
+        promises = dict(next_state.ledger.narrative_promises)
+        current = promises.get(event.promise_id)
+        _require(current is not None, "unknown narrative promise")
+        assert current is not None
+        _require(current.status == "open", "narrative promise is already settled")
+        promises[event.promise_id] = current.model_copy(
+            update={"status": event.outcome, "settled_scene_id": event.scene_id}
+        )
+        ledger = next_state.ledger.model_copy(update={"narrative_promises": promises})
+        next_state = next_state.model_copy(update={"ledger": ledger})
+
+    elif isinstance(event, MotifUsed):
+        motifs = (
+            *next_state.ledger.recent_motifs,
+            MotifRecord(
+                motif_id=event.motif_id, label=event.label, scene_id=event.scene_id
+            ),
+        )
+        if len(motifs) > MOTIF_RING_CAP:
+            motifs = motifs[-MOTIF_RING_CAP:]
+        ledger = next_state.ledger.model_copy(update={"recent_motifs": motifs})
+        next_state = next_state.model_copy(update={"ledger": ledger})
 
     elif isinstance(event, PlayerActionSelected):
         _require(next_state.pending_decision is not None, "no decision is pending")
@@ -802,6 +874,18 @@ def apply_event(state: SessionState, envelope: EventEnvelope) -> SessionState:
                 "pending_consequence": None,
             }
         )
+
+    elif isinstance(event, BeatCompleted):
+        _require(
+            event.beat_id not in next_state.drama.completed_beat_ids,
+            f"beat {event.beat_id} is already completed",
+        )
+        drama = next_state.drama.model_copy(
+            update={
+                "completed_beat_ids": next_state.drama.completed_beat_ids | {event.beat_id}
+            }
+        )
+        next_state = next_state.model_copy(update={"drama": drama})
 
     elif isinstance(event, CompletionEvaluated):
         _require(next_state.ending is not None, "completion requires an ending")

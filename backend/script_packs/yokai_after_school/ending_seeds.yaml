@@ -1,0 +1,38 @@
+# 狐签与心跳 · 结局种子（v3 结局层）
+# 作者只声明结局的"形"：标题、基调、必须回收的事实；
+# 具体正文由 ScenePerformer 在终幕演出中生成。
+# requires 条件为空且标 fallback 的种子保证任何历史都有结局可走。
+
+- id: seed_lantern_home
+  title: "纸签归处"
+  tone: "温暖、微光、郑重的告别式相聚"
+  frame: >
+    审查通过的那个黄昏，四人把狐形纸签送回银杏坡的小神社。旧绘马被重新挂好，
+    澪第一次邀请别人碰神社的东西，日和把承诺书上的名字念给所有人听，
+    千夏的广播里播放着这最后一期的收尾。陆言明白这份奇怪的欢迎从来不是错误，
+    而是这座校园把他当成自己人的方式。
+  requires: "facts.club_future.truth_status == 'committed' and relationships.mio.trust >= 50"
+  must_address: [paper_fox_sender, club_future]
+  priority: 50
+
+- id: seed_lively_week
+  title: "心跳的放学后直播"
+  tone: "明快、喧闹、带着心照不宣的默契"
+  frame: >
+    特别节目播出的傍晚，广播部窗外挤满了笑着讨论节目的同学。千夏在片尾把三个名字
+    连同陆言的一起念了出来，然后飞快地补上一句"下学期也请多关照"。热闹退潮后，
+    她难得放慢语速，问陆言下周是否还愿意来听她试音。
+  requires: "relationships.chika.affection >= 25"
+  must_address: [club_future]
+  priority: 30
+
+- id: seed_quiet_week
+  title: "普通的下一周"
+  tone: "平静、留白、日常继续的安心"
+  frame: >
+    第一周结束的放学后，活动室的钥匙多了一把备份。无论审查结果如何、纸签的来历
+    是否完全弄清，同好会的成员约好下周同一时间还在这里。陆言把书包里空出来的
+    那一小块地方，留给了下周可能发生的好事。
+  fallback: true
+  must_address: [club_future]
+  priority: 0

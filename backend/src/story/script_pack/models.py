@@ -322,6 +322,153 @@ class OpeningStateSource(StrictModel):
     starting_pressure: float = Field(default=0.1, ge=0, le=1)
 
 
+# ---------------------------------------------------------------------------
+# Beat Map (v2 additive): acts, beats, authored choices, deterministic effects
+# ---------------------------------------------------------------------------
+
+
+class BeatPositionSource(StrictModel):
+    min_scene: int = Field(ge=0)
+    max_scene: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> BeatPositionSource:
+        if self.min_scene >= self.max_scene:
+            raise ValueError("beat position min_scene must be smaller than max_scene")
+        return self
+
+
+class RelationshipDeltaSource(StrictModel):
+    character_id: SafeId
+    axis: SafeId
+    delta: int = Field(ge=-100, le=100)
+
+
+class AuthoredChoiceSource(StrictModel):
+    """An author-written option with its full Choice Meaning and consequence."""
+
+    option_id: SafeId
+    action_id: SafeId
+    label: str = Field(min_length=1, max_length=80)
+    intent: str = Field(min_length=1, max_length=240)
+    target_character_id: SafeId | None = None
+    stance_axis: SafeId | None = None
+    stance_value: str | None = None
+    accepted_risk: str | None = Field(default=None, max_length=240)
+    potential_obligation_kind: SafeId | None = None
+    conflict_axis_id: SafeId | None = None
+    outcome: Literal["success", "partial", "resisted", "backfire"] = "success"
+    relationship_deltas: tuple[RelationshipDeltaSource, ...] = ()
+
+
+class StanceChallengeSource(StrictModel):
+    stance_axis: SafeId
+    stance_value: str = Field(min_length=1, max_length=120)
+    challenging_character_id: SafeId | None = None
+
+
+class LatentCommitSource(StrictModel):
+    """A beat's deterministic answer to a latent question."""
+
+    fact_id: SafeId
+    value: str = Field(min_length=1, max_length=120)
+
+
+class BeatEffectsSource(StrictModel):
+    """Deterministic state effects fired when the beat is performed.
+
+    These wire the dramatic state machine (promises, arc pressure, stance
+    challenges) that the improvisation path never emitted: beat-driven packs
+    fire them declaratively.
+    """
+
+    stage_fact_ids: tuple[SafeId, ...] = ()
+    reveal_fact_ids: tuple[SafeId, ...] = ()
+    commit_latent: tuple[LatentCommitSource, ...] = ()
+    promise_expectations: tuple[str, ...] = ()
+    promise_soft_deadline_decisions: int = Field(default=3, ge=1, le=20)
+    promise_hard_deadline_decisions: int = Field(default=5, ge=1, le=40)
+    advance_arc_phase: bool = False
+    stance_challenges: tuple[StanceChallengeSource, ...] = ()
+
+
+class BeatSceneSketchSource(StrictModel):
+    location_id: SafeId
+    present_character_ids: tuple[SafeId, ...] = ()
+    time_of_day: str = Field(default="", max_length=60)
+
+
+class BeatSource(StrictModel):
+    id: SafeId
+    kind: Literal["scene", "decision", "ending"] = "scene"
+    purpose: str = Field(min_length=1, max_length=400)
+    requires: str = ""
+    # Optional beats fire when their condition is met but never block act
+    # progression — authored for choice-dependent conditional scenes whose
+    # siblings can never all be eligible.
+    optional: bool = False
+    responds_to: tuple[SafeId, ...] = ()
+    position: BeatPositionSource | None = None
+    once: bool = True
+    must_include: tuple[str, ...] = ()
+    sketch: BeatSceneSketchSource | None = None
+    choices: tuple[AuthoredChoiceSource, ...] = ()
+    effects: BeatEffectsSource | None = None
+    successors: tuple[SafeId, ...] = ()
+    priority: int = Field(default=0, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_kind(self) -> BeatSource:
+        if self.kind != "decision" and self.choices:
+            raise ValueError("authored choices are only allowed on decision beats")
+        if self.kind == "decision" and self.choices and not 2 <= len(self.choices) <= 4:
+            raise ValueError("a decision beat carries 2-4 authored choices")
+        return self
+
+
+class ActSource(StrictModel):
+    id: SafeId
+    scene_budget: tuple[int, int] | None = None
+    target_block_range: tuple[int, int] | None = None
+    beats: tuple[BeatSource, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> ActSource:
+        if self.scene_budget is not None and self.scene_budget[0] > self.scene_budget[1]:
+            raise ValueError("act scene_budget must be an ascending range")
+        if self.target_block_range is not None and self.target_block_range[0] > self.target_block_range[1]:
+            raise ValueError("act target_block_range must be an ascending range")
+        return self
+
+
+class StructureSource(StrictModel):
+    acts: tuple[ActSource, ...] = Field(min_length=1)
+
+
+class EndingSeedSource(StrictModel):
+    """An authored ending's shape: frame, tone, and what it must address.
+
+    The seed's *selection* stays dynamic (its ``requires`` condition over
+    committed history) and its *performance* is generated — the author
+    controls the form without enumerating every variant.
+    """
+
+    id: SafeId
+    title: str = Field(min_length=1, max_length=120)
+    tone: str = Field(min_length=1, max_length=80)
+    frame: str = Field(min_length=1, max_length=600)
+    requires: str = ""
+    must_address: tuple[SafeId, ...] = ()
+    fallback: bool = False
+    priority: int = Field(default=0, ge=0, le=1000)
+
+    @model_validator(mode="after")
+    def validate_fallback(self) -> EndingSeedSource:
+        if self.fallback and self.requires:
+            raise ValueError("a fallback seed must not carry a requires condition")
+        return self
+
+
 class ScriptPackSource(StrictModel):
     """Discriminated union of v1.0 and v2.0 pack sources via schema_version.
 
@@ -381,6 +528,10 @@ class ScriptPackSourceV2(ScriptPackSource):
     obligation_kinds: tuple[ObligationKindSource, ...] = Field(min_length=1)
     completion_requirements: tuple[CompletionRequirementSource, ...] = Field(min_length=1)
     interaction_rules: InteractionRulesSource
+    # Beat Map (v2 additive, optional): authored acts/beats + ending seeds.
+    # Packs without a structure keep the improvisation path untouched.
+    structure: StructureSource | None = None
+    ending_seeds: tuple[EndingSeedSource, ...] = ()
     assets: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -394,3 +545,5 @@ class CompiledScriptPack(StrictModel):
     ending_ids: frozenset[str]
     action_ids: frozenset[str]
     completion_requirement_ids: frozenset[str] = frozenset()
+    beat_ids: frozenset[str] = frozenset()
+    ending_seed_ids: frozenset[str] = frozenset()

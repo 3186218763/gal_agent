@@ -24,3 +24,6 @@ frontend/package-lock.json
 *.swp
 
 .worktrees/
+
+# agent scratch space
+.scratch/

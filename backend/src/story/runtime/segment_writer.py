@@ -66,6 +66,14 @@ HARD RULES — the output is machine-validated and any violation is rejected:
    seamlessly from the last block — never repeat or re-narrate them — and
    match their quotation marks, punctuation, and formatting exactly so the
    seam is invisible.
+
+8. BEAT MAP (when the context has a "beat_map" section):
+   Each entry is the authored beat for its scene, in order. The scene's prose
+   must visibly land the beat's "purpose" and every "must_include" line, in
+   natural language, never as ids. The scene's dramatic content is already
+   decided — perform it with full craft; never substitute a different event.
+   For an ending segment with "ending_must_address", the finale prose must
+   address each listed item.
 - Return only the requested structured contract."""
 
 

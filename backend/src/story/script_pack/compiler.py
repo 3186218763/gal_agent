@@ -55,6 +55,8 @@ _INCLUDE_KEYS = frozenset(
         "relationship_event_tags",
         "relationship_turning_points",
         "obligation_kinds",
+        "structure",
+        "ending_seeds",
     }
 )
 
@@ -342,7 +344,6 @@ def _v2_reference_errors(
         elif fact_id not in fixed_ids:
             errors.append(f"opening known fact must be fixed: {fact_id}")
 
-    del goal_ids
     tag_ids = {item.id for item in source.relationship_event_tags}
     turning_point_ids = {item.id for item in source.relationship_turning_points}
     revealable_fact_ids = {
@@ -436,6 +437,182 @@ def _v2_condition_entries(source: ScriptPackSourceV2) -> Iterable[tuple[str, str
     for action in source.interaction_rules.extensions:
         for index, expression in enumerate(action.preconditions):
             yield f"action.{action.id}.precondition.{index}", expression
+    for act in source.structure.acts if source.structure else ():
+        for beat in act.beats:
+            if beat.requires:
+                yield f"beat.{beat.id}.requires", beat.requires
+    for seed in source.ending_seeds:
+        if seed.requires:
+            yield f"seed.{seed.id}.requires", seed.requires
+
+
+def _v2_structure_errors(
+    source: ScriptPackSourceV2,
+    character_ids: set[str],
+    fact_ids: set[str],
+    action_ids: set[str],
+) -> list[str]:
+    """Validate Beat Map references: acts, beats, authored choices, ending seeds."""
+    errors: list[str] = []
+    location_ids = {item.id for item in source.world_setting.locations}
+    conflict_axes = {axis.id: axis for axis in source.conflict_axes}
+    obligation_kind_ids = {item.id for item in source.obligation_kinds}
+    turning_point_ids = {item.id for item in source.relationship_turning_points}
+    revealable_fact_ids = {
+        item.id
+        for item in source.facts.fixed
+        if item.visibility == "hidden" and item.id not in source.opening_state.known_facts
+    } | {item.id for item in source.facts.latent_questions}
+    latent_candidates = {
+        question.id: {candidate.value for candidate in question.candidates}
+        for question in source.facts.latent_questions
+    }
+
+    errors.extend(
+        _duplicate_ids(
+            "ending_seed", (seed.id for seed in source.ending_seeds)
+        )
+    )
+    if source.ending_seeds and not any(seed.fallback for seed in source.ending_seeds):
+        errors.append("ending_seeds require at least one fallback seed (no requires condition)")
+    for seed in source.ending_seeds:
+        for target in seed.must_address:
+            if target not in fact_ids and target not in turning_point_ids:
+                errors.append(
+                    f"ending seed {seed.id} must_address references unknown id {target}"
+                )
+
+    if source.structure is None:
+        return errors
+
+    errors.extend(_duplicate_ids("act", (act.id for act in source.structure.acts)))
+    beats = [beat for act in source.structure.acts for beat in act.beats]
+    errors.extend(_duplicate_ids("beat", (beat.id for beat in beats)))
+    beat_ids = {beat.id for beat in beats}
+    # Navigation is strictly act-ordered, so a responds_to target that does
+    # not precede its referencing beat can never complete first — the beat
+    # would silently wait forever.
+    beat_order = {
+        beat.id: (act_index, beat_index)
+        for act_index, act in enumerate(source.structure.acts)
+        for beat_index, beat in enumerate(act.beats)
+    }
+    if source.ending_seeds and not any(beat.kind == "ending" for beat in beats):
+        errors.append(
+            "ending_seeds require at least one ending beat in the structure to fire"
+        )
+
+    for beat in beats:
+        if beat.position is not None and beat.position.max_scene > source.experience.max_scenes:
+            errors.append(
+                f"beat {beat.id} position.max_scene exceeds experience.max_scenes "
+                f"({beat.position.max_scene} > {source.experience.max_scenes})"
+            )
+        for target in beat.responds_to:
+            if target not in beat_ids:
+                errors.append(f"beat {beat.id} responds_to unknown beat {target}")
+            elif beat_order[target] >= beat_order[beat.id]:
+                errors.append(
+                    f"beat {beat.id} responds_to {target}, which does not precede it "
+                    f"in act order"
+                )
+        for target in beat.successors:
+            if target not in beat_ids:
+                errors.append(f"beat {beat.id} successor references unknown beat {target}")
+        if beat.sketch is not None:
+            if beat.sketch.location_id not in location_ids:
+                errors.append(
+                    f"beat {beat.id} sketch references unknown location "
+                    f"{beat.sketch.location_id}"
+                )
+            for character_id in beat.sketch.present_character_ids:
+                if character_id not in character_ids:
+                    errors.append(
+                        f"beat {beat.id} sketch references unknown character {character_id}"
+                    )
+        if beat.effects is not None:
+            effects = beat.effects
+            for commit in effects.commit_latent:
+                candidates = latent_candidates.get(commit.fact_id)
+                if candidates is None:
+                    errors.append(
+                        f"beat {beat.id} commits non-latent fact {commit.fact_id}"
+                    )
+                elif commit.value not in candidates:
+                    errors.append(
+                        f"beat {beat.id} commits {commit.fact_id} with value outside "
+                        f"its candidates: {commit.value}"
+                    )
+            for fact_id in effects.stage_fact_ids:
+                if fact_id not in fact_ids:
+                    errors.append(f"beat {beat.id} stages unknown fact {fact_id}")
+            for fact_id in effects.reveal_fact_ids:
+                if fact_id not in fact_ids:
+                    errors.append(f"beat {beat.id} reveals unknown fact {fact_id}")
+                elif fact_id not in revealable_fact_ids:
+                    errors.append(
+                        f"beat {beat.id} reveal of {fact_id} cannot produce a FactRevealed event"
+                    )
+            for challenge in effects.stance_challenges:
+                axis = conflict_axes.get(challenge.stance_axis)
+                if axis is None:
+                    errors.append(
+                        f"beat {beat.id} stance challenge references unknown conflict axis "
+                        f"{challenge.stance_axis}"
+                    )
+                elif challenge.stance_value not in axis.values:
+                    errors.append(
+                        f"beat {beat.id} stance challenge value {challenge.stance_value} "
+                        f"is not a value of conflict axis {challenge.stance_axis}"
+                    )
+                if (
+                    challenge.challenging_character_id is not None
+                    and challenge.challenging_character_id not in character_ids
+                ):
+                    errors.append(
+                        f"beat {beat.id} stance challenge references unknown character "
+                        f"{challenge.challenging_character_id}"
+                    )
+        errors.extend(
+            _duplicate_ids(
+                f"choice option in beat {beat.id}", (choice.option_id for choice in beat.choices)
+            )
+        )
+        for choice in beat.choices:
+            if choice.action_id not in action_ids:
+                errors.append(
+                    f"beat {beat.id} choice {choice.option_id} references unknown action "
+                    f"{choice.action_id}"
+                )
+            if choice.target_character_id is not None and choice.target_character_id not in character_ids:
+                errors.append(
+                    f"beat {beat.id} choice {choice.option_id} references unknown target "
+                    f"{choice.target_character_id}"
+                )
+            if choice.stance_axis is not None and choice.stance_axis not in conflict_axes:
+                errors.append(
+                    f"beat {beat.id} choice {choice.option_id} references unknown stance axis "
+                    f"{choice.stance_axis}"
+                )
+            if choice.potential_obligation_kind is not None and (
+                choice.potential_obligation_kind not in obligation_kind_ids
+            ):
+                errors.append(
+                    f"beat {beat.id} choice {choice.option_id} references unknown obligation "
+                    f"kind {choice.potential_obligation_kind}"
+                )
+            if choice.conflict_axis_id is not None and choice.conflict_axis_id not in conflict_axes:
+                errors.append(
+                    f"beat {beat.id} choice {choice.option_id} references unknown conflict "
+                    f"axis {choice.conflict_axis_id}"
+                )
+            for delta in choice.relationship_deltas:
+                if delta.character_id not in character_ids:
+                    errors.append(
+                        f"beat {beat.id} choice {choice.option_id} relationship delta "
+                        f"references unknown character {delta.character_id}"
+                    )
+    return errors
 
 
 def _pack_locations(source: ScriptPackSourceV1 | ScriptPackSourceV2):
@@ -556,6 +733,9 @@ def compile_source(
             )
         errors.extend(_v2_reference_errors(source, character_ids, fixed_ids, fact_ids, goal_ids))
         errors.extend(
+            _v2_structure_errors(source, character_ids, fact_ids, action_ids)
+        )
+        errors.extend(
             _shared_reference_errors(
                 source, character_ids, fixed_ids, fact_ids, goal_ids, action_ids
             )
@@ -563,6 +743,10 @@ def compile_source(
         programs, condition_errors = _compile_programs_from(_v2_condition_entries(source))
         ending_ids: set[str] = set()
         completion_requirement_ids = {req.id for req in source.completion_requirements}
+        beat_ids = {
+            beat.id for act in source.structure.acts for beat in act.beats
+        } if source.structure else set()
+        ending_seed_ids = {seed.id for seed in source.ending_seeds}
     else:
         # v1.0 path
         errors.extend(_duplicate_ids("ending", (item.id for item in source.endings)))
@@ -586,6 +770,8 @@ def compile_source(
         programs, condition_errors = _compile_programs_from(_v1_condition_entries(source))
         ending_ids = {item.id for item in source.endings}
         completion_requirement_ids: set[str] = set()
+        beat_ids: set[str] = set()
+        ending_seed_ids: set[str] = set()
 
     errors.extend(condition_errors)
     errors.extend(_condition_reference_errors(programs, character_ids, fact_ids, goal_ids))
@@ -616,6 +802,8 @@ def compile_source(
         ending_ids=frozenset(ending_ids),
         completion_requirement_ids=frozenset(completion_requirement_ids),
         action_ids=frozenset(action_ids),
+        beat_ids=frozenset(beat_ids),
+        ending_seed_ids=frozenset(ending_seed_ids),
     )
 
 

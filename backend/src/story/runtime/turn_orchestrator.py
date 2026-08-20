@@ -29,8 +29,20 @@ from src.story.runtime.contracts import (
     RuntimeRevisionConflict,
     RuntimeSessionEnded,
 )
+from src.story.runtime.drama_manager import (
+    authored_choice_resolution,
+    beat_structure,
+    plan_next_segment,
+)
 from src.story.runtime.pacing import compute_pacing_envelope
 from src.story.runtime.pack_cache import PackCache
+from src.story.runtime.repetition import segment_repetition_errors
+from src.story.runtime.scene_performer import (
+    ScenePerformerPort,
+    assemble_segment_draft,
+    block_targets,
+    seam_tail_blocks,
+)
 from src.story.runtime.segment_contracts import (
     DirectorPort,
     GuardPort,
@@ -51,6 +63,7 @@ from src.story.runtime.validator import (
     ProposalRejected,
     segment_density_errors,
     validate_action_resolution,
+    validate_ledger_updates,
     validate_segment_draft,
     validate_segment_plan,
 )
@@ -79,6 +92,10 @@ from src.story.state.events import StoryEvent
 from src.story.storage import CommandInProgress, StoryEventStore
 
 logger = logging.getLogger(__name__)
+
+# Block-level repair attempts per segment before falling back to a full
+# regeneration (P2 failure economy: bad blocks cost targeted rewrites).
+_BLOCK_REPAIR_BUDGET = 2
 
 
 def _fingerprint(kind: str, **values: object) -> str:
@@ -244,6 +261,7 @@ class TurnOrchestrator:
         pack_cache: PackCache | None = None,
         semantic_judge: SemanticJudgePort | None = None,
         transcript_writer: TranscriptWriter | None = None,
+        scene_performer: ScenePerformerPort | None = None,
     ) -> None:
         self.store = store
         self.director = director
@@ -255,6 +273,7 @@ class TurnOrchestrator:
         self.pack_cache = pack_cache
         self.semantic_judge = semantic_judge
         self.transcript_writer = transcript_writer
+        self.scene_performer = scene_performer
 
     async def execute_turn(
         self,
@@ -588,8 +607,6 @@ class TurnOrchestrator:
         emit: ProgressEmit,
         started: float,
     ) -> dict[str, Any]:
-        if self.planner is None:
-            raise RuntimeGenerationUnavailable("planner is required for consequence resolution")
         pending = state.pending_consequence
         if pending is None:
             raise RuntimeRevisionConflict("no consequence is pending")
@@ -607,6 +624,53 @@ class TurnOrchestrator:
             conflict_axis_id=pending.conflict_axis_id,
         )
         await emit(_progress_event("planning", started))
+        # Beat-driven packs resolve authored choices deterministically — the
+        # author already wrote the outcome and deltas; no planner call.
+        authored = authored_choice_resolution(pack, pending)
+        if authored is not None:
+            diagnostics = _TurnDiagnostics(command_id, "resolve_consequence")
+            try:
+                resolution = validate_action_resolution(
+                    pack,
+                    state,
+                    authored,
+                    expected_action_id=pending.action_id,
+                )
+                consequence_events = simulate_consequence(pack, state, resolution)
+                consequence_envelopes = tuple(
+                    EventEnvelope(
+                        session_id=state.session_id,
+                        sequence=state.revision + index,
+                        event=event,
+                    )
+                    for index, event in enumerate(consequence_events, start=1)
+                )
+                resolved_state = apply_events(state, consequence_envelopes)
+                result = await self._generate_and_commit_segment(
+                    pack,
+                    resolved_state,
+                    consequence_events,
+                    command_id,
+                    "resolve_consequence",
+                    fingerprint,
+                    emit,
+                    started,
+                    commit_revision=state.revision,
+                    pending_choice=choice,
+                    diagnostics=diagnostics,
+                )
+            except Exception as exc:
+                diagnostics.finish(
+                    "failed",
+                    error=f"{type(exc).__name__}: {exc}"[:500],
+                )
+                self._flush_diagnostics(state.session_id, diagnostics)
+                raise
+            diagnostics.finish("committed")
+            self._flush_diagnostics(state.session_id, diagnostics)
+            return result
+        if self.planner is None:
+            raise RuntimeGenerationUnavailable("planner is required for consequence resolution")
         # A rejected resolution gets one regeneration attempt with the
         # validator reasons fed back to the planner — same shape as the
         # segment regeneration loop, and nothing commits unless the revised
@@ -727,39 +791,54 @@ class TurnOrchestrator:
         # reasons fed back to the writer — cheaper than a player retry (which
         # repeats the planner too) and still gated by the same chain: nothing
         # commits unless the revised proposal passes guard and judge.
+        # Scene-performer segments additionally get block-level repair first:
+        # a bad block costs a targeted rewrite, not a whole-segment reshuffle.
         rejection_notes: list[str] = []
         regeneration_left = 1 if self.unified_agent is not None else 0
+        repair_left = (
+            _BLOCK_REPAIR_BUDGET
+            if self.scene_performer is not None and beat_structure(pack) is not None
+            else 0
+        )
+        pending_repaired_draft: SegmentDraft | None = None
         while True:
-            try:
-                with diagnostics.stage("generating"):
-                    plan, draft, judge_preapproved = await self._generate_segment(
-                        pack,
-                        state,
-                        pacing,
-                        emit,
-                        started,
-                        allow_opening_cache=command_kind == "generate_opening"
-                        and not rejection_notes,
-                        rejection_notes=tuple(rejection_notes),
-                        pending_choice=pending_choice,
-                    )
-            except ProposalRejected as exc:
-                # A validator-rejected plan/draft regenerates with the reasons
-                # fed back — same budget as guard/density/judge rejections,
-                # and nothing commits unless the revised proposal passes.
-                reasons = [
-                    str(item) for item in (getattr(exc, "errors", None) or (str(exc),))
-                ]
-                diagnostics.note_validator_violations(reasons)
-                logger.warning("segment plan rejected: %s", " | ".join(reasons))
-                failure = f"unified agent produced an invalid segment: {tuple(reasons)}"
-                if regeneration_left <= 0:
-                    raise RuntimeGenerationUnavailable(failure) from exc
-                regeneration_left -= 1
-                diagnostics.regenerations += 1
-                rejection_notes = [f"validator/proposal: {reason}" for reason in reasons]
-                await emit(_progress_event("regenerating", started))
-                continue
+            if pending_repaired_draft is not None:
+                # The repair path already holds a plan/draft pair; only the
+                # checks re-run, and a repaired draft is never judge-preapproved.
+                draft = pending_repaired_draft
+                pending_repaired_draft = None
+                judge_preapproved = False
+            else:
+                try:
+                    with diagnostics.stage("generating"):
+                        plan, draft, judge_preapproved = await self._generate_segment(
+                            pack,
+                            state,
+                            pacing,
+                            emit,
+                            started,
+                            allow_opening_cache=command_kind == "generate_opening"
+                            and not rejection_notes,
+                            rejection_notes=tuple(rejection_notes),
+                            pending_choice=pending_choice,
+                        )
+                except ProposalRejected as exc:
+                    # A validator-rejected plan/draft regenerates with the reasons
+                    # fed back — same budget as guard/density/judge rejections,
+                    # and nothing commits unless the revised proposal passes.
+                    reasons = [
+                        str(item) for item in (getattr(exc, "errors", None) or (str(exc),))
+                    ]
+                    diagnostics.note_validator_violations(reasons)
+                    logger.warning("segment plan rejected: %s", " | ".join(reasons))
+                    failure = f"unified agent produced an invalid segment: {tuple(reasons)}"
+                    if regeneration_left <= 0:
+                        raise RuntimeGenerationUnavailable(failure) from exc
+                    regeneration_left -= 1
+                    diagnostics.regenerations += 1
+                    rejection_notes = [f"validator/proposal: {reason}" for reason in reasons]
+                    await emit(_progress_event("regenerating", started))
+                    continue
 
             await emit(_progress_event("validating", started))
             findings = None
@@ -769,9 +848,13 @@ class TurnOrchestrator:
                 density_errors = segment_density_errors(plan, draft, pacing)
                 if density_errors:
                     diagnostics.note_validator_violations(density_errors)
+                repetition_errors = segment_repetition_errors(pack, state, draft)
+                if repetition_errors:
+                    diagnostics.note_validator_violations(repetition_errors)
+                deterministic_errors = [*density_errors, *repetition_errors]
                 if (
                     guard_result.passed
-                    and not density_errors
+                    and not deterministic_errors
                     and self.semantic_judge is not None
                     and not judge_preapproved
                 ):
@@ -798,7 +881,7 @@ class TurnOrchestrator:
                         ) from exc
                     diagnostics.note_judge_findings(findings)
 
-            if guard_result.passed and not density_errors and (findings is None or findings.passed):
+            if guard_result.passed and not deterministic_errors and (findings is None or findings.passed):
                 break
 
             if not guard_result.passed:
@@ -807,15 +890,55 @@ class TurnOrchestrator:
                     for v in guard_result.violations
                 ]
                 failure = "guard rejected segment"
-            elif density_errors:
-                reasons = [f"validator/density: {error}" for error in density_errors]
-                failure = "density validator rejected segment"
+                block_indices = tuple(
+                    v.block_index for v in guard_result.violations if v.block_index is not None
+                )
+            elif deterministic_errors:
+                reasons = [
+                    f"validator/{'density' if error in density_errors else 'repetition'}: {error}"
+                    for error in deterministic_errors
+                ]
+                failure = (
+                    "density validator rejected segment"
+                    if density_errors
+                    else "repetition validator rejected segment"
+                )
+                block_indices = ()
             else:
                 reasons = [
                     f"judge/{f.kind} (block {f.block_index}): {f.detail}" for f in findings.blocking
                 ]
                 failure = "semantic judge rejected segment"
+                block_indices = tuple(
+                    f.block_index for f in findings.blocking if f.block_index is not None
+                )
             logger.warning("segment rejected: %s", " | ".join(reasons))
+            targets = block_targets(draft.scene_drafts, block_indices)
+            if targets and repair_left > 0:
+                # Block-level repair: targeted rewrite of the failing blocks,
+                # keeping every other block byte-identical.
+                repair_left -= 1
+                diagnostics.regenerations += 1
+                await emit(_progress_event("repairing", started))
+                try:
+                    with diagnostics.stage("repairing"):
+                        pending_repaired_draft = await self._repair_segment_blocks(
+                            pack,
+                            state,
+                            plan,
+                            draft,
+                            targets,
+                            reasons,
+                            emit,
+                            started,
+                        )
+                except ModelTimeoutError:
+                    raise
+                except Exception as exc:
+                    raise RuntimeGenerationUnavailable(
+                        "scene performer failed to repair blocks"
+                    ) from exc
+                continue
             if regeneration_left <= 0:
                 raise RuntimeGenerationUnavailable(failure)
             regeneration_left -= 1
@@ -1096,11 +1219,60 @@ class TurnOrchestrator:
                 try:
                     plan = validate_segment_plan(pack, state, cached.segment_plan, pacing)
                     draft = validate_segment_draft(plan, cached.segment_draft)
+                    validate_ledger_updates(state, draft)
                     return plan, draft, cached.judge_preapproved
                 except (ModelContractError, ProposalRejected) as exc:
                     detail = getattr(exc, "errors", None) or str(exc)
                     raise RuntimeGenerationUnavailable(
                         f"cached opening is invalid: {detail}"
+                    ) from exc
+
+        # Beat Map packs navigate deterministically: the DramaManager plans
+        # (no LLM decides what happens next) and the writer performs.  When
+        # the map has no eligible step, fall through to the improvisation
+        # path below — that fallback is the safety net, not the mainline.
+        if beat_structure(pack) is not None:
+            beat_plan = plan_next_segment(pack, state, pacing)
+            if beat_plan is not None:
+                try:
+                    plan = validate_segment_plan(pack, state, beat_plan, pacing)
+                except (ModelContractError, ProposalRejected) as exc:
+                    detail = getattr(exc, "errors", None) or str(exc)
+                    raise RuntimeGenerationUnavailable(
+                        f"drama manager produced an invalid segment plan: {detail}"
+                    ) from exc
+                try:
+                    if self.scene_performer is not None:
+                        draft = await self._perform_beat_scenes(
+                            pack,
+                            state,
+                            plan,
+                            emit,
+                            started,
+                            pending_choice=pending_choice,
+                            rejection_notes=rejection_notes,
+                        )
+                    else:
+                        draft = await self._await_with_heartbeats(
+                            self.writer.write_segment(
+                                pack, state, plan, pending_choice=pending_choice
+                            ),
+                            emit,
+                            started,
+                        )
+                    draft = validate_segment_draft(plan, draft)
+                    validate_ledger_updates(state, draft)
+                    return plan, draft, False
+                except (ModelContractError, ProposalRejected) as exc:
+                    detail = getattr(exc, "errors", None) or str(exc)
+                    raise RuntimeGenerationUnavailable(
+                        f"writer produced an invalid segment draft: {detail}"
+                    ) from exc
+                except ModelTimeoutError:
+                    raise
+                except Exception as exc:
+                    raise RuntimeGenerationUnavailable(
+                        "writer failed to produce a segment draft"
                     ) from exc
 
         if self.unified_agent is not None:
@@ -1118,6 +1290,7 @@ class TurnOrchestrator:
                 )
                 plan = validate_segment_plan(pack, state, result.segment_plan, pacing)
                 draft = validate_segment_draft(plan, result.segment_draft)
+                validate_ledger_updates(state, draft)
                 return plan, draft, False
             except ProposalRejected:
                 # The caller's regeneration loop retries with the validator
@@ -1157,6 +1330,7 @@ class TurnOrchestrator:
                 started,
             )
             draft = validate_segment_draft(plan, draft)
+            validate_ledger_updates(state, draft)
         except (ModelContractError, ProposalRejected) as exc:
             detail = getattr(exc, "errors", None) or str(exc)
             raise RuntimeGenerationUnavailable(
@@ -1167,6 +1341,97 @@ class TurnOrchestrator:
         except Exception as exc:
             raise RuntimeGenerationUnavailable("writer failed to produce a segment draft") from exc
         return plan, draft, False
+
+    async def _perform_beat_scenes(
+        self,
+        pack: CompiledScriptPack,
+        state: SessionState,
+        plan,
+        emit: ProgressEmit,
+        started: float,
+        *,
+        pending_choice: PresentedChoice | None = None,
+        rejection_notes: tuple[str, ...] = (),
+    ) -> SegmentDraft:
+        """Scene Performance Loop: one performer call per scene.
+
+        Scene n+1 receives scene n's approved final blocks verbatim (the
+        seam anchor), so consecutive scenes cannot drift in time or tone.
+        The ending scene's blocks ride the draft's ``ending`` (the simulator
+        routes them through EndingGenerated).
+        """
+        assert self.scene_performer is not None
+        from src.story.runtime.contracts import EndingDraft
+
+        scene_drafts = []
+        for scene_index in range(len(plan.scenes)):
+            scene_draft = await self._await_with_heartbeats(
+                self.scene_performer.perform_scene(
+                    pack,
+                    state,
+                    plan,
+                    scene_index,
+                    seam_tail=seam_tail_blocks(tuple(scene_drafts), scene_index),
+                    pending_choice=pending_choice,
+                    rejection_notes=rejection_notes,
+                ),
+                emit,
+                started,
+            )
+            scene_drafts.append(scene_draft)
+        draft = assemble_segment_draft(plan, tuple(scene_drafts))
+        if plan.terminal == "ending" and plan.ending_proposal is not None:
+            draft = draft.model_copy(
+                update={
+                    "ending": EndingDraft(
+                        ending_id=f"ending_{state.session_id}_{plan.segment_id}",
+                        title=plan.ending_proposal.title,
+                        blocks=scene_drafts[-1].blocks,
+                        tone=plan.ending_proposal.tone,
+                        terminal_state_summary=plan.ending_proposal.terminal_state_summary,
+                    )
+                }
+            )
+        return draft
+
+    async def _repair_segment_blocks(
+        self,
+        pack: CompiledScriptPack,
+        state: SessionState,
+        plan,
+        draft: SegmentDraft,
+        targets: dict[int, tuple[int, ...]],
+        reasons: list[str],
+        emit: ProgressEmit,
+        started: float,
+    ) -> SegmentDraft:
+        """Block-level repair: rewrite only the failing blocks of failing scenes."""
+        assert self.scene_performer is not None
+        scene_drafts = list(draft.scene_drafts)
+        for scene_index, local_indices in sorted(targets.items()):
+            scene_drafts[scene_index] = await self._await_with_heartbeats(
+                self.scene_performer.repair_blocks(
+                    pack,
+                    state,
+                    plan,
+                    scene_index,
+                    scene_drafts[scene_index],
+                    local_indices,
+                    tuple(reasons),
+                ),
+                emit,
+                started,
+            )
+        repaired = draft.model_copy(update={"scene_drafts": tuple(scene_drafts)})
+        if plan.terminal == "ending" and repaired.ending is not None:
+            repaired = repaired.model_copy(
+                update={
+                    "ending": repaired.ending.model_copy(
+                        update={"blocks": scene_drafts[-1].blocks}
+                    )
+                }
+            )
+        return repaired
 
     def _flush_diagnostics(self, session_id: str, diagnostics: _TurnDiagnostics) -> None:
         """Persist one turn's diagnostics; never break a turn over them."""

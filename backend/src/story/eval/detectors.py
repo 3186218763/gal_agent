@@ -55,54 +55,21 @@ def _snippet(text: str, limit: int = 48) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Shared text utilities
+# Shared text utilities (single source of truth: src.story.runtime.repetition)
 # ---------------------------------------------------------------------------
 
-_PUNCTUATION = re.compile(r"[，。！？；：、…—\-\s「」『』“”\"'（）()\[\]·~,\.!?;:'\"]")
-
-
-def _strip_punctuation(text: str) -> str:
-    return _PUNCTUATION.sub("", text)
-
-
-def _maximal_common_substrings(a: str, b: str, min_length: int) -> list[str]:
-    """Greedy left-to-right maximal shared runs of ``a`` and ``b``.
-
-    At each position of ``a``, extend the longest run that also occurs in
-    ``b`` starting from some equal character, keep it when long enough, and
-    skip past it — deterministic and linear-ish on these short texts.
-    """
-    matches: list[str] = []
-    i = 0
-    while i < len(a):
-        best_len = 0
-        for j in range(len(b)):
-            if b[j] != a[i]:
-                continue
-            length = 1
-            while (
-                i + length < len(a) and j + length < len(b) and a[i + length] == b[j + length]
-            ):
-                length += 1
-            best_len = max(best_len, length)
-        if best_len >= min_length:
-            matches.append(a[i : i + best_len])
-            i += best_len
-        else:
-            i += 1
-    # Deduplicate while preserving order.
-    seen: set[str] = set()
-    unique: list[str] = []
-    for match in matches:
-        if match not in seen:
-            seen.add(match)
-            unique.append(match)
-    return unique
+from src.story.runtime.repetition import distinctive as _distinctive_base
+from src.story.runtime.repetition import (
+    shared_phrases as _shared_phrases_base,
+)
+from src.story.runtime.repetition import (
+    strip_punctuation as _strip_punctuation,
+)
 
 
 def shared_phrases(a: str, b: str, min_length: int = 3) -> list[str]:
     """Distinctive shared substrings between two stripped texts."""
-    return _maximal_common_substrings(_strip_punctuation(a), _strip_punctuation(b), min_length)
+    return _shared_phrases_base(a, b, min_length)
 
 
 # Phrases that recur legitimately (setting, names, props) and must not count
@@ -123,25 +90,10 @@ _PHRASE_STOPLIST = (
     "托盘",
 )
 
-_STOPFILTER = re.compile("|".join(_PHRASE_STOPLIST))
-
-# Connective-only phrases ("在我和", "在这个") are shared by any two texts;
-# a phrase only counts when it carries content characters.
-_FUNCTION_CHARS = set(
-    "的了是在这和不有人我你他她它们个着就也都还很更被把向从对与以及自己什么怎样地得过"
-)
-
 
 def distinctive(phrases: list[str]) -> list[str]:
     """Drop phrases containing a stoplisted term or made of pure function words."""
-    kept: list[str] = []
-    for phrase in phrases:
-        if _STOPFILTER.search(phrase):
-            continue
-        if all(char in _FUNCTION_CHARS for char in phrase):
-            continue
-        kept.append(phrase)
-    return kept
+    return _distinctive_base(phrases, _PHRASE_STOPLIST)
 
 
 # ---------------------------------------------------------------------------

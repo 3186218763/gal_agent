@@ -21,6 +21,7 @@ from src.story.runtime.model import LLMClient
 from src.story.runtime.segment_context import (
     DEFAULT_CONTEXT_BUDGETS,
     ContextBudgets,
+    _canon_ledger_views,
     _character_known_facts,
     _completion_requirement_views,
     _event_trace_digest,
@@ -190,6 +191,12 @@ def build_unified_context(
     window = recent_prose_window(state, budgets)
     if window is not None:
         ctx["recent_prose"] = window
+
+    # Canon Ledger slices: entity cards (established narrative details),
+    # open prose promises, and the motif blacklist.
+    ledger_views = _canon_ledger_views(state)
+    if ledger_views:
+        ctx["canon_ledger"] = ledger_views
     return ctx
 
 
@@ -284,7 +291,26 @@ same segment_id, same scene_ids in the same order.
    match their quotation marks, punctuation, and formatting exactly so the
    seam is invisible.
 
-9. Return only the requested structured contract."""
+10. CANON LEDGER (when the context has a "canon_ledger" section):
+   - entity_cards list every narrative detail the prose already established
+     (an object's color, a place's layout, a character's appearance). The
+     draft's prose and any ledger_updates MUST keep those exact values —
+     a conflicting value is hard-rejected with the established one quoted.
+   - open_narrative_promises are setups the prose owes a payoff to. Weave
+     at most one forward; do not contradict or forget an open promise.
+   - motif_blacklist names gestures/images/structures already performed —
+     do NOT re-perform them.
+   In segment_draft.ledger_updates, register what THIS prose establishes:
+   kind="entity_attribute" for a new visible detail of a named entity
+   (entity_id, entity_name, attribute, value — e.g. notebook / cover /
+   黑色硬皮); kind="promise_mark" when the prose makes a new promise to the
+   player (promise_id, statement quoting the promise); kind="promise_settle"
+   with outcome="paid"/"released" when an open promise is fulfilled on
+   screen; kind="motif" for a distinctive recurring gesture or image you
+   just used (motif_id, label). Keep updates sparse — canonical details
+   and promises only, not every sentence.
+
+11. Return only the requested structured contract."""
 
 
 OPENING_INSTRUCTIONS = """You are the Unified Segment Agent for a constrained visual novel.
@@ -384,7 +410,16 @@ same segment_id, same scene_ids in the same order.
    match their quotation marks, punctuation, and formatting exactly so the
    seam is invisible.
 
-8. Return only the requested structured contract."""
+8. CANON LEDGER (when the context has a "canon_ledger" section): follow
+   entity_cards exactly, do not contradict open_narrative_promises, and do
+   not re-perform anything on the motif blacklist. Register what this
+   opening establishes in segment_draft.ledger_updates: kind="entity_attribute"
+   for new canonical details of named entities (e.g. notebook/cover/黑色硬皮),
+   kind="promise_mark" for setups the opening promises the player, and
+   kind="motif" for distinctive gestures or images you establish. Keep
+   updates sparse — canonical details only.
+
+9. Return only the requested structured contract."""
 
 
 class LLMUnifiedSegmentAgent:

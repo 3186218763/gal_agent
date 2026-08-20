@@ -6,10 +6,11 @@ and test_story_cli_live.py.
 
 from __future__ import annotations
 
+import itertools
 import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
-from typing import Any
+from typing import Any, ClassVar
 
 from src.story.runtime.contracts import (
     ActionResolution,
@@ -297,7 +298,15 @@ def _pacing_floor(state: Any, pack: Any) -> int:
 
 
 class FakeSegmentWriter:
-    """Returns canned scene drafts and endings matching a SegmentPlan."""
+    """Returns canned scene drafts and endings matching a SegmentPlan.
+
+    Prose carries a unique component per block (turn counter + uuid): a
+    compliant agent never re-emits identical prose, and the runtime
+    repetition gate rejects wholesale re-runs of committed text.
+    """
+
+    _turns = itertools.count(1)
+
     async def write_segment(
         self,
         pack: Any,
@@ -310,17 +319,14 @@ class FakeSegmentWriter:
         # Meet the pacing block floor: the density validator rejects a
         # decision segment shorter than target_block_range's lower bound.
         floor = _pacing_floor(state, pack)
+        turn = next(self._turns)
         scene_drafts = tuple(
             SceneDraft(
                 scene_id=scene.scene_id,
                 blocks=tuple(
                     NarrativeBlock(
                         kind="narration",
-                        text=(
-                            f"The story continues in {scene.scene_id}."
-                            if i == 0
-                            else f"Beat {i} develops {scene.scene_id}."
-                        ),
+                        text=f"Turn {turn}.{i}: {uuid.uuid4().hex}",
                     )
                     for i in range(max(1, floor))
                 ),
@@ -355,6 +361,79 @@ class FakeSegmentWriter:
             choices=choices,
             ending=ending,
         )
+
+
+class FakeScenePerformer:
+    """Per-scene performer with unique prose and recording of seam inputs.
+
+    Repair rewrites only the targeted blocks (new unique text) and keeps the
+    rest byte-identical, so tests can assert block-level repair economics.
+    """
+
+    _turns = itertools.count(1)
+    repairs: ClassVar[list[tuple[int, tuple[int, ...]]]] = []
+    seams_seen: ClassVar[list[tuple[str, ...]]] = []
+
+    async def perform_scene(
+        self,
+        pack: Any,
+        state: Any,
+        plan: SegmentPlan,
+        scene_index: int,
+        *,
+        seam_tail: tuple[NarrativeBlock, ...] = (),
+        pending_choice: Any = None,
+        rejection_notes: tuple[str, ...] = (),
+    ) -> Any:
+        from src.story.runtime.contracts import SceneDraft, WrittenChoice
+
+        self.seams_seen.append(tuple(block.text for block in seam_tail))
+        scene = plan.scenes[scene_index]
+        floor = _pacing_floor(state, pack)
+        if scene.terminal == "ending":
+            # The ending's blocks ride this scene and must clear the finale
+            # density floor, which can sit above the pacing floor.
+            from src.story.runtime.validator import ENDING_BLOCK_FLOOR
+
+            floor = max(floor, ENDING_BLOCK_FLOOR)
+        turn = next(self._turns)
+        blocks = tuple(
+            NarrativeBlock(kind="narration", text=f"Turn {turn}.{i}: {uuid.uuid4().hex}")
+            for i in range(max(1, floor))
+        )
+        choices = ()
+        if scene.terminal == "decision":
+            choices = tuple(
+                WrittenChoice(option_id=choice.option_id, label=choice.intent[:80])
+                for choice in scene.choices
+            )
+        return SceneDraft(
+            scene_id=scene.scene_id,
+            blocks=blocks,
+            choices=choices,
+        )
+
+    async def repair_blocks(
+        self,
+        pack: Any,
+        state: Any,
+        plan: SegmentPlan,
+        scene_index: int,
+        scene_draft: Any,
+        block_indices: tuple[int, ...],
+        instructions: tuple[str, ...],
+    ) -> Any:
+        del state, instructions
+        self.repairs.append((scene_index, block_indices))
+        turn = next(self._turns)
+        blocks = list(scene_draft.blocks)
+        for local_index in block_indices:
+            blocks[local_index] = NarrativeBlock(
+                kind=blocks[local_index].kind,
+                character_id=blocks[local_index].character_id,
+                text=f"Turn {turn}.fix{local_index}: {uuid.uuid4().hex}",
+            )
+        return scene_draft.model_copy(update={"blocks": tuple(blocks)})
 
 
 class FakeGuard:

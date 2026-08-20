@@ -81,6 +81,8 @@ def test_blocking_kinds_are_the_high_risk_vocabulary():
         "choice_reversal",
         "boundary_violation",
         "missing_ending_integrity",
+        "detail_contradiction",
+        "repetition",
     }
 
 

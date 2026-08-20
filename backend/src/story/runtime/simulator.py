@@ -5,32 +5,46 @@ from __future__ import annotations
 from src.story.runtime.contracts import ActionResolution, SceneDraft, ScenePlan
 from src.story.runtime.endings import next_phase
 from src.story.runtime.segment_contracts import (
+    EntityAttributeUpdate,
+    MotifUpdate,
+    PromiseMarkUpdate,
+    PromiseSettleUpdate,
     SegmentDraft,
     SegmentPlan,
     ThreadOperation,
 )
-from src.story.script_pack.models import CompiledScriptPack
+from src.story.script_pack.models import CompiledScriptPack, ScriptPackSourceV2
 from src.story.state import (
     ActionResolved,
+    ArcPressureAdvanced,
+    BeatCompleted,
     CharacterLearnedFact,
     DecisionPresented,
     EndingGenerated,
+    EntityAttributeSet,
     EventEnvelope,
     FactCommitted,
     FactEvidenced,
     FactRevealed,
+    FactTruthStatus,
+    FactVisibility,
     GoalAdvanced,
+    MotifUsed,
+    NarrativePromiseMarked,
+    NarrativePromiseSettled,
     NarrativeThread,
     ObligationCreated,
     ObligationResolved,
     PhaseAdvanced,
     PlayerActionSelected,
     PresentedChoice,
+    PromiseOpened,
     RelationshipChanged,
     RelationshipEventRecorded,
     SceneAcknowledged,
     SceneCommitted,
     SessionState,
+    StanceChallenged,
     StanceExpressed,
     StateTransitionError,
     ThreadAdvanced,
@@ -41,6 +55,26 @@ from src.story.state import (
     derive_cost_incurred,
 )
 from src.story.state.events import StoryEvent
+
+_KEY_LINE_MAX = 80
+_KEY_LINES_PER_SCENE = 2
+
+_DRAMATIC_ARC_ORDER = ("approach", "fracture", "accountability")
+
+
+def scene_key_lines(blocks) -> tuple[str, ...]:
+    """Deterministic archive lines: the scene's first dialogue and last block."""
+    lines: list[str] = []
+    for block in blocks:
+        if block.kind == "dialogue" and block.text.strip():
+            lines.append(block.text.strip()[:_KEY_LINE_MAX])
+            break
+    for block in reversed(blocks):
+        text = block.text.strip()
+        if text and (not lines or text[:_KEY_LINE_MAX] != lines[0]):
+            lines.append(text[:_KEY_LINE_MAX])
+            break
+    return tuple(dict.fromkeys(lines))[:_KEY_LINES_PER_SCENE]
 
 
 def scene_events(pack, state, plan, draft) -> tuple[StoryEvent, ...]:
@@ -343,13 +377,148 @@ def next_phase_for_count(
     return next_phase(state, projected_count=projected_scene_count)
 
 
+def _beat_events(
+    pack: CompiledScriptPack,
+    state: SessionState,
+    plan: SegmentPlan,
+) -> list[StoryEvent]:
+    """Translate Beat Map effects into deterministic events.
+
+    Effects fire only when their state preconditions hold: a staged fact
+    must be committed but not yet revealed, a revealed fact must have
+    climbed the evidence ladder (or the beat is an ending, carrying the
+    finale exemption), a stance challenge needs an expressed stance, and
+    arc pressure advances exactly one step.  Silent skips keep a beat
+    performable when earlier prose already covered its effect organically.
+    Facts committed by this segment's own scenes count as covered.
+    """
+    source = pack.source
+    if not isinstance(source, ScriptPackSourceV2) or source.structure is None:
+        return []
+    beats = {beat.id: beat for act in source.structure.acts for beat in act.beats}
+    if not plan.beat_ids:
+        return []
+
+    committed_here = {
+        fact.fact_id
+        for scene in plan.scenes
+        for fact in scene.fact_commits
+    }
+    revealed_here = {
+        fact.fact_id
+        for scene in plan.scenes
+        for fact in scene.fact_commits
+        if fact.reveal
+    }
+
+    events: list[StoryEvent] = []
+    for beat_id in plan.beat_ids:
+        beat = beats.get(beat_id)
+        if beat is None:
+            continue
+        anchor = f"beat:{beat_id}"
+        effects = beat.effects
+        if effects is not None:
+            # The author's deterministic answers first: a latent commit with
+            # its evidence makes the same beat's reveal pass the ladder.
+            for commit in effects.commit_latent:
+                record = state.facts.get(commit.fact_id)
+                if (
+                    record is None
+                    or record.truth_status != FactTruthStatus.POSSIBLE
+                    or commit.fact_id in committed_here
+                ):
+                    continue
+                events.append(
+                    FactCommitted(
+                        fact_id=commit.fact_id,
+                        value=commit.value,
+                        evidence_event_ids=(anchor,),
+                    )
+                )
+                committed_here.add(commit.fact_id)
+            for fact_id in effects.stage_fact_ids:
+                record = state.facts.get(fact_id)
+                if (
+                    record is None
+                    or record.visibility == FactVisibility.REVEALED
+                    or fact_id in committed_here
+                ):
+                    continue
+                events.append(
+                    FactEvidenced(fact_id=fact_id, evidence_event_id=anchor)
+                )
+            for fact_id in effects.reveal_fact_ids:
+                record = state.facts.get(fact_id)
+                if (
+                    record is None
+                    or fact_id in revealed_here
+                    or record.visibility == FactVisibility.REVEALED
+                ):
+                    continue
+                committed = (
+                    record.truth_status == FactTruthStatus.COMMITTED
+                    or fact_id in committed_here
+                )
+                if beat.kind == "ending":
+                    ladder_ok = True
+                elif fact_id in committed_here:
+                    # This segment's commit carries exactly one evidence
+                    # anchor (the beat itself).
+                    ladder_ok = record.evidence_required <= 1
+                else:
+                    ladder_ok = (
+                        record.truth_status == FactTruthStatus.COMMITTED
+                        and len(record.evidence_event_ids) >= record.evidence_required
+                    )
+                if committed and ladder_ok:
+                    events.append(
+                        FactRevealed(fact_id=fact_id, finale=beat.kind == "ending")
+                    )
+            for index, expectation in enumerate(effects.promise_expectations):
+                events.append(
+                    PromiseOpened(
+                        promise_id=f"{anchor}:{index}",
+                        expectation=expectation,
+                        source_event_id=anchor,
+                        soft_deadline_decision=(
+                            state.drama.decision_count
+                            + effects.promise_soft_deadline_decisions
+                        ),
+                        hard_deadline_decision=(
+                            state.drama.decision_count
+                            + effects.promise_hard_deadline_decisions
+                        ),
+                    )
+                )
+            for challenge in effects.stance_challenges:
+                if challenge.stance_axis not in state.drama.stances:
+                    continue
+                events.append(
+                    StanceChallenged(
+                        stance_key=challenge.stance_axis,
+                        scene_event_id=anchor,
+                        challenging_character_id=challenge.challenging_character_id,
+                    )
+                )
+            if effects.advance_arc_phase:
+                current_index = _DRAMATIC_ARC_ORDER.index(state.drama.arc_phase)
+                if current_index + 1 < len(_DRAMATIC_ARC_ORDER):
+                    events.append(
+                        ArcPressureAdvanced(
+                            phase=_DRAMATIC_ARC_ORDER[current_index + 1]
+                        )
+                    )
+        events.append(BeatCompleted(beat_id=beat_id, source_event_id=anchor))
+    return events
+
+
 def segment_events(
     pack: CompiledScriptPack,
     state: SessionState,
     plan: SegmentPlan,
     draft: SegmentDraft,
 ) -> tuple[StoryEvent, ...]:
-    del pack  # reserved for future pack-aware segment conversion
     events: list[StoryEvent] = []
     current_scene_count = state.world.scene_count
 
@@ -407,6 +576,7 @@ def segment_events(
                 present_character_ids=scene_plan.present_character_ids,
                 blocks=scene_draft.blocks,
                 summary=scene_plan.summary,
+                key_lines=scene_key_lines(scene_draft.blocks),
             )
         )
 
@@ -421,6 +591,51 @@ def segment_events(
                 resolution_scene_event_id=f"scene_ref:{plan.scenes[-1].scene_id}",
             )
         )
+
+    # Canon Ledger registration: narrative details this prose establishes,
+    # anchored to the segment's final scene.
+    anchor_scene_id = plan.scenes[-1].scene_id if plan.scenes else ""
+    for update in draft.ledger_updates:
+        if isinstance(update, EntityAttributeUpdate):
+            events.append(
+                EntityAttributeSet(
+                    entity_id=update.entity_id,
+                    entity_name=update.entity_name,
+                    attribute=update.attribute,
+                    value=update.value,
+                    scene_id=anchor_scene_id,
+                )
+            )
+        elif isinstance(update, PromiseMarkUpdate):
+            events.append(
+                NarrativePromiseMarked(
+                    promise_id=update.promise_id,
+                    statement=update.statement,
+                    scene_id=anchor_scene_id,
+                )
+            )
+        elif isinstance(update, PromiseSettleUpdate):
+            events.append(
+                NarrativePromiseSettled(
+                    promise_id=update.promise_id,
+                    outcome=update.outcome,
+                    scene_id=anchor_scene_id,
+                )
+            )
+        elif isinstance(update, MotifUpdate):
+            events.append(
+                MotifUsed(
+                    motif_id=update.motif_id,
+                    label=update.label,
+                    scene_id=anchor_scene_id,
+                )
+            )
+
+    # Beat Map effects: deterministic dead-event wiring.  Each performed
+    # beat marks itself BeatCompleted and fires its declared effects, subject
+    # to state preconditions (facts committed by this segment's scenes count
+    # as staged/revealed already — the beat never double-fires).
+    events.extend(_beat_events(pack, state, plan))
 
     # Decision terminal events.
     if plan.terminal == "decision":
